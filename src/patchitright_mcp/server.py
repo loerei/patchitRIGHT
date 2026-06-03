@@ -34,7 +34,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "target_file": {
                         "type": "string",
-                        "description": "Absolute or relative path to the target file. Forward slashes (/) are recommended on all operating systems (including Windows) to avoid JSON escaping overhead and minimize token usage. Absolute paths can target any file on the system. Relative paths are resolved against the active workspace root."
+                        "description": "Absolute or relative path. Use forward slashes (/) to avoid JSON escaping and reduce token usage."
                     },
                     "search_content": {
                         "type": "string",
@@ -112,7 +112,7 @@ async def list_tools() -> list[Tool]:
                             "properties": {
                                 "target_file": {
                                     "type": "string",
-                                    "description": "Absolute or relative path to the target file. Forward slashes (/) are recommended on all operating systems (including Windows) to avoid JSON escaping overhead and minimize token usage."
+                                    "description": "Absolute or relative path. Use forward slashes (/) to avoid JSON escaping and reduce token usage."
                                 },
                                 "patch_content": {
                                     "type": "string",
