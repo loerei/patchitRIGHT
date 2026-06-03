@@ -1,0 +1,36 @@
+[project]
+name = "patchitright-mcp"
+version = "0.1.0"
+description = "AST-bounded safe search-and-replace write companion MCP server for jCodeMunch"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "loerei", email = "sayusumat@gmail.com" },
+]
+dependencies = [
+    "mcp>=1.10.0,<2.0.0",
+    "jcodemunch-mcp>=1.108.24",
+]
+
+[project.scripts]
+patchitright-mcp = "patchitright_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/patchitright_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]
+
+[tool.uv.sources]
+jcodemunch-mcp = { path = "../jcodemunch-mcp" }
