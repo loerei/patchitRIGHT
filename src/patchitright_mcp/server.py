@@ -34,7 +34,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "target_file": {
                         "type": "string",
-                        "description": "Absolute or relative path. Use forward slashes (/) to avoid JSON escaping and reduce token usage."
+                        "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended to avoid JSON escaping and save tokens."
                     },
                     "search_content": {
                         "type": "string",
@@ -112,7 +112,7 @@ async def list_tools() -> list[Tool]:
                             "properties": {
                                 "target_file": {
                                     "type": "string",
-                                    "description": "Absolute or relative path. Use forward slashes (/) to avoid JSON escaping and reduce token usage."
+                                    "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended to avoid JSON escaping and save tokens."
                                 },
                                 "patch_content": {
                                     "type": "string",
