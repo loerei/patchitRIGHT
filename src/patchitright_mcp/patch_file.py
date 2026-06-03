@@ -1,6 +1,7 @@
 """AST-bounded file editor (patch_file) utilizing workspace, engine, and transaction modules."""
 
 import difflib
+import os
 from pathlib import Path
 from typing import Optional, Union
 
@@ -115,6 +116,7 @@ def patch_file(
 ) -> dict:
     """Perform a robust search-and-replace or apply a strict unified diff (Fuzz = 0)."""
     try:
+        target_file = os.path.normpath(target_file)
         cwd = Path.cwd().resolve()
         workspace = Workspace(cwd, storage_path)
         
@@ -256,6 +258,10 @@ def batch_patch_files(
     storage_path: Optional[str] = None,
 ) -> dict:
     """Atomically apply a batch of unified diffs across multiple files with Fuzz=0 and rollback support."""
+    for p in patches:
+        if "target_file" in p:
+            p["target_file"] = os.path.normpath(p["target_file"])
+
     cwd = Path.cwd().resolve()
     workspace = Workspace(cwd, storage_path)
     

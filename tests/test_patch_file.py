@@ -540,6 +540,24 @@ class TestPatchFile:
         assert file_a.read_text() == "user manual edits\n"
         assert not (tmp_path / ".patchitRIGHT").exists()
 
+    def test_path_normalization_double_slashes(self, tmp_path, monkeypatch):
+        """patch_file must successfully normalize paths with double backslashes/slashes."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text("line 1\nline 2\n")
+
+        # Call with redundant separators and mixed slashes
+        res = patch_file(
+            target_file=".\\\\//\\\\app.py",
+            search_content="line 2",
+            replace_content="modified",
+            dry_run=False
+        )
+
+        assert "success" in res
+        assert res["success"] is True
+        assert app_file.read_text() == "line 1\nmodified\n"
+
 
 class TestPatchEngine:
     def test_apply_classic_patch_success(self):
