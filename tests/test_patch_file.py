@@ -539,3 +539,95 @@ class TestPatchFile:
         # Should NOT overwrite, and should delete bak to prevent getting stuck
         assert file_a.read_text() == "user manual edits\n"
         assert not (tmp_path / ".patchitRIGHT").exists()
+
+
+class TestPatchEngine:
+    def test_apply_classic_patch_success(self):
+        """PatchEngine must apply classic search-and-replace correctly."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("line 1\nline 2\nline 3\n", "test.py")
+        res, count = engine.apply_classic_patch("line 2", "modified line 2")
+        assert res == "line 1\nmodified line 2\nline 3\n"
+        assert count == 1
+
+    def test_apply_classic_patch_missing_error(self):
+        """PatchEngine must raise ValueError with suggestion if content is missing."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("line 1\nline 2\nline 3\n", "test.py")
+        with pytest.raises(ValueError) as exc:
+            engine.apply_classic_patch("line 22", "modified")
+        assert "Search content not found" in str(exc.value)
+        assert "Did you mean" in str(exc.value)
+        assert "line 2" in str(exc.value)
+
+    def test_apply_classic_patch_line_boundary(self):
+        """PatchEngine must restrict replacements to line boundaries."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("dup\ndup\ndup\n", "test.py")
+        res, count = engine.apply_classic_patch("dup", "new", allow_multiple=True, start_line=1, end_line=2)
+        assert res == "new\nnew\ndup\n"
+        assert count == 2
+
+    def test_apply_classic_patch_allow_multiple(self):
+        """PatchEngine must reject multiple occurrences by default unless allow_multiple is True."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("dup\ndup\n", "test.py")
+        with pytest.raises(ValueError) as exc:
+            engine.apply_classic_patch("dup", "new", allow_multiple=False)
+        assert "occurs 2 times" in str(exc.value)
+
+    def test_apply_classic_patch_line_filter_numeric(self):
+        """PatchEngine must assert numeric line filters correctly."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("line 1\nline 2\n", "test.py")
+        
+        # Valid assertion
+        res, count = engine.apply_classic_patch("line 2", "new", line_filter=2)
+        assert res == "line 1\nnew\n"
+        
+        # Invalid assertion
+        with pytest.raises(ValueError) as exc:
+            engine.apply_classic_patch("line 2", "new", line_filter=1)
+        assert "lineFilter assertion failed" in str(exc.value)
+
+    def test_apply_classic_patch_line_filter_string(self):
+        """PatchEngine must assert string line filters correctly."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("line 1\nline 2\n", "test.py")
+        
+        # Valid assertion
+        res, count = engine.apply_classic_patch("line 2", "new", line_filter="line 2")
+        assert res == "line 1\nnew\n"
+        
+        # Invalid assertion
+        with pytest.raises(ValueError) as exc:
+            engine.apply_classic_patch("line 2", "new", line_filter="unrelated")
+        assert "lineFilter assertion failed" in str(exc.value)
+
+    def test_apply_unified_patch_success(self):
+        """PatchEngine must apply unified patches strictly."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("line 1\nline 2\nline 3\n", "test.py")
+        patch = (
+            "@@ -2,2 +2,2 @@\n"
+            "-line 2\n"
+            "+modified line 2\n"
+        )
+        res = engine.apply_unified_patch(patch)
+        assert res == "line 1\nmodified line 2\nline 3\n"
+
+    def test_apply_unified_patch_mismatch_error(self):
+        """PatchEngine must raise ValueError with suggestion if unified hunk context fails to match."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("line 1\nline 2\nline 3\n", "test.py")
+        patch = (
+            "@@ -2,1 +2,1 @@\n"
+            "-line 22\n"
+            "+modified line 2\n"
+        )
+        with pytest.raises(ValueError) as exc:
+            engine.apply_unified_patch(patch)
+        assert "failed to match strictly at line 2" in str(exc.value)
+        assert "Did you mean" in str(exc.value)
+        assert "line 2" in str(exc.value)
+
