@@ -10,7 +10,7 @@ from mcp.server import Server
 from mcp.types import Tool, TextContent
 
 from . import __version__
-from .patch_file import patch_file, batch_patch_files, run_startup_recovery
+from .patch_file import patch_file, batch_patch_files, run_startup_recovery, apply_last_dry_run
 
 
 # Create the MCP server instance
@@ -135,6 +135,26 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["patches"]
             }
+        ),
+        Tool(
+            name="apply_last_dry_run",
+            description=(
+                "Commit a patch that was previewed with dry_run=true, using only its run_id. "
+                "Avoids resending search_content / replace_content / patch_content, "
+                "cutting token usage roughly in half for the apply step. "
+                "Fails with a clear error if the run_id is unknown, expired (TTL 300 s), "
+                "or if any target file was modified after the dry-run (hash guard)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "run_id": {
+                        "type": "string",
+                        "description": "The run_id returned by a previous patch_file or batch_patch_files dry-run call."
+                    }
+                },
+                "required": ["run_id"]
+            }
         )
     ]
 
@@ -142,8 +162,19 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Execute the requested tool."""
-    if name not in ("patch_file", "batch_patch_files"):
+    if name not in ("patch_file", "batch_patch_files", "apply_last_dry_run"):
         raise ValueError(f"Unknown tool: {name}")
+
+    if name == "apply_last_dry_run":
+        try:
+            run_id = arguments.get("run_id")
+            if not run_id:
+                return [TextContent(type="text", text="Error: run_id is required for apply_last_dry_run.")]
+            res = apply_last_dry_run(run_id=run_id)
+            import json
+            return [TextContent(type="text", text=json.dumps(res, indent=2))]
+        except Exception as e:
+            return [TextContent(type="text", text=f"Error executing apply_last_dry_run: {str(e)}")]
 
     if name == "batch_patch_files":
         try:

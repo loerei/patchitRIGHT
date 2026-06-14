@@ -649,3 +649,164 @@ class TestPatchEngine:
         assert "Did you mean" in str(exc.value)
         assert "line 2" in str(exc.value)
 
+
+# ---------------------------------------------------------------------------
+# Cycles 3–8: run_id flow (apply_last_dry_run)
+# ---------------------------------------------------------------------------
+
+from patchitright_mcp.patch_file import apply_last_dry_run  # noqa: E402
+from patchitright_mcp.run_cache import RunCache              # noqa: E402
+
+
+class TestDryRunReturnsRunId:
+    """Cycles 3 & 4 — dry-run responses include run_id + expires_in."""
+
+    def test_patch_file_dry_run_returns_run_id(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "app.py"
+        f.write_text("line 1\nline 2\nline 3\n")
+
+        res = patch_file(
+            target_file="app.py",
+            search_content="line 2",
+            replace_content="modified line 2",
+            dry_run=True,
+        )
+
+        assert res["success"] is True
+        assert res["dryRun"] is True
+        assert "run_id" in res
+        assert isinstance(res["run_id"], str) and len(res["run_id"]) > 0
+        assert "expires_in" in res
+        assert isinstance(res["expires_in"], int) and res["expires_in"] > 0
+
+    def test_batch_patch_files_dry_run_returns_run_id(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        f1 = tmp_path / "a.py"
+        f2 = tmp_path / "b.py"
+        f1.write_text("hello\nworld\n")
+        f2.write_text("foo\nbar\n")
+
+        diff_a = (
+            "--- a/a.py\n+++ b/a.py\n"
+            "@@ -1,1 +1,1 @@\n-hello\n+HELLO\n"
+        )
+        diff_b = (
+            "--- a/b.py\n+++ b/b.py\n"
+            "@@ -1,1 +1,1 @@\n-foo\n+FOO\n"
+        )
+
+        res = batch_patch_files(
+            patches=[
+                {"target_file": "a.py", "patch_content": diff_a},
+                {"target_file": "b.py", "patch_content": diff_b},
+            ],
+            dry_run=True,
+        )
+
+        assert res["success"] is True
+        assert res["dryRun"] is True
+        assert "run_id" in res
+        assert "expires_in" in res
+
+    def test_patch_file_non_dry_run_has_no_run_id(self, tmp_path, monkeypatch):
+        """run_id must NOT appear when actually applying (no cache pollution)."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "app.py"
+        f.write_text("line 1\nline 2\nline 3\n")
+
+        res = patch_file(
+            target_file="app.py",
+            search_content="line 2",
+            replace_content="modified line 2",
+            dry_run=False,
+        )
+
+        assert res["success"] is True
+        assert "run_id" not in res
+
+
+class TestApplyLastDryRun:
+    """Cycles 5–8 — apply_last_dry_run behavior."""
+
+    def test_applies_cached_patch_and_returns_success(self, tmp_path, monkeypatch):
+        """Cycle 5 — apply_last_dry_run(run_id) writes the patched file."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "app.py"
+        original = "line 1\nline 2\nline 3\n"
+        f.write_text(original)
+
+        dry_res = patch_file(
+            target_file="app.py",
+            search_content="line 2",
+            replace_content="modified line 2",
+            dry_run=True,
+        )
+        run_id = dry_res["run_id"]
+
+        apply_res = apply_last_dry_run(run_id=run_id)
+
+        assert apply_res["success"] is True
+        assert apply_res.get("dryRun") is False
+        assert f.read_text() == "line 1\nmodified line 2\nline 3\n"
+
+    def test_fails_on_unknown_run_id(self, tmp_path, monkeypatch):
+        """Cycle 6 — apply_last_dry_run fails with clear error for unknown run_id."""
+        monkeypatch.chdir(tmp_path)
+        res = apply_last_dry_run(run_id="totally-fake-id")
+        assert "error" in res
+        assert "run_id" in res["error"].lower() or "not found" in res["error"].lower() or "unknown" in res["error"].lower() or "expired" in res["error"].lower()
+
+    def test_fails_if_file_changed_after_dry_run(self, tmp_path, monkeypatch):
+        """Cycle 7 — apply_last_dry_run rejects apply if file changed since dry-run."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "app.py"
+        f.write_text("line 1\nline 2\nline 3\n")
+
+        dry_res = patch_file(
+            target_file="app.py",
+            search_content="line 2",
+            replace_content="modified line 2",
+            dry_run=True,
+        )
+        run_id = dry_res["run_id"]
+
+        # Mutate the file after the dry-run
+        f.write_text("line 1\nSOMETHING CHANGED\nline 3\n")
+
+        apply_res = apply_last_dry_run(run_id=run_id)
+        assert "error" in apply_res
+        assert "modified" in apply_res["error"].lower() or "changed" in apply_res["error"].lower() or "conflict" in apply_res["error"].lower() or "hash" in apply_res["error"].lower()
+        # File must NOT be overwritten with the stale patch
+        assert f.read_text() == "line 1\nSOMETHING CHANGED\nline 3\n"
+
+    def test_applies_batch_patch_for_all_files(self, tmp_path, monkeypatch):
+        """Cycle 8 — apply_last_dry_run works for batch (multiple files)."""
+        monkeypatch.chdir(tmp_path)
+        f1 = tmp_path / "a.py"
+        f2 = tmp_path / "b.py"
+        f1.write_text("hello\nworld\n")
+        f2.write_text("foo\nbar\n")
+
+        diff_a = (
+            "--- a/a.py\n+++ b/a.py\n"
+            "@@ -1,1 +1,1 @@\n-hello\n+HELLO\n"
+        )
+        diff_b = (
+            "--- a/b.py\n+++ b/b.py\n"
+            "@@ -1,1 +1,1 @@\n-foo\n+FOO\n"
+        )
+
+        dry_res = batch_patch_files(
+            patches=[
+                {"target_file": "a.py", "patch_content": diff_a},
+                {"target_file": "b.py", "patch_content": diff_b},
+            ],
+            dry_run=True,
+        )
+        run_id = dry_res["run_id"]
+
+        apply_res = apply_last_dry_run(run_id=run_id)
+        assert apply_res["success"] is True
+        assert f1.read_text() == "HELLO\nworld\n"
+        assert f2.read_text() == "FOO\nbar\n"

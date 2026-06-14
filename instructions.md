@@ -39,3 +39,25 @@ Use `start_line`/`end_line` or `symbol_name` to limit the search scope:
 ## Error: `fatal_context_mismatch`
 
 Returned when a **relative** `target_file` resolves to a path outside the active workspace. Fix: use an absolute path, or ensure the shell is `cd`-ed to the correct repository before the MCP server starts.
+
+## Dry-Run → Apply Workflow (run_id)
+
+To avoid resending the full payload twice, use the two-step flow:
+
+**Step 1 — preview:**
+```json
+patch_file(target_file="src/foo.py", search_content="...", replace_content="...", dry_run=true)
+// Response includes: { "dryRun": true, "run_id": "a1b2c3", "expires_in": 300, "message": "<diff>" }
+```
+
+**Step 2 — apply (no payload resend):**
+```json
+apply_last_dry_run(run_id="a1b2c3")
+// Response: { "success": true, "dryRun": false, "message": "Applied cached patch..." }
+```
+
+The same flow works for `batch_patch_files`.
+
+### Guards
+- `run_id` is **single-use** and expires after **300 seconds**.
+- If any target file was modified between the dry-run and the apply call, `apply_last_dry_run` returns an error and leaves all files untouched. Re-run with `dry_run=true` to get a fresh preview.
