@@ -40,6 +40,22 @@ Use `start_line`/`end_line` or `symbol_name` to limit the search scope:
 
 Returned when a **relative** `target_file` resolves to a path outside the active workspace. Fix: use an absolute path, or ensure the shell is `cd`-ed to the correct repository before the MCP server starts.
 
+## When to Use dry_run
+
+**Default: apply directly (`dry_run=false`).** Only set `dry_run=true` when at least one condition below is true:
+
+| Condition | Reason |
+|---|---|
+| `allow_multiple: true` | Verify the replacement count before committing |
+| `batch_patch_files` touching 3+ files | Review the full multi-file diff before writing to disk |
+| User explicitly asks to "preview", "show diff", or "check first" | Honour explicit intent |
+| You are uncertain which occurrence will be matched | Confirm scope before write |
+
+For all other cases — **skip dry_run and apply directly**. Git is the safety net.
+
+**If you do use `dry_run=true`, always follow up with `apply_last_dry_run(run_id=...)`.**
+Never resend the full payload with `dry_run=false` — that doubles token cost with zero benefit.
+
 ## Dry-Run → Apply Workflow (run_id)
 
 To avoid resending the full payload twice, use the two-step flow:
