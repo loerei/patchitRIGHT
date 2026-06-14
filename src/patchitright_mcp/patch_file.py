@@ -1,6 +1,7 @@
 """AST-bounded file editor (patch_file) utilizing workspace, engine, and transaction modules."""
 
 import difflib
+import hashlib
 import os
 from pathlib import Path
 from typing import Optional, Union
@@ -9,6 +10,7 @@ from jcodemunch_mcp.storage import IndexStore
 from .workspace import Workspace
 from .engine import PatchEngine
 from .transaction import FileTransaction
+from .run_cache import get_cache
 
 
 def generate_diff(original: str, modified: str, filename: str) -> str:
@@ -142,11 +144,18 @@ def patch_file(
                 output = f"```diff\n{diff_text}```\n"
                 output += f"- Target file: `{target_file}`\n"
                 output += f"- Format: Unified Diff (Strict Fuzz = 0)\n"
+                cache = get_cache()
+                run_id = cache.store(
+                    entries=[{"target_path": target_path, "patched_content": patched_file}],
+                    original_contents={str(target_path): file_content, target_file: file_content},
+                )
                 return {
                     "success": True,
                     "dryRun": True,
                     "message": output,
-                    "occurrences": 1
+                    "occurrences": 1,
+                    "run_id": run_id,
+                    "expires_in": cache._ttl,
                 }
                 
             try:
@@ -200,11 +209,18 @@ def patch_file(
                 end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
                 output += f"- Scope: Line range {start_disp}-{end_disp}\n"
 
+            cache = get_cache()
+            run_id = cache.store(
+                entries=[{"target_path": target_path, "patched_content": patched_file}],
+                original_contents={str(target_path): file_content, target_file: file_content},
+            )
             return {
                 "success": True,
                 "dryRun": True,
                 "message": output,
-                "occurrences": occurrences
+                "occurrences": occurrences,
+                "run_id": run_id,
+                "expires_in": cache._ttl,
             }
 
         try:
@@ -250,6 +266,62 @@ def patch_file(
 def run_startup_recovery(workspace_path: Path) -> None:
     """Scan for dirty backups in .patchitRIGHT/backups and restore them safely."""
     FileTransaction.run_startup_recovery(workspace_path)
+
+
+def apply_last_dry_run(run_id: str) -> dict:
+    """Commit the patch cached under *run_id* from a previous dry-run call.
+
+    No payload resend required — the caller only supplies the run_id.
+
+    Guards:
+    - Returns an error dict if run_id is unknown or has expired (TTL).
+    - Returns an error dict if any target file has changed since the dry-run
+      (hash mismatch), leaving all files untouched.
+    """
+    cache = get_cache()
+    entry = cache.consume(run_id)
+
+    if entry is None:
+        return {"error": f"run_id '{run_id}' not found or expired. Re-run with dry_run=true to get a fresh run_id."}
+
+    files = entry["files"]
+
+    # Hash guard: verify all files are unchanged before writing any
+    for f in files:
+        target_path: Path = f["target_path"]
+        original_hash: str = f["original_hash"]
+        try:
+            current_text = target_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            return {"error": f"Cannot read '{target_path}' for hash check: {e}"}
+        current_hash = hashlib.sha256(current_text.encode()).hexdigest()
+        if current_hash != original_hash:
+            return {
+                "error": (
+                    f"File '{target_path.name}' was modified after the dry-run "
+                    "(hash mismatch). Re-run with dry_run=true to preview the updated diff."
+                )
+            }
+
+    # All guards passed — write all files
+    applied: list[str] = []
+    for f in files:
+        target_path = f["target_path"]
+        try:
+            target_path.write_text(f["patched_content"], encoding="utf-8")
+        except Exception as e:
+            return {"error": f"Failed to write '{target_path}': {e}"}
+        applied.append(str(target_path))
+
+    output = f"Applied cached patch (run_id={run_id}). Wrote **{len(applied)}** file(s).\n"
+    for path in applied:
+        output += f"- `{path}` updated.\n"
+
+    return {
+        "success": True,
+        "dryRun": False,
+        "message": output,
+    }
 
 
 def batch_patch_files(
@@ -317,13 +389,25 @@ def batch_patch_files(
         
     if dry_run:
         outputs = []
+        cache_entries = []
+        original_contents: dict[str, str] = {}
         for item in processed_patches:
             diff_text = generate_diff(item["original_content"], item["patched_content"], item["raw_target"])
             outputs.append(f"```diff\n{diff_text}```\n- Target file: `{item['raw_target']}`")
+            cache_entries.append({
+                "target_path": item["target_path"],
+                "patched_content": item["patched_content"],
+            })
+            original_contents[str(item["target_path"])] = item["original_content"]
+            original_contents[item["raw_target"]] = item["original_content"]
+        cache = get_cache()
+        run_id = cache.store(entries=cache_entries, original_contents=original_contents)
         return {
             "success": True,
             "dryRun": True,
-            "message": "\n\n".join(outputs)
+            "message": "\n\n".join(outputs),
+            "run_id": run_id,
+            "expires_in": cache._ttl,
         }
         
     # Backup Phase
