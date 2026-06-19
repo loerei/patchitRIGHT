@@ -24,10 +24,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="patch_file",
             description=(
-                "Perform a robust, AST-bounded search-and-replace edit on a target file. "
-                "Can be optionally scoped to a line range or a specific AST symbol (function/class) "
-                "using jCodeMunch index. Includes safety occurrence checks, workspace-scoped path "
-                "protection for relative paths, and dry-run preview."
+                "Edit a file by replacing an exact text block (search_content/replace_content) "
+                "or applying a unified diff (patch_content). Optionally scope to a line range or AST symbol."
             ),
             inputSchema={
                 "type": "object",
@@ -96,11 +94,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="batch_patch_files",
             description=(
-                "Perform an atomic, transactional refactoring operation across multiple target files. "
-                "Applies Git-style Unified Diffs (Fuzz = 0) with a safety lock: if any patch fails, "
-                "the entire transaction is rolled back safely, leaving no corrupted files. "
-                "Includes crash-resilient ephemeral backup files, optimistic hash-locking to prevent "
-                "concurrency conflicts, and dry-run diff preview."
+                "Apply unified diffs to multiple files in one call. "
+                "All patches are validated before any file is written; if one fails, none are applied."
             ),
             inputSchema={
                 "type": "object",
@@ -139,11 +134,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="apply_last_dry_run",
             description=(
-                "Commit a patch that was previewed with dry_run=true, using only its run_id. "
-                "Avoids resending search_content / replace_content / patch_content, "
-                "cutting token usage roughly in half for the apply step. "
-                "Fails with a clear error if the run_id is unknown, expired (TTL 300 s), "
-                "or if any target file was modified after the dry-run (hash guard)."
+                "Apply the patch cached by a previous dry_run=true call. "
+                "Requires the run_id from that response. "
+                "Fails if the run_id is expired (300 s TTL) or if any target file was modified after the dry-run."
             ),
             inputSchema={
                 "type": "object",
