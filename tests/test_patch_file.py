@@ -459,7 +459,7 @@ class TestPatchFile:
         # during the batch processing if we can, or just mock target_path.read_bytes.
         # Let's mock target_path.read_bytes or target_path.stat to change.
         # Let's write a simple helper test.
-        pass
+        # Removed redundant pass
 
     def test_batch_patch_optimistic_locking_conflict(self, tmp_path, monkeypatch):
         """batch_patch_files must abort if the file hash changes before commit."""
@@ -600,7 +600,7 @@ class TestPatchEngine:
         engine = PatchEngine("line 1\nline 2\n", "test.py")
         
         # Valid assertion
-        res, count = engine.apply_classic_patch("line 2", "new", line_filter=2)
+        res, _ = engine.apply_classic_patch("line 2", "new", line_filter=2)
         assert res == "line 1\nnew\n"
         
         # Invalid assertion
@@ -614,7 +614,7 @@ class TestPatchEngine:
         engine = PatchEngine("line 1\nline 2\n", "test.py")
         
         # Valid assertion
-        res, count = engine.apply_classic_patch("line 2", "new", line_filter="line 2")
+        res, _ = engine.apply_classic_patch("line 2", "new", line_filter="line 2")
         assert res == "line 1\nnew\n"
         
         # Invalid assertion

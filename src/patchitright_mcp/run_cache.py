@@ -39,6 +39,10 @@ class RunCache:
         self._lock = threading.Lock()
         self._store: dict[str, _CacheEntry] = {}
 
+    def get_ttl(self) -> int:
+        """Return the TTL config for cached items."""
+        return self._ttl
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

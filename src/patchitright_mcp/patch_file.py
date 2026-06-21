@@ -134,43 +134,9 @@ def patch_file(
 
         # Handle Unified Diff patch format
         if patch_content is not None:
-            try:
-                patched_file = engine.apply_unified_patch(patch_content)
-            except ValueError as e:
-                return {"error": str(e)}
-                
-            if dry_run:
-                diff_text = generate_diff(file_content, patched_file, target_file)
-                output = f"```diff\n{diff_text}```\n"
-                output += f"- Target file: `{target_file}`\n"
-                output += f"- Format: Unified Diff (Strict Fuzz = 0)\n"
-                cache = get_cache()
-                run_id = cache.store(
-                    entries=[{"target_path": target_path, "patched_content": patched_file}],
-                    original_contents={str(target_path): file_content, target_file: file_content},
-                )
-                return {
-                    "success": True,
-                    "dryRun": True,
-                    "message": output,
-                    "occurrences": 1,
-                    "run_id": run_id,
-                    "expires_in": cache._ttl,
-                }
-                
-            try:
-                target_path.write_text(patched_file, encoding="utf-8")
-            except Exception as e:
-                return {"error": f"Failed to write patched file: {e}"}
-                
-            output = f"- Target file: `{target_file}`\n"
-            output += f"- Format: Unified Diff (Strict Fuzz = 0) applied successfully\n"
-            return {
-                "success": True,
-                "dryRun": False,
-                "message": output,
-                "occurrences": 1
-            }
+            return _apply_patch_content(
+                engine, patch_content, dry_run, target_file, target_path, file_content
+            )
 
         # Otherwise fallback to classic search/replace
         if search_content is None or replace_content is None:
@@ -197,70 +163,141 @@ def patch_file(
         except ValueError as e:
             return {"error": str(e)}
 
-        if dry_run:
-            diff_text = generate_diff(file_content, patched_file, target_file)
-            output = f"```diff\n{diff_text}```\n"
-            output += f"- Target file: `{target_file}`\n"
-            output += f"- Match occurrences inside scope: **{occurrences}**\n"
-            if symbol_name:
-                output += f"- Scope: AST symbol `{symbol_name}` (lines {resolved_start_line}-{resolved_end_line})\n"
-            elif start_line or end_line:
-                start_disp = resolved_start_line if resolved_start_line is not None else 1
-                end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
-                output += f"- Scope: Line range {start_disp}-{end_disp}\n"
+        return _apply_classic_replacement(
+            dry_run, file_content, patched_file, target_file, target_path, occurrences,
+            symbol_name, resolved_start_line, resolved_end_line, start_line, end_line, engine
+        )
 
-            cache = get_cache()
-            run_id = cache.store(
-                entries=[{"target_path": target_path, "patched_content": patched_file}],
-                original_contents={str(target_path): file_content, target_file: file_content},
-            )
-            return {
-                "success": True,
-                "dryRun": True,
-                "message": output,
-                "occurrences": occurrences,
-                "run_id": run_id,
-                "expires_in": cache._ttl,
-            }
+    except ValueError as e:
+        return _handle_patch_file_value_error(e, target_file)
 
-        try:
-            target_path.write_text(patched_file, encoding="utf-8")
-        except Exception as e:
-            return {"error": f"Failed to write patched file: {e}"}
 
-        output = f"- Target file: `{target_file}`\n"
-        output += f"- Replaced occurrences: **{occurrences}**\n"
+def _apply_patch_content(
+    engine: PatchEngine,
+    patch_content: str,
+    dry_run: bool,
+    target_file: str,
+    target_path: Path,
+    file_content: str,
+) -> dict:
+    try:
+        patched_file = engine.apply_unified_patch(patch_content)
+    except ValueError as e:
+        return {"error": str(e)}
+        
+    if dry_run:
+        diff_text = generate_diff(file_content, patched_file, target_file)
+        output = f"```diff\n{diff_text}```\n"
+        output += f"- Target file: `{target_file}`\n"
+        output += "- Format: Unified Diff (Strict Fuzz = 0)\n"
+        cache = get_cache()
+        run_id = cache.store(
+            entries=[{"target_path": target_path, "patched_content": patched_file}],
+            original_contents={str(target_path): file_content, target_file: file_content},
+        )
+        return {
+            "success": True,
+            "dryRun": True,
+            "message": output,
+            "occurrences": 1,
+            "run_id": run_id,
+            "expires_in": cache.get_ttl(),
+        }
+        
+    try:
+        target_path.write_text(patched_file, encoding="utf-8")
+    except Exception as e:
+        return {"error": f"Failed to write patched file: {e}"}
+        
+    output = f"- Target file: `{target_file}`\n"
+    output += "- Format: Unified Diff (Strict Fuzz = 0) applied successfully\n"
+    return {
+        "success": True,
+        "dryRun": False,
+        "message": output,
+        "occurrences": 1
+    }
+
+
+def _apply_classic_replacement(
+    dry_run: bool,
+    file_content: str,
+    patched_file: str,
+    target_file: str,
+    target_path: Path,
+    occurrences: int,
+    symbol_name: Optional[str],
+    resolved_start_line: Optional[int],
+    resolved_end_line: Optional[int],
+    start_line: Optional[int],
+    end_line: Optional[int],
+    engine: PatchEngine,
+) -> dict:
+    if dry_run:
+        diff_text = generate_diff(file_content, patched_file, target_file)
+        output = f"```diff\n{diff_text}```\n"
+        output += f"- Target file: `{target_file}`\n"
+        output += f"- Match occurrences inside scope: **{occurrences}**\n"
         if symbol_name:
             output += f"- Scope: AST symbol `{symbol_name}` (lines {resolved_start_line}-{resolved_end_line})\n"
         elif start_line or end_line:
             start_disp = resolved_start_line if resolved_start_line is not None else 1
             end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
             output += f"- Scope: Line range {start_disp}-{end_disp}\n"
-        if occurrences > 1:
-            output += f"⚠️ *Warning:* Replaced {occurrences} identical occurrences.\n"
 
+        cache = get_cache()
+        run_id = cache.store(
+            entries=[{"target_path": target_path, "patched_content": patched_file}],
+            original_contents={str(target_path): file_content, target_file: file_content},
+        )
         return {
             "success": True,
-            "dryRun": False,
+            "dryRun": True,
             "message": output,
-            "occurrences": occurrences
+            "occurrences": occurrences,
+            "run_id": run_id,
+            "expires_in": cache.get_ttl(),
         }
 
-    except ValueError as e:
-        if str(e) == "fatal_context_mismatch":
-            cwd = Path.cwd().resolve()
-            return {
-                "error": "fatal_context_mismatch",
-                "detail": (
-                    f"[FATAL CONTEXT MISMATCH]\n"
-                    f"Relative path '{target_file}' resolves outside the active MCP workspace '{cwd}'.\n\n"
-                    "Relative paths are restricted to the active workspace to prevent cross-repo drift.\n"
-                    "To fix:\n"
-                    "1. Use an absolute path to target a file outside the current workspace.\n"
-                    "2. Or ensure the terminal shell is CD'ed to the correct repository.\n"
-                )
-            }
-        return {"error": str(e)}
+    try:
+        target_path.write_text(patched_file, encoding="utf-8")
+    except Exception as e:
+        return {"error": f"Failed to write patched file: {e}"}
+
+    output = f"- Target file: `{target_file}`\n"
+    output += f"- Replaced occurrences: **{occurrences}**\n"
+    if symbol_name:
+        output += f"- Scope: AST symbol `{symbol_name}` (lines {resolved_start_line}-{resolved_end_line})\n"
+    elif start_line or end_line:
+        start_disp = resolved_start_line if resolved_start_line is not None else 1
+        end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
+        output += f"- Scope: Line range {start_disp}-{end_disp}\n"
+    if occurrences > 1:
+        output += f"⚠️ *Warning:* Replaced {occurrences} identical occurrences.\n"
+
+    return {
+        "success": True,
+        "dryRun": False,
+        "message": output,
+        "occurrences": occurrences
+    }
+
+
+def _handle_patch_file_value_error(e: ValueError, target_file: str) -> dict:
+    if str(e) == "fatal_context_mismatch":
+        cwd = Path.cwd().resolve()
+        return {
+            "error": "fatal_context_mismatch",
+            "detail": (
+                f"[FATAL CONTEXT MISMATCH]\n"
+                f"Relative path '{target_file}' resolves outside the active MCP workspace '{cwd}'.\n\n"
+                "Relative paths are restricted to the active workspace to prevent cross-repo drift.\n"
+                "To fix:\n"
+                "1. Use an absolute path to target a file outside the current workspace.\n"
+                "2. Or ensure the terminal shell is CD'ed to the correct repository.\n"
+            )
+        }
+    return {"error": str(e)}
 
 
 def run_startup_recovery(workspace_path: Path) -> None:
@@ -336,80 +373,102 @@ def batch_patch_files(
 
     cwd = Path.cwd().resolve()
     workspace = Workspace(cwd, storage_path)
-    
-    first_target = patches[0].get("target_file") if patches else None
-    if first_target:
-        try:
-            resolved_path = workspace.resolve_safe_path(first_target)
-            workspace_root = workspace.find_workspace_root(resolved_path)
-        except Exception:
-            workspace_root = cwd
-    else:
-        workspace_root = cwd
+    workspace_root = _resolve_workspace_root(patches, workspace, cwd)
     
     transaction = FileTransaction(workspace_root)
     processed_patches = []
     
     try:
-        for p in patches:
-            raw_target = p.get("target_file")
-            patch_content = p.get("patch_content")
-            if not raw_target or not patch_content:
-                return {"error": "Error: Each patch in patches array must have target_file and patch_content."}
-                
-            target_path = workspace.resolve_safe_path(raw_target)
-            if not target_path.exists():
-                return {"error": f"Error: Target file not found at {raw_target}."}
-                
-            original_content = transaction.register_file(target_path)
-            
-            engine = PatchEngine(original_content, raw_target)
-            try:
-                patched_content = engine.apply_unified_patch(patch_content)
-            except ValueError as err:
-                return {
-                    "error": f"Validation failed for file {raw_target}: {str(err)}",
-                    "detail": str(err)
-                }
-                
-            processed_patches.append({
-                "target_path": target_path,
-                "raw_target": raw_target,
-                "original_content": original_content,
-                "patched_content": patched_content
-            })
-            
+        err = _process_patches_list(patches, workspace, transaction, processed_patches)
+        if err:
+            return err
     except ValueError as e:
-        if str(e) == "fatal_context_mismatch":
-            return {
-                "error": "fatal_context_mismatch",
-                "detail": "[FATAL CONTEXT MISMATCH] File resolves outside active workspace."
-            }
-        return {"error": str(e)}
+        return _handle_batch_value_error(e)
         
     if dry_run:
-        outputs = []
-        cache_entries = []
-        original_contents: dict[str, str] = {}
-        for item in processed_patches:
-            diff_text = generate_diff(item["original_content"], item["patched_content"], item["raw_target"])
-            outputs.append(f"```diff\n{diff_text}```\n- Target file: `{item['raw_target']}`")
-            cache_entries.append({
-                "target_path": item["target_path"],
-                "patched_content": item["patched_content"],
-            })
-            original_contents[str(item["target_path"])] = item["original_content"]
-            original_contents[item["raw_target"]] = item["original_content"]
-        cache = get_cache()
-        run_id = cache.store(entries=cache_entries, original_contents=original_contents)
-        return {
-            "success": True,
-            "dryRun": True,
-            "message": "\n\n".join(outputs),
-            "run_id": run_id,
-            "expires_in": cache._ttl,
-        }
+        return _apply_batch_dry_run(processed_patches)
         
+    return _commit_batch_transaction(transaction, processed_patches)
+
+
+def _resolve_workspace_root(patches: list[dict], workspace: Workspace, cwd: Path) -> Path:
+    first_target = patches[0].get("target_file") if patches else None
+    if first_target:
+        try:
+            resolved_path = workspace.resolve_safe_path(first_target)
+            return workspace.find_workspace_root(resolved_path)
+        except Exception:
+            return cwd
+    return cwd
+
+
+def _process_patches_list(
+    patches: list[dict], workspace: Workspace, transaction: FileTransaction, processed_patches: list[dict]
+) -> Optional[dict]:
+    for p in patches:
+        raw_target = p.get("target_file")
+        patch_content = p.get("patch_content")
+        if not raw_target or not patch_content:
+            return {"error": "Error: Each patch in patches array must have target_file and patch_content."}
+            
+        target_path = workspace.resolve_safe_path(raw_target)
+        if not target_path.exists():
+            return {"error": f"Error: Target file not found at {raw_target}."}
+            
+        original_content = transaction.register_file(target_path)
+        
+        engine = PatchEngine(original_content, raw_target)
+        try:
+            patched_content = engine.apply_unified_patch(patch_content)
+        except ValueError as err:
+            return {
+                "error": f"Validation failed for file {raw_target}: {str(err)}",
+                "detail": str(err)
+            }
+            
+        processed_patches.append({
+            "target_path": target_path,
+            "raw_target": raw_target,
+            "original_content": original_content,
+            "patched_content": patched_content
+        })
+    return None
+
+
+def _handle_batch_value_error(e: ValueError) -> dict:
+    if str(e) == "fatal_context_mismatch":
+        return {
+            "error": "fatal_context_mismatch",
+            "detail": "[FATAL CONTEXT MISMATCH] File resolves outside active workspace."
+        }
+    return {"error": str(e)}
+
+
+def _apply_batch_dry_run(processed_patches: list[dict]) -> dict:
+    outputs = []
+    cache_entries = []
+    original_contents: dict[str, str] = {}
+    for item in processed_patches:
+        diff_text = generate_diff(item["original_content"], item["patched_content"], item["raw_target"])
+        outputs.append(f"```diff\n{diff_text}```\n- Target file: `{item['raw_target']}`")
+        cache_entries.append({
+            "target_path": item["target_path"],
+            "patched_content": item["patched_content"],
+        })
+        original_contents[str(item["target_path"])] = item["original_content"]
+        original_contents[item["raw_target"]] = item["original_content"]
+    cache = get_cache()
+    run_id = cache.store(entries=cache_entries, original_contents=original_contents)
+    return {
+        "success": True,
+        "dryRun": True,
+        "message": "\n\n".join(outputs),
+        "run_id": run_id,
+        "expires_in": cache.get_ttl(),
+    }
+
+
+def _commit_batch_transaction(transaction: FileTransaction, processed_patches: list[dict]) -> dict:
     # Backup Phase
     try:
         transaction.write_backups()
