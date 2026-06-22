@@ -113,12 +113,12 @@ def patch_file(  # noqa: C901 # NOSONAR
     allow_multiple: bool = False,
     line_filter: Optional[Union[str, int]] = None,
     dry_run: bool = False,
-    storage_path: Optional[str] = None,
     patch_content: Optional[str] = None,
     **kwargs,
 ) -> dict:
     """Perform a robust search-and-replace or apply a strict unified diff (Fuzz = 0)."""
     did_you_mean = bool(kwargs.get("did_you_mean", False))
+    storage_path = kwargs.get("storage_path")
     try:
         target_file = os.path.normpath(target_file)
         cwd = Path.cwd().resolve()
