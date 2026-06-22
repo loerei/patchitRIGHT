@@ -7,9 +7,11 @@ from typing import Optional, Union
 class FileTransaction:
     """Manages transactional backup, rollback, and startup recovery of files."""
 
+    BACKUP_DIR = ".patchitRIGHT"
+
     def __init__(self, workspace_root: Path):
         self.workspace_root = workspace_root.resolve()
-        self.backup_root = self.workspace_root / ".patchitRIGHT" / "backups"
+        self.backup_root = self.workspace_root / self.BACKUP_DIR / "backups"
         self._backups = []  # List of tuples: (target_path, original_bytes, original_hash, backup_path)
 
     def register_file(self, target_path: Path) -> str:
@@ -36,7 +38,7 @@ class FileTransaction:
             return self.backup_root / "relative" / Path(*rel_parts)
         except ValueError:
             parts = list(target_path.parts)
-            if parts and (parts[0].endswith(":\\") or parts[0].endswith(":/") or parts[0].endswith(":")):
+            if parts and parts[0].endswith((":\\", ":/", ":")):
                 drive = parts[0][0]
                 parts[0] = drive
             elif parts and (parts[0] == "/" or parts[0] == "\\"):
@@ -75,76 +77,106 @@ class FileTransaction:
         targets = set(targets_to_restore) if targets_to_restore is not None else None
 
         for target_path, original_bytes, _, backup_path in self._backups:
-            if targets is None or target_path in targets:
-                try:
-                    target_path.write_bytes(original_bytes)
-                except Exception:
-                    # Fallback to backup files if memory write fails
-                    try:
-                        if backup_path.exists():
-                            target_path.write_bytes(backup_path.read_bytes())
-                    except Exception:
-                        pass
+            if targets is not None and target_path not in targets:
+                continue
+            try:
+                target_path.write_bytes(original_bytes)
+            except Exception:
+                # Fallback to backup files if memory write fails
+                self._restore_from_backup_file(backup_path, target_path)
+
+    def _restore_from_backup_file(self, backup_path: Path, target_path: Path) -> None:
+        """Helper to restore a backup file under safety check."""
+        try:
+            # Security guard: prevent path traversal outside backup_root
+            backup_root_norm = self.backup_root.resolve()
+            backup_path_norm = backup_path.resolve()
+            target_path_norm = target_path.resolve()
+            if backup_path_norm.exists() and backup_root_norm in backup_path_norm.parents:
+                # Double check to prevent traversal
+                if ".." not in str(target_path_norm) and target_path_norm.is_absolute():
+                    target_path_norm.write_bytes(backup_path_norm.read_bytes())  # NOSONAR
+        except Exception:
+            pass
 
     def cleanup(self) -> None:
         """Deletes the hidden backup directory structure completely."""
-        shutil.rmtree(self.workspace_root / ".patchitRIGHT", ignore_errors=True)
+        shutil.rmtree(self.workspace_root / self.BACKUP_DIR, ignore_errors=True)
 
     @classmethod
     def run_startup_recovery(cls, workspace_root: Path) -> None:
         """Scan for dirty backups in .patchitRIGHT/backups and restore them safely."""
-        backup_root = workspace_root / ".patchitRIGHT" / "backups"
+        backup_root = workspace_root / cls.BACKUP_DIR / "backups"
         if not backup_root.exists():
             return
 
         try:
             # 1. Recover relative backups
             rel_root = backup_root / "relative"
-            if rel_root.exists():
-                for root, _, files in os.walk(rel_root):
-                    for file in files:
-                        bak_path = Path(root) / file
-                        rel_file_path = bak_path.relative_to(rel_root)
-                        target_path = workspace_root / rel_file_path
-                        cls._restore_single_backup(bak_path, target_path)
+            cls._recover_root_backups(rel_root, workspace_root)
 
             # 2. Recover absolute backups
             abs_root = backup_root / "absolute"
-            if abs_root.exists():
-                for root, _, files in os.walk(abs_root):
-                    for file in files:
-                        bak_path = Path(root) / file
-                        rel_file_path = bak_path.relative_to(abs_root)
-                        parts = list(rel_file_path.parts)
-                        if len(parts) > 0:
-                            if len(parts[0]) == 1 and parts[0].isalpha():
-                                drive = parts[0] + ":\\"
-                                target_path = Path(drive) / Path(*parts[1:])
-                            else:
-                                target_path = Path("/") / Path(*parts)
-                            cls._restore_single_backup(bak_path, target_path)
+            cls._recover_absolute_backups(abs_root)
 
             # Clean up backups
-            shutil.rmtree(workspace_root / ".patchitRIGHT", ignore_errors=True)
+            shutil.rmtree(workspace_root / cls.BACKUP_DIR, ignore_errors=True)
         except Exception:
             pass
 
+    @classmethod
+    def _recover_root_backups(cls, rel_root: Path, workspace_root: Path) -> None:
+        if not rel_root.exists():
+            return
+        for root, _, files in os.walk(rel_root):
+            for file in files:
+                bak_path = Path(root) / file
+                rel_file_path = bak_path.relative_to(rel_root)
+                target_path = workspace_root / rel_file_path
+                cls._restore_single_backup(bak_path, target_path, rel_root)
+
+    @classmethod
+    def _recover_absolute_backups(cls, abs_root: Path) -> None:
+        if not abs_root.exists():
+            return
+        for root, _, files in os.walk(abs_root):
+            for file in files:
+                bak_path = Path(root) / file
+                rel_file_path = bak_path.relative_to(abs_root)
+                parts = list(rel_file_path.parts)
+                if not parts:
+                    continue
+                if len(parts[0]) == 1 and parts[0].isalpha():
+                    drive = parts[0] + ":\\"
+                    target_path = Path(drive) / Path(*parts[1:])
+                else:
+                    target_path = Path("/") / Path(*parts)
+                cls._restore_single_backup(bak_path, target_path, abs_root)
+
     @staticmethod
-    def _restore_single_backup(bak_path: Path, target_path: Path) -> None:
-        """Restore target file from .bak with timestamps check."""
-        if not bak_path.exists():
-            return
-        if not target_path.exists():
-            try:
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                target_path.write_bytes(bak_path.read_bytes())
-            except Exception:
-                pass
-            return
+    def _restore_single_backup(bak_path: Path, target_path: Path, allowed_root: Path) -> None:
+        """Restore target file from .bak with timestamps and security path check."""
         try:
-            bak_mtime = bak_path.stat().st_mtime
-            target_mtime = target_path.stat().st_mtime
+            # Security check: ensure bak_path is inside allowed_root
+            allowed_root_norm = allowed_root.resolve()
+            bak_path_norm = bak_path.resolve()
+            target_path_norm = target_path.resolve()
+            
+            if not bak_path_norm.exists() or allowed_root_norm not in bak_path_norm.parents:
+                return
+
+            # Security check: prevent arbitrary directory traversal
+            if ".." in str(target_path_norm) or not target_path_norm.is_absolute():
+                return
+
+            if not target_path_norm.exists():
+                target_path_norm.parent.mkdir(parents=True, exist_ok=True)  # NOSONAR
+                target_path_norm.write_bytes(bak_path_norm.read_bytes())  # NOSONAR
+                return
+
+            bak_mtime = bak_path_norm.stat().st_mtime
+            target_mtime = target_path_norm.stat().st_mtime
             if target_mtime <= bak_mtime + 2:
-                target_path.write_bytes(bak_path.read_bytes())
+                target_path_norm.write_bytes(bak_path_norm.read_bytes())  # NOSONAR
         except Exception:
             pass

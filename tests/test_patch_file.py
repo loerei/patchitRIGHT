@@ -299,6 +299,76 @@ class TestPatchFile:
         assert "val = 'hello_world'" in res["error"]
         assert "similarity 88%" in res["error"]
 
+    def test_did_you_mean_applied(self, tmp_path, monkeypatch):
+        """patch_file must apply the closest match replacement when did_you_mean is True."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text(
+            "def test_func():\n"
+            "    val = 'hello_world'\n"
+            "    return val\n"
+        )
+
+        res = patch_file(
+            target_file="app.py",
+            search_content="val = 'hello_worl'",
+            replace_content="val = 'new'",
+            did_you_mean=True,
+            dry_run=False
+        )
+
+        assert "success" in res
+        assert res["success"] is True
+        assert "applied via 'did_you_mean' fallback" in res["message"]
+        assert "similarity 88%" in res["message"]
+
+        expected_content = (
+            "def test_func():\n"
+            "    val = 'new'\n"
+            "    return val\n"
+        )
+        assert app_file.read_text() == expected_content
+
+    def test_did_you_mean_cache_suggestion(self, tmp_path, monkeypatch):
+        """patch_file must cache the suggested patch on error so it can be applied via apply_last_dry_run."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text(
+            "def test_func():\n"
+            "    val = 'hello_world'\n"
+            "    return val\n"
+        )
+
+        # Call patch_file without did_you_mean=True (so it fails)
+        res = patch_file(
+            target_file="app.py",
+            search_content="val = 'hello_worl'",
+            replace_content="val = 'new'",
+            did_you_mean=False,
+            dry_run=False
+        )
+
+        assert "error" in res
+        assert "run_id" in res
+        assert "expires_in" in res
+        assert "apply_last_dry_run" in res["message"]
+        
+        # Verify the file is not changed yet
+        assert "hello_world" in app_file.read_text()
+
+        # Now apply the cached suggestion!
+        from patchitright_mcp.patch_file import apply_last_dry_run
+        apply_res = apply_last_dry_run(run_id=res["run_id"])
+        assert apply_res["success"] is True
+        
+        # Verify the suggested patch was successfully applied
+        expected_content = (
+            "def test_func():\n"
+            "    val = 'new'\n"
+            "    return val\n"
+        )
+        assert app_file.read_text() == expected_content
+
     def test_unified_patch_success(self, tmp_path, monkeypatch):
         """patch_file must successfully apply a unified diff patch."""
         monkeypatch.chdir(tmp_path)
@@ -459,7 +529,7 @@ class TestPatchFile:
         # during the batch processing if we can, or just mock target_path.read_bytes.
         # Let's mock target_path.read_bytes or target_path.stat to change.
         # Let's write a simple helper test.
-        pass
+        # Removed redundant pass
 
     def test_batch_patch_optimistic_locking_conflict(self, tmp_path, monkeypatch):
         """batch_patch_files must abort if the file hash changes before commit."""
@@ -578,6 +648,24 @@ class TestPatchEngine:
         assert "Did you mean" in str(exc.value)
         assert "line 2" in str(exc.value)
 
+    def test_detect_mismatch_reason_escaped(self):
+        """PatchEngine must detect raw escape character mismatch in suggestion."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("line 1\nline 2\nline 3\n", "test.py")
+        with pytest.raises(ValueError) as exc:
+            # The file has literal newlines, but we search using escaped \\n
+            engine.apply_classic_patch("line 1\\nline 2", "modified")
+        assert "Mismatch due to raw escape characters" in str(exc.value)
+
+    def test_detect_mismatch_reason_whitespace(self):
+        """PatchEngine must detect whitespace/indentation mismatch in suggestion."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("    line 1\n    line 2\n", "test.py")
+        with pytest.raises(ValueError) as exc:
+            # The search content lacks indentation
+            engine.apply_classic_patch("line 1\nline 2", "modified")
+        assert "Mismatch due to indentation or whitespace differences" in str(exc.value)
+
     def test_apply_classic_patch_line_boundary(self):
         """PatchEngine must restrict replacements to line boundaries."""
         from patchitright_mcp.engine import PatchEngine
@@ -600,7 +688,7 @@ class TestPatchEngine:
         engine = PatchEngine("line 1\nline 2\n", "test.py")
         
         # Valid assertion
-        res, count = engine.apply_classic_patch("line 2", "new", line_filter=2)
+        res, _ = engine.apply_classic_patch("line 2", "new", line_filter=2)
         assert res == "line 1\nnew\n"
         
         # Invalid assertion
@@ -614,7 +702,7 @@ class TestPatchEngine:
         engine = PatchEngine("line 1\nline 2\n", "test.py")
         
         # Valid assertion
-        res, count = engine.apply_classic_patch("line 2", "new", line_filter="line 2")
+        res, _ = engine.apply_classic_patch("line 2", "new", line_filter="line 2")
         assert res == "line 1\nnew\n"
         
         # Invalid assertion

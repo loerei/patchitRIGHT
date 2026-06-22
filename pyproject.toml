@@ -10,6 +10,7 @@ authors = [
 dependencies = [
     "mcp>=1.10.0,<2.0.0",
     "jcodemunch-mcp>=1.108.24",
+    "rapidfuzz>=3.0.0",
 ]
 
 [project.scripts]

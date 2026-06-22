@@ -2,9 +2,9 @@
 
 import argparse
 import asyncio
-import sys
+import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from mcp.server import Server
 from mcp.types import Tool, TextContent
@@ -24,10 +24,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="patch_file",
             description=(
-                "Perform a robust, AST-bounded search-and-replace edit on a target file. "
-                "Can be optionally scoped to a line range or a specific AST symbol (function/class) "
-                "using jCodeMunch index. Includes safety occurrence checks, workspace-scoped path "
-                "protection for relative paths, and dry-run preview."
+                "Edit a file by replacing an exact text block (search_content/replace_content) "
+                "or applying a unified diff (patch_content). Optionally scope to a line range or AST symbol."
             ),
             inputSchema={
                 "type": "object",
@@ -80,6 +78,11 @@ async def list_tools() -> list[Tool]:
                         ],
                         "description": "Optional assertion. If an integer, asserts the search content starts exactly at this 1-indexed line. If a string, asserts the resolved scope contains this substring."
                     },
+                    "did_you_mean": {
+                        "type": "boolean",
+                        "description": "If True, automatically applies the replacement to the closest matching block of code if similarity >= 80%. Defaults to False.",
+                        "default": False
+                    },
                     "dry_run": {
                         "type": "boolean",
                         "description": "If True, returns a unified diff preview of the changes without modifying the file. Defaults to False.",
@@ -96,11 +99,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="batch_patch_files",
             description=(
-                "Perform an atomic, transactional refactoring operation across multiple target files. "
-                "Applies Git-style Unified Diffs (Fuzz = 0) with a safety lock: if any patch fails, "
-                "the entire transaction is rolled back safely, leaving no corrupted files. "
-                "Includes crash-resilient ephemeral backup files, optimistic hash-locking to prevent "
-                "concurrency conflicts, and dry-run diff preview."
+                "Apply unified diffs to multiple files in one call. "
+                "All patches are validated before any file is written; if one fails, none are applied."
             ),
             inputSchema={
                 "type": "object",
@@ -139,11 +139,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="apply_last_dry_run",
             description=(
-                "Commit a patch that was previewed with dry_run=true, using only its run_id. "
-                "Avoids resending search_content / replace_content / patch_content, "
-                "cutting token usage roughly in half for the apply step. "
-                "Fails with a clear error if the run_id is unknown, expired (TTL 300 s), "
-                "or if any target file was modified after the dry-run (hash guard)."
+                "Apply the patch cached by a previous dry_run=true call. "
+                "Requires the run_id from that response. "
+                "Fails if the run_id is expired (300 s TTL) or if any target file was modified after the dry-run."
             ),
             inputSchema={
                 "type": "object",
@@ -165,101 +163,95 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name not in ("patch_file", "batch_patch_files", "apply_last_dry_run"):
         raise ValueError(f"Unknown tool: {name}")
 
-    if name == "apply_last_dry_run":
-        try:
-            run_id = arguments.get("run_id")
-            if not run_id:
-                return [TextContent(type="text", text="Error: run_id is required for apply_last_dry_run.")]
-            res = apply_last_dry_run(run_id=run_id)
-            import json
-            return [TextContent(type="text", text=json.dumps(res, indent=2))]
-        except Exception as e:
-            return [TextContent(type="text", text=f"Error executing apply_last_dry_run: {str(e)}")]
-
-    if name == "batch_patch_files":
-        try:
-            patches = arguments.get("patches")
-            if not patches:
-                return [TextContent(type="text", text="Error: patches array is required for batch_patch_files.")]
-            dry_run = bool(arguments.get("dry_run", False))
-            storage_path = arguments.get("storage_path")
-            
-            res = batch_patch_files(
-                patches=patches,
-                dry_run=dry_run,
-                storage_path=storage_path
-            )
-            import json
-            return [TextContent(type="text", text=json.dumps(res, indent=2))]
-        except Exception as e:
-            return [TextContent(type="text", text=f"Error executing batch_patch_files: {str(e)}")]
-
     try:
-        # Coerce/extract arguments
-        target_file = arguments.get("target_file")
-        search_content = arguments.get("search_content")
-        replace_content = arguments.get("replace_content")
-        patch_content = arguments.get("patch_content")
-        
-        if not target_file:
-            return [TextContent(type="text", text="Error: target_file is required.")]
-
-        if patch_content is None and (search_content is None or replace_content is None):
-            return [TextContent(type="text", text="Error: Either patch_content OR both search_content and replace_content are required.")]
-
-        folder_filter = arguments.get("folder_filter")
-        file_filter = arguments.get("file_filter")
-        
-        start_line = arguments.get("start_line")
-        if start_line is not None:
-            start_line = int(start_line)
-            
-        end_line = arguments.get("end_line")
-        if end_line is not None:
-            end_line = int(end_line)
-            
-        symbol_name = arguments.get("symbol_name")
-        allow_multiple = bool(arguments.get("allow_multiple", False))
-        
-        line_filter = arguments.get("line_filter")
-        if line_filter is not None:
-            try:
-                line_filter = int(line_filter)
-            except (ValueError, TypeError):
-                line_filter = str(line_filter)
-                
-        dry_run = bool(arguments.get("dry_run", False))
-        storage_path = arguments.get("storage_path")
-
-        # Invoke the robust patch_file implementation
-        res = patch_file(
-            target_file=target_file,
-            search_content=search_content,
-            replace_content=replace_content,
-            folder_filter=folder_filter,
-            file_filter=file_filter,
-            start_line=start_line,
-            end_line=end_line,
-            symbol_name=symbol_name,
-            allow_multiple=allow_multiple,
-            line_filter=line_filter,
-            dry_run=dry_run,
-            storage_path=storage_path,
-            patch_content=patch_content,
-        )
-
-        import json
-        return [TextContent(type="text", text=json.dumps(res, indent=2))]
-
+        if name == "apply_last_dry_run":
+            return _execute_apply_last_dry_run(arguments)
+        elif name == "batch_patch_files":
+            return _execute_batch_patch_files(arguments)
+        else:
+            return _execute_patch_file(arguments)
     except Exception as e:
-        return [TextContent(type="text", text=f"Error executing patch_file: {str(e)}")]
+        return [TextContent(type="text", text=f"Error executing {name}: {str(e)}")]
+
+
+def _execute_apply_last_dry_run(arguments: dict) -> list[TextContent]:
+    run_id = arguments.get("run_id")
+    if not run_id:
+        return [TextContent(type="text", text="Error: run_id is required for apply_last_dry_run.")]
+    res = apply_last_dry_run(run_id=run_id)
+    return [TextContent(type="text", text=json.dumps(res, indent=2))]
+
+
+def _execute_batch_patch_files(arguments: dict) -> list[TextContent]:
+    patches = arguments.get("patches")
+    if not patches:
+        return [TextContent(type="text", text="Error: patches array is required for batch_patch_files.")]
+    dry_run = bool(arguments.get("dry_run", False))
+    storage_path = arguments.get("storage_path")
+    
+    res = batch_patch_files(
+        patches=patches,
+        dry_run=dry_run,
+        storage_path=storage_path
+    )
+    return [TextContent(type="text", text=json.dumps(res, indent=2))]
+
+
+def _execute_patch_file(arguments: dict) -> list[TextContent]:
+    target_file = arguments.get("target_file")
+    search_content = arguments.get("search_content")
+    replace_content = arguments.get("replace_content")
+    patch_content = arguments.get("patch_content")
+    
+    if not target_file:
+        return [TextContent(type="text", text="Error: target_file is required.")]
+
+    if patch_content is None and (search_content is None or replace_content is None):
+        return [TextContent(type="text", text="Error: Either patch_content OR both search_content and replace_content are required.")]
+
+    folder_filter = arguments.get("folder_filter")
+    file_filter = arguments.get("file_filter")
+    start_line = int(arguments.get("start_line")) if arguments.get("start_line") is not None else None
+    end_line = int(arguments.get("end_line")) if arguments.get("end_line") is not None else None
+    symbol_name = arguments.get("symbol_name")
+    allow_multiple = bool(arguments.get("allow_multiple", False))
+    
+    line_filter = arguments.get("line_filter")
+    if line_filter is not None:
+        try:
+            line_filter = int(line_filter)
+        except (ValueError, TypeError):
+            line_filter = str(line_filter)
+            
+    did_you_mean = bool(arguments.get("did_you_mean", False))
+    dry_run = bool(arguments.get("dry_run", False))
+    storage_path = arguments.get("storage_path")
+
+    res = patch_file(
+        target_file=target_file,
+        search_content=search_content,
+        replace_content=replace_content,
+        folder_filter=folder_filter,
+        file_filter=file_filter,
+        start_line=start_line,
+        end_line=end_line,
+        symbol_name=symbol_name,
+        allow_multiple=allow_multiple,
+        line_filter=line_filter,
+        dry_run=dry_run,
+        storage_path=storage_path,
+        patch_content=patch_content,
+        did_you_mean=did_you_mean,
+    )
+
+    return [TextContent(type="text", text=json.dumps(res, indent=2))]
 
 
 def main() -> None:
     """Server entry point."""
     parser = argparse.ArgumentParser(description="patchitRIGHT MCP Server")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    args = parser.parse_args()
+    parser.parse_args()
 
     # Trigger transactional auto-recovery of dirty .bak files on startup
     run_startup_recovery(Path.cwd().resolve())
