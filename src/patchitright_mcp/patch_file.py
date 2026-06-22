@@ -115,9 +115,10 @@ def patch_file(  # noqa: C901 # NOSONAR
     dry_run: bool = False,
     storage_path: Optional[str] = None,
     patch_content: Optional[str] = None,
-    did_you_mean: bool = False,
+    **kwargs,
 ) -> dict:
     """Perform a robust search-and-replace or apply a strict unified diff (Fuzz = 0)."""
+    did_you_mean = bool(kwargs.get("did_you_mean", False))
     try:
         target_file = os.path.normpath(target_file)
         cwd = Path.cwd().resolve()
@@ -274,7 +275,7 @@ def _apply_classic_replacement(  # NOSONAR
         output = f"```diff\n{diff_text}```\n"
         output += f"- Target file: `{target_file}`\n"
         if is_did_you_mean_applied:
-            output += f"- Match occurrences inside scope: **1** (applied via 'did_you_mean' fallback)\n"
+            output += "- Match occurrences inside scope: **1** (applied via 'did_you_mean' fallback)\n"
         else:
             output += f"- Match occurrences inside scope: **{occurrences}**\n"
         if symbol_name:
@@ -307,7 +308,7 @@ def _apply_classic_replacement(  # NOSONAR
 
     output = f"- Target file: `{target_file}`\n"
     if is_did_you_mean_applied:
-        output += f"- Replaced occurrences: **1** (applied via 'did_you_mean' fallback)\n"
+        output += "- Replaced occurrences: **1** (applied via 'did_you_mean' fallback)\n"
     else:
         output += f"- Replaced occurrences: **{occurrences}**\n"
     if symbol_name:
