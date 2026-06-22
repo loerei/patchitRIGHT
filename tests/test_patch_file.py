@@ -608,6 +608,24 @@ class TestPatchEngine:
         assert "Did you mean" in str(exc.value)
         assert "line 2" in str(exc.value)
 
+    def test_detect_mismatch_reason_escaped(self):
+        """PatchEngine must detect raw escape character mismatch in suggestion."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("line 1\nline 2\nline 3\n", "test.py")
+        with pytest.raises(ValueError) as exc:
+            # The file has literal newlines, but we search using escaped \\n
+            engine.apply_classic_patch("line 1\\nline 2", "modified")
+        assert "Mismatch due to raw escape characters" in str(exc.value)
+
+    def test_detect_mismatch_reason_whitespace(self):
+        """PatchEngine must detect whitespace/indentation mismatch in suggestion."""
+        from patchitright_mcp.engine import PatchEngine
+        engine = PatchEngine("    line 1\n    line 2\n", "test.py")
+        with pytest.raises(ValueError) as exc:
+            # The search content lacks indentation
+            engine.apply_classic_patch("line 1\nline 2", "modified")
+        assert "Mismatch due to indentation or whitespace differences" in str(exc.value)
+
     def test_apply_classic_patch_line_boundary(self):
         """PatchEngine must restrict replacements to line boundaries."""
         from patchitright_mcp.engine import PatchEngine

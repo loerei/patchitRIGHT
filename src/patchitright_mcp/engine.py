@@ -136,6 +136,18 @@ class PatchEngine:
         end_idx = max(start_idx, min(end_idx, len(self.file_lines) - 1))
         return start_idx, end_idx
 
+    def _detect_mismatch_reason(self, text_a: str, text_b: str) -> list[str]:
+        reasons = []
+        norm_a = text_a.replace("\\n", "\n").replace("\\r\\n", "\n")
+        norm_b = text_b.replace("\\n", "\n").replace("\\r\\n", "\n")
+        if norm_a == norm_b:
+            reasons.append("Mismatch due to raw escape characters (\\n) vs literal newlines")
+        strip_a = "".join(text_a.split())
+        strip_b = "".join(text_b.split())
+        if strip_a == strip_b and norm_a != norm_b:
+            reasons.append("Mismatch due to indentation or whitespace differences")
+        return reasons
+
     def _handle_missing_match(
         self, start_idx: int, end_idx: int, norm_search: str, symbol_name: Optional[str]
     ) -> None:
@@ -149,6 +161,9 @@ class PatchEngine:
         if suggestion:
             s_start, s_end, s_text, s_ratio = suggestion
             err_msg += f"\n\nDid you mean (lines {s_start} to {s_end}, similarity {s_ratio:.0%}):\n{s_text}"
+            reasons = self._detect_mismatch_reason(s_text, norm_search)
+            for r in reasons:
+                err_msg += f"\n⚠️ *Note:* {r}."
         raise ValueError(err_msg)
 
     def _assert_line_filter(
@@ -234,6 +249,9 @@ class PatchEngine:
             s_line, s_ratio = suggestion
             s_text = "\n".join(file_lines[s_line - 1 : s_line - 1 + len(expected_old_lines)])
             err_msg += f"\n\nDid you mean (line {s_line}, similarity {s_ratio:.0%}):\n{s_text}"
+            reasons = self._detect_mismatch_reason(s_text, "\n".join(expected_old_lines))
+            for r in reasons:
+                err_msg += f"\n⚠️ *Note:* {r}."
         raise ValueError(err_msg)
 
     def _find_closest_match(self, start_idx: int, end_idx: int, norm_search: str) -> Optional[tuple[int, int, str, float]]:
