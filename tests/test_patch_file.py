@@ -321,7 +321,47 @@ class TestPatchFile:
         assert res["success"] is True
         assert "applied via 'did_you_mean' fallback" in res["message"]
         assert "similarity 88%" in res["message"]
+
+        expected_content = (
+            "def test_func():\n"
+            "    val = 'new'\n"
+            "    return val\n"
+        )
+        assert app_file.read_text() == expected_content
+
+    def test_did_you_mean_cache_suggestion(self, tmp_path, monkeypatch):
+        """patch_file must cache the suggested patch on error so it can be applied via apply_last_dry_run."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text(
+            "def test_func():\n"
+            "    val = 'hello_world'\n"
+            "    return val\n"
+        )
+
+        # Call patch_file without did_you_mean=True (so it fails)
+        res = patch_file(
+            target_file="app.py",
+            search_content="val = 'hello_worl'",
+            replace_content="val = 'new'",
+            did_you_mean=False,
+            dry_run=False
+        )
+
+        assert "error" in res
+        assert "run_id" in res
+        assert "expires_in" in res
+        assert "apply_last_dry_run" in res["message"]
         
+        # Verify the file is not changed yet
+        assert "hello_world" in app_file.read_text()
+
+        # Now apply the cached suggestion!
+        from patchitright_mcp.patch_file import apply_last_dry_run
+        apply_res = apply_last_dry_run(run_id=res["run_id"])
+        assert apply_res["success"] is True
+        
+        # Verify the suggested patch was successfully applied
         expected_content = (
             "def test_func():\n"
             "    val = 'new'\n"

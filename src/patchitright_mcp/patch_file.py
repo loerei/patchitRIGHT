@@ -163,6 +163,33 @@ def patch_file(
                 did_you_mean=did_you_mean
             )
         except ValueError as e:
+            if not did_you_mean:
+                try:
+                    suggest_engine = PatchEngine(file_content, target_file)
+                    suggested_patched_file, _ = suggest_engine.apply_classic_patch(
+                        search_content=search_content,
+                        replace_content=replace_content,
+                        allow_multiple=allow_multiple,
+                        start_line=start_line,
+                        end_line=end_line,
+                        symbol_boundaries=(resolved_start_line, resolved_end_line),
+                        symbol_name=symbol_name,
+                        line_filter=line_filter,
+                        did_you_mean=True
+                    )
+                    cache = get_cache()
+                    run_id = cache.store(
+                        entries=[{"target_path": target_path, "patched_content": suggested_patched_file}],
+                        original_contents={str(target_path): file_content, target_file: file_content},
+                    )
+                    return {
+                        "error": str(e),
+                        "run_id": run_id,
+                        "expires_in": cache.get_ttl(),
+                        "message": f"To apply the suggestion above directly, call apply_last_dry_run with run_id: '{run_id}'"
+                    }
+                except Exception:
+                    pass
             return {"error": str(e)}
 
         return _apply_classic_replacement(
