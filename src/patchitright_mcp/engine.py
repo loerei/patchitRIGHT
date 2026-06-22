@@ -160,7 +160,7 @@ class PatchEngine:
         suggestion = self._find_closest_match(start_idx, end_idx, norm_search)
         if suggestion:
             s_start, s_end, s_text, s_ratio = suggestion
-            err_msg += f"\n\nDid you mean (lines {s_start} to {s_end}, similarity {s_ratio:.0%}):\n{s_text}"
+            err_msg += f"\n\nDid you mean (lines {s_start} to {s_end}, similarity {round(s_ratio * 100)}%):\n{s_text}"
             reasons = self._detect_mismatch_reason(s_text, norm_search)
             for r in reasons:
                 err_msg += f"\n⚠️ *Note:* {r}."
@@ -248,7 +248,7 @@ class PatchEngine:
         if suggestion:
             s_line, s_ratio = suggestion
             s_text = "\n".join(file_lines[s_line - 1 : s_line - 1 + len(expected_old_lines)])
-            err_msg += f"\n\nDid you mean (line {s_line}, similarity {s_ratio:.0%}):\n{s_text}"
+            err_msg += f"\n\nDid you mean (line {s_line}, similarity {round(s_ratio * 100)}%):\n{s_text}"
             reasons = self._detect_mismatch_reason(s_text, "\n".join(expected_old_lines))
             for r in reasons:
                 err_msg += f"\n⚠️ *Note:* {r}."

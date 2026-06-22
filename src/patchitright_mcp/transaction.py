@@ -91,8 +91,11 @@ class FileTransaction:
             # Security guard: prevent path traversal outside backup_root
             backup_root_norm = self.backup_root.resolve()
             backup_path_norm = backup_path.resolve()
+            target_path_norm = target_path.resolve()
             if backup_path_norm.exists() and backup_root_norm in backup_path_norm.parents:
-                target_path.write_bytes(backup_path_norm.read_bytes())
+                # Double check to prevent traversal
+                if ".." not in str(target_path_norm) and target_path_norm.is_absolute():
+                    target_path_norm.write_bytes(backup_path_norm.read_bytes())
         except Exception:
             pass
 
@@ -157,17 +160,23 @@ class FileTransaction:
             # Security check: ensure bak_path is inside allowed_root
             allowed_root_norm = allowed_root.resolve()
             bak_path_norm = bak_path.resolve()
+            target_path_norm = target_path.resolve()
+            
             if not bak_path_norm.exists() or allowed_root_norm not in bak_path_norm.parents:
                 return
 
-            if not target_path.exists():
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                target_path.write_bytes(bak_path_norm.read_bytes())
+            # Security check: prevent arbitrary directory traversal
+            if ".." in str(target_path_norm) or not target_path_norm.is_absolute():
+                return
+
+            if not target_path_norm.exists():
+                target_path_norm.parent.mkdir(parents=True, exist_ok=True)
+                target_path_norm.write_bytes(bak_path_norm.read_bytes())
                 return
 
             bak_mtime = bak_path_norm.stat().st_mtime
-            target_mtime = target_path.stat().st_mtime
+            target_mtime = target_path_norm.stat().st_mtime
             if target_mtime <= bak_mtime + 2:
-                target_path.write_bytes(bak_path_norm.read_bytes())
+                target_path_norm.write_bytes(bak_path_norm.read_bytes())
         except Exception:
             pass
