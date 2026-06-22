@@ -264,6 +264,7 @@ def _apply_classic_replacement(  # NOSONAR
 ) -> dict:
     is_did_you_mean_applied = getattr(engine, "is_did_you_mean_applied", False)
     s_ratio = getattr(engine, "s_ratio", 0.0)
+    ratio_pct = round(s_ratio * 100)
     if is_did_you_mean_applied:
         resolved_start_line = engine.did_you_mean_start_line
         resolved_end_line = engine.did_you_mean_end_line
@@ -283,7 +284,7 @@ def _apply_classic_replacement(  # NOSONAR
             end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
             output += f"- Scope: Line range {start_disp}-{end_disp}\n"
         if is_did_you_mean_applied:
-            output += f"⚠️ *Note:* Exact search content not found, but closest match (similarity {round(s_ratio * 100)}%) was matched via 'did_you_mean' flag.\n"
+            output += f"⚠️ *Note:* Exact search content not found, but closest match (similarity {ratio_pct}%) was matched via 'did_you_mean' flag.\n"
 
         cache = get_cache()
         run_id = cache.store(
@@ -316,7 +317,7 @@ def _apply_classic_replacement(  # NOSONAR
         end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
         output += f"- Scope: Line range {start_disp}-{end_disp}\n"
     if is_did_you_mean_applied:
-        output += f"⚠️ *Note:* Exact search content not found, but closest match (similarity {round(s_ratio * 100)}%) was matched via 'did_you_mean' flag.\n"
+        output += f"⚠️ *Note:* Exact search content not found, but closest match (similarity {ratio_pct}%) was matched via 'did_you_mean' flag.\n"
     elif occurrences > 1:
         output += f"⚠️ *Warning:* Replaced {occurrences} identical occurrences.\n"
 
