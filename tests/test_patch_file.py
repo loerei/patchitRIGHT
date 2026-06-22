@@ -299,6 +299,36 @@ class TestPatchFile:
         assert "val = 'hello_world'" in res["error"]
         assert "similarity 88%" in res["error"]
 
+    def test_did_you_mean_applied(self, tmp_path, monkeypatch):
+        """patch_file must apply the closest match replacement when did_you_mean is True."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text(
+            "def test_func():\n"
+            "    val = 'hello_world'\n"
+            "    return val\n"
+        )
+
+        res = patch_file(
+            target_file="app.py",
+            search_content="val = 'hello_worl'",
+            replace_content="val = 'new'",
+            did_you_mean=True,
+            dry_run=False
+        )
+
+        assert "success" in res
+        assert res["success"] is True
+        assert "applied via 'did_you_mean' fallback" in res["message"]
+        assert "similarity 88%" in res["message"]
+        
+        expected_content = (
+            "def test_func():\n"
+            "    val = 'new'\n"
+            "    return val\n"
+        )
+        assert app_file.read_text() == expected_content
+
     def test_unified_patch_success(self, tmp_path, monkeypatch):
         """patch_file must successfully apply a unified diff patch."""
         monkeypatch.chdir(tmp_path)

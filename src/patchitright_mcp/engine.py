@@ -11,6 +11,14 @@ class PatchEngine:
         self.is_crlf = "\r\n" in file_content
         self.norm_content = file_content.replace("\r\n", "\n")
         self.file_lines = self.norm_content.split("\n")
+        self.is_did_you_mean_applied = False
+        self.s_ratio = 0.0
+        self.did_you_mean_start_line = None
+        self.did_you_mean_end_line = None
+        self.is_did_you_mean_applied = False
+        self.s_ratio = 0.0
+        self.did_you_mean_start_line = None
+        self.did_you_mean_end_line = None
 
     def apply_classic_patch(
         self,
@@ -22,6 +30,7 @@ class PatchEngine:
         symbol_boundaries: Optional[tuple[Optional[int], Optional[int]]] = None,
         symbol_name: Optional[str] = None,
         line_filter: Optional[Union[str, int]] = None,
+        did_you_mean: bool = False,
     ) -> tuple[str, int]:
         """Applies a classic search-and-replace patch inside line/symbol scope."""
         norm_search = search_content.replace("\r\n", "\n")
@@ -36,7 +45,25 @@ class PatchEngine:
         occurrences = target_slice.count(norm_search)
 
         if occurrences == 0:
-            self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
+            if did_you_mean:
+                suggestion = self._find_closest_match(start_idx, end_idx, norm_search)
+                if suggestion:
+                    s_start, s_end, s_text, s_ratio = suggestion
+                    if s_ratio >= 0.8:
+                        start_idx = s_start - 1
+                        end_idx = s_end - 1
+                        target_slice = s_text
+                        occurrences = 1
+                        self.is_did_you_mean_applied = True
+                        self.s_ratio = s_ratio
+                        self.did_you_mean_start_line = s_start
+                        self.did_you_mean_end_line = s_end
+                    else:
+                        self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
+                else:
+                    self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
+            else:
+                self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
 
         if not allow_multiple and occurrences > 1:
             raise ValueError(
@@ -45,11 +72,39 @@ class PatchEngine:
             )
 
         # Line filter assertion
-        if line_filter is not None:
+        if line_filter is not None and not self.is_did_you_mean_applied:
             self._assert_line_filter(line_filter, target_slice, norm_search, start_idx)
 
         # Apply replacement
-        patched_slice = target_slice.replace(norm_search, norm_replace)
+        if self.is_did_you_mean_applied:
+            alignment = fuzz.partial_ratio_alignment(target_slice, norm_search)
+            if alignment:
+                src_start = alignment.src_start
+                src_end = alignment.src_end
+                
+                # Expand start if there's preceding punctuation/quotes matching start of search
+                while src_start > 0 and target_slice[src_start - 1] in "'\"([{":
+                    if target_slice[src_start - 1] == norm_search[0]:
+                        src_start -= 1
+                        break
+                    src_start -= 1
+                    
+                # Expand end if there's succeeding punctuation/quotes matching end of search
+                while src_end < len(target_slice) and target_slice[src_end] in "'\")}]":
+                    if target_slice[src_end] == norm_search[-1]:
+                        src_end += 1
+                        break
+                    src_end += 1
+
+                patched_slice = (
+                    target_slice[:src_start]
+                    + norm_replace
+                    + target_slice[src_end:]
+                )
+            else:
+                patched_slice = norm_replace
+        else:
+            patched_slice = target_slice.replace(norm_search, norm_replace)
 
         before_part = "\n".join(self.file_lines[:start_idx]) + "\n" if start_idx > 0 else ""
         after_part = "\n" + "\n".join(self.file_lines[end_idx + 1:]) if end_idx < len(self.file_lines) - 1 else ""

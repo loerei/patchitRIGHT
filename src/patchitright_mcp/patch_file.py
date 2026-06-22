@@ -115,6 +115,7 @@ def patch_file(
     dry_run: bool = False,
     storage_path: Optional[str] = None,
     patch_content: Optional[str] = None,
+    did_you_mean: bool = False,
 ) -> dict:
     """Perform a robust search-and-replace or apply a strict unified diff (Fuzz = 0)."""
     try:
@@ -158,7 +159,8 @@ def patch_file(
                 end_line=end_line,
                 symbol_boundaries=(resolved_start_line, resolved_end_line),
                 symbol_name=symbol_name,
-                line_filter=line_filter
+                line_filter=line_filter,
+                did_you_mean=did_you_mean
             )
         except ValueError as e:
             return {"error": str(e)}
@@ -233,17 +235,28 @@ def _apply_classic_replacement(
     end_line: Optional[int],
     engine: PatchEngine,
 ) -> dict:
+    is_did_you_mean_applied = getattr(engine, "is_did_you_mean_applied", False)
+    s_ratio = getattr(engine, "s_ratio", 0.0)
+    if is_did_you_mean_applied:
+        resolved_start_line = engine.did_you_mean_start_line
+        resolved_end_line = engine.did_you_mean_end_line
+
     if dry_run:
         diff_text = generate_diff(file_content, patched_file, target_file)
         output = f"```diff\n{diff_text}```\n"
         output += f"- Target file: `{target_file}`\n"
-        output += f"- Match occurrences inside scope: **{occurrences}**\n"
+        if is_did_you_mean_applied:
+            output += f"- Match occurrences inside scope: **1** (applied via 'did_you_mean' fallback)\n"
+        else:
+            output += f"- Match occurrences inside scope: **{occurrences}**\n"
         if symbol_name:
             output += f"- Scope: AST symbol `{symbol_name}` (lines {resolved_start_line}-{resolved_end_line})\n"
-        elif start_line or end_line:
+        elif start_line or end_line or is_did_you_mean_applied:
             start_disp = resolved_start_line if resolved_start_line is not None else 1
             end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
             output += f"- Scope: Line range {start_disp}-{end_disp}\n"
+        if is_did_you_mean_applied:
+            output += f"⚠️ *Note:* Exact search content not found, but closest match (similarity {s_ratio:.0%}) was matched via 'did_you_mean' flag.\n"
 
         cache = get_cache()
         run_id = cache.store(
@@ -265,14 +278,19 @@ def _apply_classic_replacement(
         return {"error": f"Failed to write patched file: {e}"}
 
     output = f"- Target file: `{target_file}`\n"
-    output += f"- Replaced occurrences: **{occurrences}**\n"
+    if is_did_you_mean_applied:
+        output += f"- Replaced occurrences: **1** (applied via 'did_you_mean' fallback)\n"
+    else:
+        output += f"- Replaced occurrences: **{occurrences}**\n"
     if symbol_name:
         output += f"- Scope: AST symbol `{symbol_name}` (lines {resolved_start_line}-{resolved_end_line})\n"
-    elif start_line or end_line:
+    elif start_line or end_line or is_did_you_mean_applied:
         start_disp = resolved_start_line if resolved_start_line is not None else 1
         end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
         output += f"- Scope: Line range {start_disp}-{end_disp}\n"
-    if occurrences > 1:
+    if is_did_you_mean_applied:
+        output += f"⚠️ *Note:* Exact search content not found, but closest match (similarity {s_ratio:.0%}) was matched via 'did_you_mean' flag.\n"
+    elif occurrences > 1:
         output += f"⚠️ *Warning:* Replaced {occurrences} identical occurrences.\n"
 
     return {

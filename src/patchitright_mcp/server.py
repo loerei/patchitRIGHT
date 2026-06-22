@@ -78,6 +78,11 @@ async def list_tools() -> list[Tool]:
                         ],
                         "description": "Optional assertion. If an integer, asserts the search content starts exactly at this 1-indexed line. If a string, asserts the resolved scope contains this substring."
                     },
+                    "did_you_mean": {
+                        "type": "boolean",
+                        "description": "If True, automatically applies the replacement to the closest matching block of code if similarity >= 80%. Defaults to False.",
+                        "default": False
+                    },
                     "dry_run": {
                         "type": "boolean",
                         "description": "If True, returns a unified diff preview of the changes without modifying the file. Defaults to False.",
@@ -218,6 +223,7 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
         except (ValueError, TypeError):
             line_filter = str(line_filter)
             
+    did_you_mean = bool(arguments.get("did_you_mean", False))
     dry_run = bool(arguments.get("dry_run", False))
     storage_path = arguments.get("storage_path")
 
@@ -235,6 +241,7 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
         dry_run=dry_run,
         storage_path=storage_path,
         patch_content=patch_content,
+        did_you_mean=did_you_mean,
     )
 
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
