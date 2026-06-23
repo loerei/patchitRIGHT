@@ -163,7 +163,7 @@ class PatchEngine:
             err_msg += f"\n\nDid you mean (lines {s_start} to {s_end}, similarity {round(s_ratio * 100)}%):\n{s_text}"
             reasons = self._detect_mismatch_reason(s_text, norm_search)
             for r in reasons:
-                err_msg += f"\n⚠️ *Note:* {r}."
+                err_msg += f"\n*Note:* {r}."
         raise ValueError(err_msg)
 
     def _assert_line_filter(
@@ -251,7 +251,7 @@ class PatchEngine:
             err_msg += f"\n\nDid you mean (line {s_line}, similarity {round(s_ratio * 100)}%):\n{s_text}"
             reasons = self._detect_mismatch_reason(s_text, "\n".join(expected_old_lines))
             for r in reasons:
-                err_msg += f"\n⚠️ *Note:* {r}."
+                err_msg += f"\n*Note:* {r}."
         raise ValueError(err_msg)
 
     def _find_closest_match(self, start_idx: int, end_idx: int, norm_search: str) -> Optional[tuple[int, int, str, float]]:

@@ -285,7 +285,7 @@ def _apply_classic_replacement(  # NOSONAR
             end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
             output += f"- Scope: Line range {start_disp}-{end_disp}\n"
         if is_did_you_mean_applied:
-            output += "⚠️ *Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
+            output += "*Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
 
         cache = get_cache()
         run_id = cache.store(
@@ -318,9 +318,9 @@ def _apply_classic_replacement(  # NOSONAR
         end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
         output += f"- Scope: Line range {start_disp}-{end_disp}\n"
     if is_did_you_mean_applied:
-        output += "⚠️ *Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
+        output += "*Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
     elif occurrences > 1:
-        output += f"⚠️ *Warning:* Replaced {occurrences} identical occurrences.\n"
+        output += f"*Warning:* Replaced {occurrences} identical occurrences.\n"
 
     return {
         "success": True,
