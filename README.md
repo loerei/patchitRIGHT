@@ -32,19 +32,35 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 ## 🛠️ Provided Tools
 
 ### `patch_file`
-Performs robust, surgical code replacement on a single target file. Supports two operation modes:
+Performs surgical code replacement on a single target file. Supports three operation modes:
 1. **Search-and-Replace Mode:**
    * `target_file` (required): Path to the file to modify.
    * `search_content` (required): The exact code block to search for.
    * `replace_content` (required): The replacement code block.
 2. **Unified Diff Mode:**
    * `patch_content` (required): Unified Diff string to apply strictly (`Fuzz = 0`).
+3. **Multi-patch Mode:**
+   * `replacements` (required): Array of replacement objects, where each object contains:
+     * `search_content` (required): The exact code block to search for.
+     * `replace_content` (required): The replacement code block.
+     * `start_line` / `end_line` / `symbol_name` / `allow_multiple` / `line_filter` (optional): Scope parameters specific to this replacement.
+     * *Note: Replacements are sorted and applied bottom-up to prevent line-drift.*
 
 **Optional parameters (common):**
 * `symbol_name`: Restricts the search scope to a specific AST symbol (function/class) using jCodeMunch index.
 * `start_line` / `end_line`: Limits the search region to a specific 1-indexed line range.
 * `allow_multiple`: If `true`, replaces all occurrences of the search content within the scope. Defaults to `false`.
 * `dry_run`: Returns a unified git-style diff preview of the changes without writing to disk.
+* `did_you_mean`: If `true`, applies the replacement to the closest matching block of code if similarity is >= 80%.
+
+---
+
+## 🔒 Safety & Validation Features
+
+* **Path Traversal Protection**: Normalizes paths using `os.path.realpath` and rejects any path containing directory traversal sequences (`..`) to restrict relative files to the active workspace.
+* **Line Ending Normalization**: Automatically normalizes CRLF (`\r\n`) and LF (`\n`) line endings internally during matching and patching. The original file's dominant line ending style is preserved when writing back to disk.
+* **Python AST Verification**: Validates modified `.py` files using Python's standard `ast` module. If a patch introduces a syntax error, the edit is aborted before writing to disk.
+* **Ruff Linter Integration**: Runs `ruff check` internally on patched Python files to return inline warnings (such as unused imports or variables) in the tool's message response.
 
 ---
 
