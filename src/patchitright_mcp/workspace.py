@@ -24,6 +24,10 @@ class Workspace:
 
     def resolve_safe_path(self, target_file: str) -> Path:
         """Resolve the target path and check context mismatch constraint for relative paths."""
+        # Validate input to prevent path traversal vulnerability (pythonsecurity:S2083)
+        if ".." in target_file or "/../" in target_file or "\\..\\" in target_file:
+            raise ValueError("fatal_context_mismatch")
+
         base_dir = self.resolve_allowed_base_dir(target_file)
         
         # Resolve all symlinks and directory traversal sequences first to get the canonical path
