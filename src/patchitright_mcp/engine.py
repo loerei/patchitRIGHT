@@ -15,10 +15,9 @@ class PatchEngine:
         self.s_ratio = 0.0
         self.did_you_mean_start_line = None
         self.did_you_mean_end_line = None
-        self.is_did_you_mean_applied = False
-        self.s_ratio = 0.0
-        self.did_you_mean_start_line = None
-        self.did_you_mean_end_line = None
+        self.is_relocated = False
+        self.relocated_start_line = None
+        self.relocated_end_line = None
 
     def apply_classic_patch(
         self,
@@ -45,25 +44,42 @@ class PatchEngine:
         occurrences = target_slice.count(norm_search)
 
         if occurrences == 0:
-            if did_you_mean:
-                suggestion = self._find_closest_match(start_idx, end_idx, norm_search)
-                if suggestion:
-                    s_start, s_end, s_text, s_ratio = suggestion
-                    if s_ratio >= 0.8:
-                        start_idx = s_start - 1
-                        end_idx = s_end - 1
-                        target_slice = s_text
-                        occurrences = 1
-                        self.is_did_you_mean_applied = True
-                        self.s_ratio = s_ratio
-                        self.did_you_mean_start_line = s_start
-                        self.did_you_mean_end_line = s_end
+            total_occurrences = self.norm_content.count(norm_search)
+            if total_occurrences == 1:
+                char_idx = self.norm_content.find(norm_search)
+                start_idx = self.norm_content[:char_idx].count("\n")
+                end_idx = start_idx + norm_search.count("\n")
+                target_slice = "\n".join(self.file_lines[start_idx:end_idx + 1])
+                occurrences = 1
+                self.is_relocated = True
+                self.relocated_start_line = start_idx + 1
+                self.relocated_end_line = end_idx + 1
+            else:
+                if total_occurrences > 1 and not allow_multiple:
+                    raise ValueError(
+                        f"Error: Search content not found inside the specified scope (lines {start_line or 1} to {end_line or len(self.file_lines)}), "
+                        f"but it occurs {total_occurrences} times in the entire file. "
+                        "Cannot relocate safely."
+                    )
+                if did_you_mean:
+                    suggestion = self._find_closest_match(start_idx, end_idx, norm_search)
+                    if suggestion:
+                        s_start, s_end, s_text, s_ratio = suggestion
+                        if s_ratio >= 0.8:
+                            start_idx = s_start - 1
+                            end_idx = s_end - 1
+                            target_slice = s_text
+                            occurrences = 1
+                            self.is_did_you_mean_applied = True
+                            self.s_ratio = s_ratio
+                            self.did_you_mean_start_line = s_start
+                            self.did_you_mean_end_line = s_end
+                        else:
+                            self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
                     else:
                         self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
                 else:
                     self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
-            else:
-                self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
 
         if not allow_multiple and occurrences > 1:
             raise ValueError(

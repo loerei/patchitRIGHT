@@ -628,6 +628,64 @@ class TestPatchFile:
         assert res["success"] is True
         assert app_file.read_text() == "line 1\nmodified\n"
 
+    def test_classic_patch_relocation_success(self, tmp_path, monkeypatch):
+        """patch_file must successfully relocate the search content if it's unique in the file."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text("line 1\nline 2\nline 3\nline 4\nline 5\n")
+
+        # Search content is at line 4, but we restrict scope to lines 1-2 (mismatch)
+        res = patch_file(
+            target_file="app.py",
+            search_content="line 4",
+            replace_content="modified 4",
+            start_line=1,
+            end_line=2,
+            dry_run=False
+        )
+
+        assert "success" in res
+        assert res["success"] is True
+        assert "relocated" in res["message"]
+        assert app_file.read_text() == "line 1\nline 2\nline 3\nmodified 4\nline 5\n"
+
+    def test_classic_patch_relocation_multiple_fail(self, tmp_path, monkeypatch):
+        """patch_file must fail to relocate if the search content exists multiple times in the file."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text("line 1\nline 2\ndup\nline 4\ndup\n")
+
+        # Search content 'dup' is at lines 3 and 5, but we restrict scope to lines 1-2
+        res = patch_file(
+            target_file="app.py",
+            search_content="dup",
+            replace_content="new",
+            start_line=1,
+            end_line=2,
+            dry_run=False
+        )
+
+        assert "error" in res
+        assert "occurs 2 times" in res["error"]
+
+    def test_classic_patch_relocation_not_found_fail(self, tmp_path, monkeypatch):
+        """patch_file must fail if the search content is not found anywhere in the file."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text("line 1\nline 2\nline 3\n")
+
+        res = patch_file(
+            target_file="app.py",
+            search_content="nonexistent",
+            replace_content="new",
+            start_line=1,
+            end_line=2,
+            dry_run=False
+        )
+
+        assert "error" in res
+        assert "Search content not found" in res["error"]
+
 
 class TestPatchEngine:
     def test_apply_classic_patch_success(self):

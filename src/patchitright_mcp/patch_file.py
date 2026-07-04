@@ -264,11 +264,15 @@ def _apply_classic_replacement(  # NOSONAR
     engine: PatchEngine,
 ) -> dict:
     is_did_you_mean_applied = getattr(engine, "is_did_you_mean_applied", False)
+    is_relocated = getattr(engine, "is_relocated", False)
     s_ratio = getattr(engine, "s_ratio", 0.0)
     ratio_pct = round(s_ratio * 100)
     if is_did_you_mean_applied:
         resolved_start_line = engine.did_you_mean_start_line
         resolved_end_line = engine.did_you_mean_end_line
+    elif is_relocated:
+        resolved_start_line = engine.relocated_start_line
+        resolved_end_line = engine.relocated_end_line
 
     if dry_run:
         diff_text = generate_diff(file_content, patched_file, target_file)
@@ -280,12 +284,14 @@ def _apply_classic_replacement(  # NOSONAR
             output += f"- Match occurrences inside scope: **{occurrences}**\n"
         if symbol_name:
             output += f"- Scope: AST symbol `{symbol_name}` (lines {resolved_start_line}-{resolved_end_line})\n"
-        elif start_line or end_line or is_did_you_mean_applied:
+        elif start_line or end_line or is_did_you_mean_applied or is_relocated:
             start_disp = resolved_start_line if resolved_start_line is not None else 1
             end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
             output += f"- Scope: Line range {start_disp}-{end_disp}\n"
         if is_did_you_mean_applied:
             output += "*Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
+        elif is_relocated:
+            output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
 
         cache = get_cache()
         run_id = cache.store(
@@ -313,12 +319,14 @@ def _apply_classic_replacement(  # NOSONAR
         output += f"- Replaced occurrences: **{occurrences}**\n"
     if symbol_name:
         output += f"- Scope: AST symbol `{symbol_name}` (lines {resolved_start_line}-{resolved_end_line})\n"
-    elif start_line or end_line or is_did_you_mean_applied:
+    elif start_line or end_line or is_did_you_mean_applied or is_relocated:
         start_disp = resolved_start_line if resolved_start_line is not None else 1
         end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
         output += f"- Scope: Line range {start_disp}-{end_disp}\n"
     if is_did_you_mean_applied:
         output += "*Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
+    elif is_relocated:
+        output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
     elif occurrences > 1:
         output += f"*Warning:* Replaced {occurrences} identical occurrences.\n"
 
