@@ -9,7 +9,7 @@ class PatchEngine:
         self.file_content = file_content
         self.filename = filename
         self.is_crlf = "\r\n" in file_content
-        self.norm_content = file_content.replace("\r\n", "\n")
+        self.norm_content = file_content.replace("\r\n", "\n").replace("\r", "")
         self.file_lines = self.norm_content.split("\n")
         self.is_did_you_mean_applied = False
         self.s_ratio = 0.0
@@ -18,6 +18,128 @@ class PatchEngine:
         self.is_relocated = False
         self.relocated_start_line = None
         self.relocated_end_line = None
+        self.ruff_warnings = []
+
+    def run_ruff_linter(self, content: str) -> list[str]:
+        """Runs Ruff check on the code content and returns a list of warnings."""
+        if not self.filename.endswith(".py"):
+            return []
+        
+        import subprocess
+        import shutil
+        import sys
+        from pathlib import Path
+        
+        executable_dir = Path(sys.executable).parent
+        ruff_exe = shutil.which("ruff", path=str(executable_dir)) or shutil.which("ruff")
+        if not ruff_exe:
+            return []
+            
+        try:
+            process = subprocess.run(
+                [ruff_exe, "check", "-", "--no-cache"],
+                input=content,
+                text=True,
+                capture_output=True,
+                check=False
+            )
+            warnings = []
+            if process.stdout:
+                for line in process.stdout.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("Found ") and not line.startswith("[*] "):
+                        if line.startswith("-:"):
+                            line = line[2:]
+                        warnings.append(line)
+            return warnings
+        except Exception:
+            return []
+
+    def validate_syntax(self, content: str) -> None:
+        """Validates that the patched content is syntactically correct for supported languages."""
+        if self.filename.endswith(".py"):
+            import ast
+            is_originally_valid = False
+            try:
+                ast.parse(self.file_content)
+                is_originally_valid = True
+            except SyntaxError:
+                pass
+
+            if is_originally_valid:
+                try:
+                    ast.parse(content)
+                except SyntaxError as e:
+                    raise ValueError(f"Syntax Error: Patched file is not syntactically valid Python code: {e}")
+
+    def _handle_zero_occurrences(
+        self,
+        norm_search: str,
+        start_idx: int,
+        end_idx: int,
+        symbol_name: Optional[str],
+        allow_multiple: bool,
+        did_you_mean: bool,
+    ) -> tuple[int, int, str, int]:
+        total_occurrences = self.norm_content.count(norm_search)
+        if total_occurrences == 1:
+            char_idx = self.norm_content.find(norm_search)
+            new_start = self.norm_content[:char_idx].count("\n")
+            new_end = new_start + norm_search.count("\n")
+            new_slice = "\n".join(self.file_lines[new_start:new_end + 1])
+            self.is_relocated = True
+            self.relocated_start_line = new_start + 1
+            self.relocated_end_line = new_end + 1
+            return new_start, new_end, new_slice, 1
+
+        if total_occurrences > 1 and not allow_multiple:
+            raise ValueError(
+                f"Error: Search content not found inside the specified scope (lines {start_idx + 1} to {end_idx + 1}), "
+                f"but it occurs {total_occurrences} times in the entire file. "
+                "Cannot relocate safely."
+            )
+        if did_you_mean:
+            suggestion = self._find_closest_match(start_idx, end_idx, norm_search)
+            if suggestion:
+                s_start, s_end, s_text, s_ratio = suggestion
+                if s_ratio >= 0.8:
+                    self.is_did_you_mean_applied = True
+                    self.s_ratio = s_ratio
+                    self.did_you_mean_start_line = s_start
+                    self.did_you_mean_end_line = s_end
+                    return s_start - 1, s_end - 1, s_text, 1
+
+        self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
+
+    def _expand_alignment_start(self, target_slice: str, src_start: int, match_char: str) -> int:
+        while src_start > 0 and target_slice[src_start - 1] in "'\"([{":
+            if target_slice[src_start - 1] == match_char:
+                src_start -= 1
+                break
+            src_start -= 1
+        return src_start
+
+    def _expand_alignment_end(self, target_slice: str, src_end: int, match_char: str) -> int:
+        while src_end < len(target_slice) and target_slice[src_end] in "'\")}]":
+            if target_slice[src_end] == match_char:
+                src_end += 1
+                break
+            src_end += 1
+        return src_end
+
+    def _apply_replacement_logic(self, target_slice: str, norm_search: str, norm_replace: str) -> str:
+        if self.is_did_you_mean_applied:
+            alignment = fuzz.partial_ratio_alignment(target_slice, norm_search)
+            if alignment:
+                src_start = self._expand_alignment_start(target_slice, alignment.src_start, norm_search[0])
+                src_end = self._expand_alignment_end(target_slice, alignment.src_end, norm_search[-1])
+                return (
+                    target_slice[:src_start]
+                    + norm_replace
+                    + target_slice[src_end:]
+                )
+            return norm_replace
+        return target_slice.replace(norm_search, norm_replace)
 
     def apply_classic_patch(
         self,
@@ -32,8 +154,8 @@ class PatchEngine:
         did_you_mean: bool = False,
     ) -> tuple[str, int]:
         """Applies a classic search-and-replace patch inside line/symbol scope."""
-        norm_search = search_content.replace("\r\n", "\n")
-        norm_replace = replace_content.replace("\r\n", "\n")
+        norm_search = search_content.replace("\r\n", "\n").replace("\r", "")
+        norm_replace = replace_content.replace("\r\n", "\n").replace("\r", "")
 
         start_idx, end_idx = self._resolve_classic_boundaries(
             start_line, end_line, symbol_boundaries
@@ -44,42 +166,9 @@ class PatchEngine:
         occurrences = target_slice.count(norm_search)
 
         if occurrences == 0:
-            total_occurrences = self.norm_content.count(norm_search)
-            if total_occurrences == 1:
-                char_idx = self.norm_content.find(norm_search)
-                start_idx = self.norm_content[:char_idx].count("\n")
-                end_idx = start_idx + norm_search.count("\n")
-                target_slice = "\n".join(self.file_lines[start_idx:end_idx + 1])
-                occurrences = 1
-                self.is_relocated = True
-                self.relocated_start_line = start_idx + 1
-                self.relocated_end_line = end_idx + 1
-            else:
-                if total_occurrences > 1 and not allow_multiple:
-                    raise ValueError(
-                        f"Error: Search content not found inside the specified scope (lines {start_line or 1} to {end_line or len(self.file_lines)}), "
-                        f"but it occurs {total_occurrences} times in the entire file. "
-                        "Cannot relocate safely."
-                    )
-                if did_you_mean:
-                    suggestion = self._find_closest_match(start_idx, end_idx, norm_search)
-                    if suggestion:
-                        s_start, s_end, s_text, s_ratio = suggestion
-                        if s_ratio >= 0.8:
-                            start_idx = s_start - 1
-                            end_idx = s_end - 1
-                            target_slice = s_text
-                            occurrences = 1
-                            self.is_did_you_mean_applied = True
-                            self.s_ratio = s_ratio
-                            self.did_you_mean_start_line = s_start
-                            self.did_you_mean_end_line = s_end
-                        else:
-                            self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
-                    else:
-                        self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
-                else:
-                    self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
+            start_idx, end_idx, target_slice, occurrences = self._handle_zero_occurrences(
+                norm_search, start_idx, end_idx, symbol_name, allow_multiple, did_you_mean
+            )
 
         if not allow_multiple and occurrences > 1:
             raise ValueError(
@@ -92,39 +181,14 @@ class PatchEngine:
             self._assert_line_filter(line_filter, target_slice, norm_search, start_idx)
 
         # Apply replacement
-        if self.is_did_you_mean_applied:
-            alignment = fuzz.partial_ratio_alignment(target_slice, norm_search)
-            if alignment:
-                src_start = alignment.src_start
-                src_end = alignment.src_end
-                
-                # Expand start if there's preceding punctuation/quotes matching start of search
-                while src_start > 0 and target_slice[src_start - 1] in "'\"([{":
-                    if target_slice[src_start - 1] == norm_search[0]:
-                        src_start -= 1
-                        break
-                    src_start -= 1
-                    
-                # Expand end if there's succeeding punctuation/quotes matching end of search
-                while src_end < len(target_slice) and target_slice[src_end] in "'\")}]":
-                    if target_slice[src_end] == norm_search[-1]:
-                        src_end += 1
-                        break
-                    src_end += 1
-
-                patched_slice = (
-                    target_slice[:src_start]
-                    + norm_replace
-                    + target_slice[src_end:]
-                )
-            else:
-                patched_slice = norm_replace
-        else:
-            patched_slice = target_slice.replace(norm_search, norm_replace)
+        patched_slice = self._apply_replacement_logic(target_slice, norm_search, norm_replace)
 
         before_part = "\n".join(self.file_lines[:start_idx]) + "\n" if start_idx > 0 else ""
         after_part = "\n" + "\n".join(self.file_lines[end_idx + 1:]) if end_idx < len(self.file_lines) - 1 else ""
         patched_file = before_part + patched_slice + after_part
+
+        self.validate_syntax(patched_file)
+        self.ruff_warnings = self.run_ruff_linter(patched_file)
 
         if self.is_crlf:
             patched_file = patched_file.replace("\n", "\r\n")
@@ -223,32 +287,32 @@ class PatchEngine:
             expected_old_lines = [l_content for l_type, l_content in hunk['lines'] if l_type in (' ', '-')]
             expected_pos = hunk['old_start'] - 1 + offset
 
-            match_success = True
-            if expected_pos < 0 or expected_pos + len(expected_old_lines) > len(file_lines):
-                match_success = False
-            else:
-                for idx, expected_line in enumerate(expected_old_lines):
-                    if file_lines[expected_pos + idx] != expected_line:
-                        match_success = False
-                        break
-
-            if not match_success:
+            if not self._verify_hunk_match(expected_pos, expected_old_lines, file_lines):
                 self._handle_mismatched_hunk(hunk, hunk_index, expected_pos, offset, expected_old_lines, file_lines)
 
-            new_hunk_lines = []
-            for l_type, l_content in hunk['lines']:
-                if l_type in (' ', '+'):
-                    new_hunk_lines.append(l_content)
+            new_hunk_lines = [l_content for l_type, l_content in hunk['lines'] if l_type in (' ', '+')]
 
             file_lines[expected_pos : expected_pos + len(expected_old_lines)] = new_hunk_lines
             hunk_offset = len(new_hunk_lines) - len(expected_old_lines)
             offset += hunk_offset
 
         patched_file = "\n".join(file_lines)
+
+        self.validate_syntax(patched_file)
+        self.ruff_warnings = self.run_ruff_linter(patched_file)
+
         if self.is_crlf:
             patched_file = patched_file.replace("\n", "\r\n")
 
         return patched_file
+
+    def _verify_hunk_match(self, expected_pos: int, expected_old_lines: list[str], file_lines: list[str]) -> bool:
+        if expected_pos < 0 or expected_pos + len(expected_old_lines) > len(file_lines):
+            return False
+        for idx, expected_line in enumerate(expected_old_lines):
+            if file_lines[expected_pos + idx] != expected_line:
+                return False
+        return True
 
     def _handle_mismatched_hunk(
         self, hunk: dict, hunk_index: int, expected_pos: int, offset: int, expected_old_lines: list[str], file_lines: list[str]

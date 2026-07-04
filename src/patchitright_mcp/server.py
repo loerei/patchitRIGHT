@@ -91,6 +91,29 @@ async def list_tools() -> list[Tool]:
                     "storage_path": {
                         "type": "string",
                         "description": "Optional custom path to the jCodeMunch SQLite index database."
+                    },
+                    "replacements": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "search_content": {"type": "string", "description": "The exact string block to search for."},
+                                "replace_content": {"type": "string", "description": "The string block to replace the search content with."},
+                                "start_line": {"type": "integer", "description": "Optional starting line number (1-indexed, inclusive) of the scope to search."},
+                                "end_line": {"type": "integer", "description": "Optional ending line number (1-indexed, inclusive) of the scope to search."},
+                                "symbol_name": {"type": "string", "description": "Optional AST symbol name to scope this replacement to."},
+                                "allow_multiple": {"type": "boolean", "description": "If True, replaces all occurrences of search_content within the scope. Defaults to False."},
+                                "line_filter": {
+                                    "anyOf": [
+                                        {"type": "string"},
+                                        {"type": "integer"}
+                                    ],
+                                    "description": "Optional assertion (line number or substring check)."
+                                }
+                            },
+                            "required": ["search_content", "replace_content"]
+                        },
+                        "description": "Optional list of replacements to apply in a single call to the same file. Applied bottom-up to avoid line-drift."
                     }
                 },
                 "required": ["target_file"]
@@ -206,8 +229,10 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
     if not target_file:
         return [TextContent(type="text", text="Error: target_file is required.")]
 
-    if patch_content is None and (search_content is None or replace_content is None):
-        return [TextContent(type="text", text="Error: Either patch_content OR both search_content and replace_content are required.")]
+    replacements = arguments.get("replacements")
+
+    if patch_content is None and replacements is None and (search_content is None or replace_content is None):
+        return [TextContent(type="text", text="Error: Either replacements, patch_content, OR both search_content and replace_content are required.")]
 
     folder_filter = arguments.get("folder_filter")
     file_filter = arguments.get("file_filter")
@@ -242,6 +267,7 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
         storage_path=storage_path,
         patch_content=patch_content,
         did_you_mean=did_you_mean,
+        replacements=replacements,
     )
 
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
