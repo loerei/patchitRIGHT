@@ -956,3 +956,58 @@ class TestApplyLastDryRun:
         assert apply_res["success"] is True
         assert f1.read_text() == "HELLO\nworld\n"
         assert f2.read_text() == "FOO\nbar\n"
+
+    def test_line_ending_normalization(self, tmp_path, monkeypatch):
+        """Line endings must be normalized internally, and original line endings preserved."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        # File with CRLF
+        app_file.write_bytes(b"line 1\r\nline 2\r\nline 3\r\n")
+
+        # Patch with LF
+        res = patch_file(
+            target_file="app.py",
+            search_content="line 2\n",
+            replace_content="modified line 2\n",
+            dry_run=False
+        )
+        assert res["success"] is True
+        # Original CRLF line ending should be preserved
+        assert app_file.read_bytes() == b"line 1\r\nmodified line 2\r\nline 3\r\n"
+
+    def test_python_ast_syntax_check(self, tmp_path, monkeypatch):
+        """Python AST check should reject syntactically invalid Python code."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text("def func():\n    pass\n")
+
+        # Patch that introduces a syntax error
+        res = patch_file(
+            target_file="app.py",
+            search_content="    pass",
+            replace_content="    pass\n    if :",
+            dry_run=False
+        )
+        assert "error" in res
+        assert "Syntax Error" in res["error"]
+        # Original content should be untouched
+        assert app_file.read_text() == "def func():\n    pass\n"
+
+    def test_multi_patch_replacements(self, tmp_path, monkeypatch):
+        """Multi-patch replacements should apply bottom-up to prevent line drift."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text("line 1\nline 2\nline 3\nline 4\n")
+
+        # Edit line 4 and line 2 in one call
+        res = patch_file(
+            target_file="app.py",
+            replacements=[
+                {"search_content": "line 2", "replace_content": "new line 2\nand extra 2", "start_line": 2, "end_line": 2},
+                {"search_content": "line 4", "replace_content": "new line 4\nand extra 4", "start_line": 4, "end_line": 4},
+            ],
+            dry_run=False
+        )
+        assert res["success"] is True
+        assert app_file.read_text() == "line 1\nnew line 2\nand extra 2\nline 3\nnew line 4\nand extra 4\n"
+

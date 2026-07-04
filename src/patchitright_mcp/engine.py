@@ -9,7 +9,7 @@ class PatchEngine:
         self.file_content = file_content
         self.filename = filename
         self.is_crlf = "\r\n" in file_content
-        self.norm_content = file_content.replace("\r\n", "\n")
+        self.norm_content = file_content.replace("\r\n", "\n").replace("\r", "")
         self.file_lines = self.norm_content.split("\n")
         self.is_did_you_mean_applied = False
         self.s_ratio = 0.0
@@ -18,6 +18,23 @@ class PatchEngine:
         self.is_relocated = False
         self.relocated_start_line = None
         self.relocated_end_line = None
+
+    def validate_syntax(self, content: str) -> None:
+        """Validates that the patched content is syntactically correct for supported languages."""
+        if self.filename.endswith(".py"):
+            import ast
+            is_originally_valid = False
+            try:
+                ast.parse(self.file_content)
+                is_originally_valid = True
+            except SyntaxError:
+                pass
+
+            if is_originally_valid:
+                try:
+                    ast.parse(content)
+                except SyntaxError as e:
+                    raise ValueError(f"Syntax Error: Patched file is not syntactically valid Python code: {e}")
 
     def apply_classic_patch(
         self,
@@ -32,8 +49,8 @@ class PatchEngine:
         did_you_mean: bool = False,
     ) -> tuple[str, int]:
         """Applies a classic search-and-replace patch inside line/symbol scope."""
-        norm_search = search_content.replace("\r\n", "\n")
-        norm_replace = replace_content.replace("\r\n", "\n")
+        norm_search = search_content.replace("\r\n", "\n").replace("\r", "")
+        norm_replace = replace_content.replace("\r\n", "\n").replace("\r", "")
 
         start_idx, end_idx = self._resolve_classic_boundaries(
             start_line, end_line, symbol_boundaries
@@ -125,6 +142,8 @@ class PatchEngine:
         before_part = "\n".join(self.file_lines[:start_idx]) + "\n" if start_idx > 0 else ""
         after_part = "\n" + "\n".join(self.file_lines[end_idx + 1:]) if end_idx < len(self.file_lines) - 1 else ""
         patched_file = before_part + patched_slice + after_part
+
+        self.validate_syntax(patched_file)
 
         if self.is_crlf:
             patched_file = patched_file.replace("\n", "\r\n")
@@ -223,32 +242,31 @@ class PatchEngine:
             expected_old_lines = [l_content for l_type, l_content in hunk['lines'] if l_type in (' ', '-')]
             expected_pos = hunk['old_start'] - 1 + offset
 
-            match_success = True
-            if expected_pos < 0 or expected_pos + len(expected_old_lines) > len(file_lines):
-                match_success = False
-            else:
-                for idx, expected_line in enumerate(expected_old_lines):
-                    if file_lines[expected_pos + idx] != expected_line:
-                        match_success = False
-                        break
-
-            if not match_success:
+            if not self._verify_hunk_match(expected_pos, expected_old_lines, file_lines):
                 self._handle_mismatched_hunk(hunk, hunk_index, expected_pos, offset, expected_old_lines, file_lines)
 
-            new_hunk_lines = []
-            for l_type, l_content in hunk['lines']:
-                if l_type in (' ', '+'):
-                    new_hunk_lines.append(l_content)
+            new_hunk_lines = [l_content for l_type, l_content in hunk['lines'] if l_type in (' ', '+')]
 
             file_lines[expected_pos : expected_pos + len(expected_old_lines)] = new_hunk_lines
             hunk_offset = len(new_hunk_lines) - len(expected_old_lines)
             offset += hunk_offset
 
         patched_file = "\n".join(file_lines)
+
+        self.validate_syntax(patched_file)
+
         if self.is_crlf:
             patched_file = patched_file.replace("\n", "\r\n")
 
         return patched_file
+
+    def _verify_hunk_match(self, expected_pos: int, expected_old_lines: list[str], file_lines: list[str]) -> bool:
+        if expected_pos < 0 or expected_pos + len(expected_old_lines) > len(file_lines):
+            return False
+        for idx, expected_line in enumerate(expected_old_lines):
+            if file_lines[expected_pos + idx] != expected_line:
+                return False
+        return True
 
     def _handle_mismatched_hunk(
         self, hunk: dict, hunk_index: int, expected_pos: int, offset: int, expected_old_lines: list[str], file_lines: list[str]

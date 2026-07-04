@@ -105,20 +105,21 @@ def patch_file(  # noqa: C901 # NOSONAR
     target_file: str,
     search_content: Optional[str] = None,
     replace_content: Optional[str] = None,
-    folder_filter: Optional[str] = None,
-    file_filter: Optional[str] = None,
     start_line: Optional[int] = None,
     end_line: Optional[int] = None,
-    symbol_name: Optional[str] = None,
-    allow_multiple: bool = False,
-    line_filter: Optional[Union[str, int]] = None,
     dry_run: bool = False,
     patch_content: Optional[str] = None,
+    replacements: Optional[list[dict]] = None,
     **kwargs,
 ) -> dict:
     """Perform a robust search-and-replace or apply a strict unified diff (Fuzz = 0)."""
     did_you_mean = bool(kwargs.get("did_you_mean", False))
     storage_path = kwargs.get("storage_path")
+    folder_filter = kwargs.get("folder_filter")
+    file_filter = kwargs.get("file_filter")
+    symbol_name = kwargs.get("symbol_name")
+    allow_multiple = bool(kwargs.get("allow_multiple", False))
+    line_filter = kwargs.get("line_filter")
     try:
         target_file = os.path.normpath(target_file)
         cwd = Path.cwd().resolve()
@@ -132,17 +133,120 @@ def patch_file(  # noqa: C901 # NOSONAR
         if err:
             return err
 
-        engine = PatchEngine(file_content, target_file)
-
         # Handle Unified Diff patch format
         if patch_content is not None:
+            engine = PatchEngine(file_content, target_file)
             return _apply_patch_content(
                 engine, patch_content, dry_run, target_file, target_path, file_content
             )
 
+        # Handle Multiple Replacements (Multi-patch)
+        if replacements is not None:
+            for r in replacements:
+                if "search_content" not in r or "replace_content" not in r:
+                    return {"error": "Error: Each entry in replacements must have search_content and replace_content."}
+
+            # Sort bottom-up based on start_line (descending) to prevent line-drift
+            sorted_replacements = sorted(
+                replacements,
+                key=lambda r: r.get("start_line") or 1,
+                reverse=True
+            )
+
+            # Helper to run the chain of replacements
+            def run_chain(contents: str, suggest_idx: Optional[int] = None) -> tuple[str, int]:
+                temp_content = contents
+                occurrences_sum = 0
+                for idx, r in enumerate(sorted_replacements):
+                    r_engine = PatchEngine(temp_content, target_file)
+                    sym_name = r.get("symbol_name")
+                    r_start = r.get("start_line")
+                    r_end = r.get("end_line")
+                    r_symbol_boundaries = None
+                    if sym_name:
+                        sym_start, sym_end, sym_err = _resolve_ast_boundaries(
+                            cwd, target_path, sym_name, storage_path, r_start, r_end
+                        )
+                        if not sym_err:
+                            r_symbol_boundaries = (sym_start, sym_end)
+
+                    is_suggest = (suggest_idx is not None and idx == suggest_idx)
+                    temp_content, occ = r_engine.apply_classic_patch(
+                        search_content=r["search_content"],
+                        replace_content=r["replace_content"],
+                        allow_multiple=r.get("allow_multiple", allow_multiple),
+                        start_line=r_start,
+                        end_line=r_end,
+                        symbol_boundaries=r_symbol_boundaries,
+                        symbol_name=sym_name,
+                        line_filter=r.get("line_filter"),
+                        did_you_mean=is_suggest or did_you_mean
+                    )
+                    occurrences_sum += occ
+                return temp_content, occurrences_sum
+
+            try:
+                patched_file, occurrences = run_chain(file_content)
+            except ValueError as e:
+                if not did_you_mean:
+                    try:
+                        # Find which step failed, and run suggestions for it
+                        temp_content = file_content
+                        failed_idx = None
+                        for idx, r in enumerate(sorted_replacements):
+                            r_engine = PatchEngine(temp_content, target_file)
+                            sym_name = r.get("symbol_name")
+                            r_start = r.get("start_line")
+                            r_end = r.get("end_line")
+                            r_symbol_boundaries = None
+                            if sym_name:
+                                sym_start, sym_end, sym_err = _resolve_ast_boundaries(
+                                    cwd, target_path, sym_name, storage_path, r_start, r_end
+                                )
+                                if not sym_err:
+                                    r_symbol_boundaries = (sym_start, sym_end)
+                            try:
+                                temp_content, _ = r_engine.apply_classic_patch(
+                                    search_content=r["search_content"],
+                                    replace_content=r["replace_content"],
+                                    allow_multiple=r.get("allow_multiple", allow_multiple),
+                                    start_line=r_start,
+                                    end_line=r_end,
+                                    symbol_boundaries=r_symbol_boundaries,
+                                    symbol_name=sym_name,
+                                    line_filter=r.get("line_filter"),
+                                    did_you_mean=False
+                                )
+                            except ValueError:
+                                failed_idx = idx
+                                break
+
+                        if failed_idx is not None:
+                            suggested_patched_file, _ = run_chain(file_content, suggest_idx=failed_idx)
+                            cache = get_cache()
+                            run_id = cache.store(
+                                entries=[{"target_path": target_path, "patched_content": suggested_patched_file}],
+                                original_contents={str(target_path): file_content, target_file: file_content},
+                            )
+                            return {
+                                "error": str(e),
+                                "run_id": run_id,
+                                "expires_in": cache.get_ttl(),
+                                "message": f"To apply the suggestion above directly, call apply_last_dry_run with run_id: '{run_id}'"
+                            }
+                    except Exception:
+                        pass
+                return {"error": str(e)}
+
+            engine = PatchEngine(patched_file, target_file)
+            return _apply_classic_replacement(
+                dry_run, file_content, patched_file, target_file, target_path, occurrences,
+                symbol_name, None, None, None, None, engine
+            )
+
         # Otherwise fallback to classic search/replace
         if search_content is None or replace_content is None:
-            return {"error": "Error: Either patch_content OR both search_content and replace_content must be provided."}
+            return {"error": "Error: Either replacements, patch_content, OR both search_content and replace_content must be provided."}
 
         # AST Boundary Resolution
         resolved_start_line, resolved_end_line, err = _resolve_ast_boundaries(
@@ -151,6 +255,7 @@ def patch_file(  # noqa: C901 # NOSONAR
         if err:
             return err
 
+        engine = PatchEngine(file_content, target_file)
         try:
             patched_file, occurrences = engine.apply_classic_patch(
                 search_content=search_content,
