@@ -320,11 +320,16 @@ def _apply_patch_content(
     except ValueError as e:
         return {"error": str(e)}
         
+    ruff_warnings = getattr(engine, "ruff_warnings", [])
     if dry_run:
         diff_text = generate_diff(file_content, patched_file, target_file)
         output = f"```diff\n{diff_text}```\n"
         output += f"- Target file: `{target_file}`\n"
         output += "- Format: Unified Diff (Strict Fuzz = 0)\n"
+        if ruff_warnings:
+            output += "\n*Ruff Warnings:*\n"
+            for w in ruff_warnings:
+                output += f"- {w}\n"
         cache = get_cache()
         run_id = cache.store(
             entries=[{"target_path": target_path, "patched_content": patched_file}],
@@ -346,6 +351,10 @@ def _apply_patch_content(
         
     output = f"- Target file: `{target_file}`\n"
     output += "- Format: Unified Diff (Strict Fuzz = 0) applied successfully\n"
+    if ruff_warnings:
+        output += "\n*Ruff Warnings:*\n"
+        for w in ruff_warnings:
+            output += f"- {w}\n"
     return {
         "success": True,
         "dryRun": False,
@@ -379,6 +388,7 @@ def _apply_classic_replacement(  # NOSONAR
         resolved_start_line = engine.relocated_start_line
         resolved_end_line = engine.relocated_end_line
 
+    ruff_warnings = getattr(engine, "ruff_warnings", [])
     if dry_run:
         diff_text = generate_diff(file_content, patched_file, target_file)
         output = f"```diff\n{diff_text}```\n"
@@ -397,6 +407,10 @@ def _apply_classic_replacement(  # NOSONAR
             output += "*Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
         elif is_relocated:
             output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
+        if ruff_warnings:
+            output += "\n*Ruff Warnings:*\n"
+            for w in ruff_warnings:
+                output += f"- {w}\n"
 
         cache = get_cache()
         run_id = cache.store(
@@ -434,6 +448,10 @@ def _apply_classic_replacement(  # NOSONAR
         output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
     elif occurrences > 1:
         output += f"*Warning:* Replaced {occurrences} identical occurrences.\n"
+    if ruff_warnings:
+        output += "\n*Ruff Warnings:*\n"
+        for w in ruff_warnings:
+            output += f"- {w}\n"
 
     return {
         "success": True,

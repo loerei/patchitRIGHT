@@ -1011,3 +1011,21 @@ class TestApplyLastDryRun:
         assert res["success"] is True
         assert app_file.read_text() == "line 1\nnew line 2\nand extra 2\nline 3\nnew line 4\nand extra 4\n"
 
+    def test_ruff_linter_warnings(self, tmp_path, monkeypatch):
+        """Ruff linter warnings should be returned in message for Python files."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text("def func():\n    pass\n")
+
+        # Patch that introduces an unused import (F401)
+        res = patch_file(
+            target_file="app.py",
+            search_content="    pass",
+            replace_content="    import os\n    pass",
+            dry_run=False
+        )
+        assert res["success"] is True
+        assert "Ruff Warnings:" in res["message"]
+        assert "F401" in res["message"]
+
+
