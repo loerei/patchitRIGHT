@@ -72,6 +72,75 @@ class PatchEngine:
                 except SyntaxError as e:
                     raise ValueError(f"Syntax Error: Patched file is not syntactically valid Python code: {e}")
 
+    def _handle_zero_occurrences(
+        self,
+        norm_search: str,
+        start_idx: int,
+        end_idx: int,
+        symbol_name: Optional[str],
+        allow_multiple: bool,
+        did_you_mean: bool,
+    ) -> tuple[int, int, str, int]:
+        total_occurrences = self.norm_content.count(norm_search)
+        if total_occurrences == 1:
+            char_idx = self.norm_content.find(norm_search)
+            new_start = self.norm_content[:char_idx].count("\n")
+            new_end = new_start + norm_search.count("\n")
+            new_slice = "\n".join(self.file_lines[new_start:new_end + 1])
+            self.is_relocated = True
+            self.relocated_start_line = new_start + 1
+            self.relocated_end_line = new_end + 1
+            return new_start, new_end, new_slice, 1
+
+        if total_occurrences > 1 and not allow_multiple:
+            raise ValueError(
+                f"Error: Search content not found inside the specified scope (lines {start_idx + 1} to {end_idx + 1}), "
+                f"but it occurs {total_occurrences} times in the entire file. "
+                "Cannot relocate safely."
+            )
+        if did_you_mean:
+            suggestion = self._find_closest_match(start_idx, end_idx, norm_search)
+            if suggestion:
+                s_start, s_end, s_text, s_ratio = suggestion
+                if s_ratio >= 0.8:
+                    self.is_did_you_mean_applied = True
+                    self.s_ratio = s_ratio
+                    self.did_you_mean_start_line = s_start
+                    self.did_you_mean_end_line = s_end
+                    return s_start - 1, s_end - 1, s_text, 1
+
+        self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
+
+    def _expand_alignment_start(self, target_slice: str, src_start: int, match_char: str) -> int:
+        while src_start > 0 and target_slice[src_start - 1] in "'\"([{":
+            if target_slice[src_start - 1] == match_char:
+                src_start -= 1
+                break
+            src_start -= 1
+        return src_start
+
+    def _expand_alignment_end(self, target_slice: str, src_end: int, match_char: str) -> int:
+        while src_end < len(target_slice) and target_slice[src_end] in "'\")}]":
+            if target_slice[src_end] == match_char:
+                src_end += 1
+                break
+            src_end += 1
+        return src_end
+
+    def _apply_replacement_logic(self, target_slice: str, norm_search: str, norm_replace: str) -> str:
+        if self.is_did_you_mean_applied:
+            alignment = fuzz.partial_ratio_alignment(target_slice, norm_search)
+            if alignment:
+                src_start = self._expand_alignment_start(target_slice, alignment.src_start, norm_search[0])
+                src_end = self._expand_alignment_end(target_slice, alignment.src_end, norm_search[-1])
+                return (
+                    target_slice[:src_start]
+                    + norm_replace
+                    + target_slice[src_end:]
+                )
+            return norm_replace
+        return target_slice.replace(norm_search, norm_replace)
+
     def apply_classic_patch(
         self,
         search_content: str,
@@ -97,42 +166,9 @@ class PatchEngine:
         occurrences = target_slice.count(norm_search)
 
         if occurrences == 0:
-            total_occurrences = self.norm_content.count(norm_search)
-            if total_occurrences == 1:
-                char_idx = self.norm_content.find(norm_search)
-                start_idx = self.norm_content[:char_idx].count("\n")
-                end_idx = start_idx + norm_search.count("\n")
-                target_slice = "\n".join(self.file_lines[start_idx:end_idx + 1])
-                occurrences = 1
-                self.is_relocated = True
-                self.relocated_start_line = start_idx + 1
-                self.relocated_end_line = end_idx + 1
-            else:
-                if total_occurrences > 1 and not allow_multiple:
-                    raise ValueError(
-                        f"Error: Search content not found inside the specified scope (lines {start_line or 1} to {end_line or len(self.file_lines)}), "
-                        f"but it occurs {total_occurrences} times in the entire file. "
-                        "Cannot relocate safely."
-                    )
-                if did_you_mean:
-                    suggestion = self._find_closest_match(start_idx, end_idx, norm_search)
-                    if suggestion:
-                        s_start, s_end, s_text, s_ratio = suggestion
-                        if s_ratio >= 0.8:
-                            start_idx = s_start - 1
-                            end_idx = s_end - 1
-                            target_slice = s_text
-                            occurrences = 1
-                            self.is_did_you_mean_applied = True
-                            self.s_ratio = s_ratio
-                            self.did_you_mean_start_line = s_start
-                            self.did_you_mean_end_line = s_end
-                        else:
-                            self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
-                    else:
-                        self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
-                else:
-                    self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
+            start_idx, end_idx, target_slice, occurrences = self._handle_zero_occurrences(
+                norm_search, start_idx, end_idx, symbol_name, allow_multiple, did_you_mean
+            )
 
         if not allow_multiple and occurrences > 1:
             raise ValueError(
@@ -145,35 +181,7 @@ class PatchEngine:
             self._assert_line_filter(line_filter, target_slice, norm_search, start_idx)
 
         # Apply replacement
-        if self.is_did_you_mean_applied:
-            alignment = fuzz.partial_ratio_alignment(target_slice, norm_search)
-            if alignment:
-                src_start = alignment.src_start
-                src_end = alignment.src_end
-                
-                # Expand start if there's preceding punctuation/quotes matching start of search
-                while src_start > 0 and target_slice[src_start - 1] in "'\"([{":
-                    if target_slice[src_start - 1] == norm_search[0]:
-                        src_start -= 1
-                        break
-                    src_start -= 1
-                    
-                # Expand end if there's succeeding punctuation/quotes matching end of search
-                while src_end < len(target_slice) and target_slice[src_end] in "'\")}]":
-                    if target_slice[src_end] == norm_search[-1]:
-                        src_end += 1
-                        break
-                    src_end += 1
-
-                patched_slice = (
-                    target_slice[:src_start]
-                    + norm_replace
-                    + target_slice[src_end:]
-                )
-            else:
-                patched_slice = norm_replace
-        else:
-            patched_slice = target_slice.replace(norm_search, norm_replace)
+        patched_slice = self._apply_replacement_logic(target_slice, norm_search, norm_replace)
 
         before_part = "\n".join(self.file_lines[:start_idx]) + "\n" if start_idx > 0 else ""
         after_part = "\n" + "\n".join(self.file_lines[end_idx + 1:]) if end_idx < len(self.file_lines) - 1 else ""
