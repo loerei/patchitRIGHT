@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,17 +23,16 @@ class JsTsValidator(BaseValidator):
             if p.exists():
                 return str(p), ["check"]
 
-        # Only check package runners if we are in a package.json directory
-        if (Path.cwd() / "package.json").exists():
-            npx = shutil.which("npx")
-            if npx:
-                return npx, ["@biomejs/biome", "check"]
-            yarn = shutil.which("yarn")
-            if yarn:
-                return yarn, ["dlx", "@biomejs/biome", "check"]
-            pnpm = shutil.which("pnpm")
-            if pnpm:
-                return pnpm, ["dlx", "@biomejs/biome", "check"]
+        # Check package runners globally/locally without requiring package.json
+        npx = shutil.which("npx")
+        if npx:
+            return npx, ["-y", "@biomejs/biome", "check"]
+        yarn = shutil.which("yarn")
+        if yarn:
+            return yarn, ["dlx", "@biomejs/biome", "check"]
+        pnpm = shutil.which("pnpm")
+        if pnpm:
+            return pnpm, ["dlx", "@biomejs/biome", "check"]
 
         return None
 
@@ -48,7 +48,9 @@ class JsTsValidator(BaseValidator):
                     input=original_content,
                     text=True,
                     capture_output=True,
-                    check=False
+                    check=False,
+                    shell=(os.name == 'nt'),
+                    encoding="utf-8"
                 )
                 if orig_process.returncode != 0:
                     orig_output = orig_process.stderr or orig_process.stdout
@@ -61,7 +63,9 @@ class JsTsValidator(BaseValidator):
                     input=content,
                     text=True,
                     capture_output=True,
-                    check=False
+                    check=False,
+                    shell=(os.name == 'nt'),
+                    encoding="utf-8"
                 )
                 # Biome formats syntax errors in stderr/stdout with "parse" or "error"
                 if process.returncode != 0:
@@ -126,7 +130,9 @@ class JsTsValidator(BaseValidator):
                 input=content,
                 text=True,
                 capture_output=True,
-                check=False
+                check=False,
+                shell=(os.name == 'nt'),
+                encoding="utf-8"
             )
             warnings = []
             output = process.stdout or process.stderr
