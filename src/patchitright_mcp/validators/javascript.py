@@ -82,6 +82,8 @@ class JsTsValidator(BaseValidator):
                             if l.strip() and "━━" not in l
                         ]
                         err_line = clean_lines[0] if clean_lines else "Unknown parse error"
+                        # Convert to ASCII-safe representation to prevent Windows stdout encoding crashes
+                        err_line = err_line.encode("ascii", errors="replace").decode("ascii")
                         import re
                         line, column = None, None
                         match = re.search(rf"{re.escape(temp_path.name)}:(\d+):(\d+)", output)
@@ -131,6 +133,8 @@ class JsTsValidator(BaseValidator):
                     )
                     if process.returncode != 0:
                         err_msg = process.stderr.strip() if process.stderr else "Syntax Error"
+                        # Convert to ASCII-safe representation to prevent Windows stdout encoding crashes
+                        err_msg = err_msg.encode("ascii", errors="replace").decode("ascii")
                         import re
                         line, column = None, None
                         match = re.search(r"\[stdin\]:(\d+)(?::(\d+))?", err_msg)
@@ -148,6 +152,7 @@ class JsTsValidator(BaseValidator):
                     raise
                 except (FileNotFoundError, OSError):
                     pass
+            return
 
     def lint(self, content: str, filename: str) -> list[str]:
         biome_cmd = self._get_biome_command()
@@ -176,6 +181,8 @@ class JsTsValidator(BaseValidator):
                         continue
                     # Clean up the temp filename from warnings
                     line = line.replace(temp_path.name, Path(filename).name)
+                    # Convert to ASCII-safe representation to prevent Windows stdout encoding crashes
+                    line = line.encode("ascii", errors="replace").decode("ascii")
                     warnings.append(line)
                 return warnings
         except (FileNotFoundError, OSError):
