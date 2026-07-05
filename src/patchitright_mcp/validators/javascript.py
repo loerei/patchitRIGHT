@@ -78,7 +78,7 @@ class JsTsValidator(BaseValidator):
                         )
             except SyntaxValidationError:
                 raise
-            except Exception:
+            except (FileNotFoundError, OSError):
                 pass
             return
 
@@ -113,7 +113,7 @@ class JsTsValidator(BaseValidator):
                         )
                 except SyntaxValidationError:
                     raise
-                except Exception:
+                except (FileNotFoundError, OSError):
                     pass
 
     def lint(self, content: str, filename: str) -> list[str]:
