@@ -4,7 +4,7 @@ import difflib
 import hashlib
 import os
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from jcodemunch_mcp.storage import IndexStore
 from .workspace import Workspace
@@ -42,6 +42,19 @@ def _write_file_with_delay(path: Path, content: str, delay: float = 0.5) -> None
             pass
 
     threading.Thread(target=worker, daemon=True).start()
+
+
+def _write_patched_file(target_path: Path, content: str) -> None:
+    """Write patched content to target_path, delaying if it's a self-modification."""
+    try:
+        is_self_mod = target_path.resolve().is_relative_to(Path(__file__).parent.resolve())
+    except Exception:
+        is_self_mod = False
+
+    if is_self_mod:
+        _write_file_with_delay(target_path, content, delay=0.5)
+    else:
+        target_path.write_text(content, encoding="utf-8")
 
 
 def generate_diff(original: str, modified: str, filename: str) -> str:
@@ -397,17 +410,9 @@ def _apply_patch_content(
         return res
         
     try:
-        is_self_mod = target_path.resolve().is_relative_to(Path(__file__).parent.resolve())
-    except Exception:
-        is_self_mod = False
-
-    if is_self_mod:
-        _write_file_with_delay(target_path, patched_file, delay=0.5)
-    else:
-        try:
-            target_path.write_text(patched_file, encoding="utf-8")
-        except Exception as e:
-            return {"error": f"Failed to write patched file: {e}"}
+        _write_patched_file(target_path, patched_file)
+    except Exception as e:
+        return {"error": f"Failed to write patched file: {e}"}
         
     output = f"- Target file: `{target_file}`\n"
     output += "- Format: Unified Diff (Strict Fuzz = 0) applied successfully\n"
@@ -486,17 +491,9 @@ def _apply_classic_replacement(  # NOSONAR
         return res
 
     try:
-        is_self_mod = target_path.resolve().is_relative_to(Path(__file__).parent.resolve())
-    except Exception:
-        is_self_mod = False
-
-    if is_self_mod:
-        _write_file_with_delay(target_path, patched_file, delay=0.5)
-    else:
-        try:
-            target_path.write_text(patched_file, encoding="utf-8")
-        except Exception as e:
-            return {"error": f"Failed to write patched file: {e}"}
+        _write_patched_file(target_path, patched_file)
+    except Exception as e:
+        return {"error": f"Failed to write patched file: {e}"}
 
     output = f"- Target file: `{target_file}`\n"
     if is_did_you_mean_applied:
@@ -598,17 +595,9 @@ def apply_last_dry_run(run_id: str) -> dict:
         target_path = f["target_path"]
         patched_content = f["patched_content"]
         try:
-            is_self_mod = target_path.resolve().is_relative_to(Path(__file__).parent.resolve())
-        except Exception:
-            is_self_mod = False
-
-        if is_self_mod:
-            _write_file_with_delay(target_path, patched_content, delay=0.5)
-        else:
-            try:
-                target_path.write_text(patched_content, encoding="utf-8")
-            except Exception as e:
-                return {"error": f"Failed to write '{target_path}': {e}"}
+            _write_patched_file(target_path, patched_content)
+        except Exception as e:
+            return {"error": f"Failed to write '{target_path}': {e}"}
         applied.append(str(target_path))
 
     output = f"Applied cached patch (run_id={run_id}). Wrote **{len(applied)}** file(s).\n"
