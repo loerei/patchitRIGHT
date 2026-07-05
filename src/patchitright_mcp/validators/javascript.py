@@ -6,6 +6,24 @@ from .base import BaseValidator
 from .errors import SyntaxValidationError
 from ..utils_log import log_step
 
+def _clean_biome_output(text: str) -> str:
+    replacements = {
+        "│": "|",
+        "┌": "+",
+        "─": "-",
+        "▲": "^",
+        "×": "x",
+        "␍": "",
+        "━━": "--",
+        "━": "-",
+        "\xa0": " ",      # Replace non-breaking space with normal space
+        "\u200b": "",      # Replace zero-width space with empty
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    # Ignore any other unicode characters instead of turning them into '?'
+    return text.encode("ascii", errors="ignore").decode("ascii")
+
 class JsTsValidator(BaseValidator):
     """Validator adapter for JavaScript and TypeScript using Biome or Node.js --check fallback."""
 
@@ -101,7 +119,7 @@ class JsTsValidator(BaseValidator):
                         ]
                         err_line = clean_lines[0] if clean_lines else "Unknown parse error"
                         # Convert to ASCII-safe representation to prevent Windows stdout encoding crashes
-                        err_line = err_line.encode("ascii", errors="replace").decode("ascii")
+                        err_line = _clean_biome_output(err_line)
                         import re
                         line, column = None, None
                         match = re.search(rf"{re.escape(temp_path.name)}:(\d+):(\d+)", output)
@@ -206,13 +224,15 @@ class JsTsValidator(BaseValidator):
                 output = process.stderr or process.stdout
                 warnings = []
                 for line in output.splitlines():
-                    line = line.strip()
-                    if not line or "━━" in line or "Found" in line or "Checked" in line or "emitted" in line:
+                    # Preserve indentation spaces (which are important for alignment)
+                    # but strip trailing spaces
+                    line = line.rstrip()
+                    if not line.strip() or "━━" in line or "Found" in line or "Checked" in line or "emitted" in line:
                         continue
                     # Clean up the temp filename from warnings
                     line = line.replace(temp_path.name, Path(filename).name)
-                    # Convert to ASCII-safe representation to prevent Windows stdout encoding crashes
-                    line = line.encode("ascii", errors="replace").decode("ascii")
+                    # Convert to ASCII-safe representation (preserving normal spaces)
+                    line = _clean_biome_output(line)
                     warnings.append(line)
                 log_step(f"JsTsValidator.lint: returning {len(warnings)} warnings")
                 return warnings
