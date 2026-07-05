@@ -16,6 +16,21 @@ from .validators import SyntaxValidationError
 LINTER_WARNINGS_PREFIX = "\n*Linter Warnings:*\n"
 
 
+def _format_linter_warnings(linter_warnings: list[str], target_file: str) -> str:
+    if not linter_warnings:
+        return ""
+    output = LINTER_WARNINGS_PREFIX
+    for w in linter_warnings:
+        output += f"- {w}\n"
+    
+    suffix = Path(target_file).suffix.lower()
+    if suffix in (".js", ".ts", ".jsx", ".tsx", ".json"):
+        output += "\n*Suggestion:*\n- You can run `npx --offline @biomejs/biome check --write` on this file to automatically fix lint/format warnings.\n"
+    elif suffix == ".py":
+        output += "\n*Suggestion:*\n- You can run `ruff check --fix` on this file to automatically fix lint warnings.\n"
+    return output
+
+
 def generate_diff(original: str, modified: str, filename: str) -> str:
     """Generate a unified diff representation of changes."""
     original_lines = original.splitlines(keepends=True)
@@ -350,10 +365,7 @@ def _apply_patch_content(
         output = f"```diff\n{diff_text}```\n"
         output += f"- Target file: `{target_file}`\n"
         output += "- Format: Unified Diff (Strict Fuzz = 0)\n"
-        if linter_warnings:
-            output += LINTER_WARNINGS_PREFIX
-            for w in linter_warnings:
-                output += f"- {w}\n"
+        output += _format_linter_warnings(linter_warnings, target_file)
         cache = get_cache()
         run_id = cache.store(
             entries=[{"target_path": target_path, "patched_content": patched_file}],
@@ -375,10 +387,7 @@ def _apply_patch_content(
         
     output = f"- Target file: `{target_file}`\n"
     output += "- Format: Unified Diff (Strict Fuzz = 0) applied successfully\n"
-    if linter_warnings:
-        output += LINTER_WARNINGS_PREFIX
-        for w in linter_warnings:
-            output += f"- {w}\n"
+    output += _format_linter_warnings(linter_warnings, target_file)
     return {
         "success": True,
         "dryRun": False,
@@ -431,10 +440,7 @@ def _apply_classic_replacement(  # NOSONAR
             output += "*Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
         elif is_relocated:
             output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
-        if linter_warnings:
-            output += LINTER_WARNINGS_PREFIX
-            for w in linter_warnings:
-                output += f"- {w}\n"
+        output += _format_linter_warnings(linter_warnings, target_file)
 
         cache = get_cache()
         run_id = cache.store(
@@ -472,10 +478,7 @@ def _apply_classic_replacement(  # NOSONAR
         output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
     elif occurrences > 1:
         output += f"*Warning:* Replaced {occurrences} identical occurrences.\n"
-    if linter_warnings:
-        output += LINTER_WARNINGS_PREFIX
-        for w in linter_warnings:
-            output += f"- {w}\n"
+    output += _format_linter_warnings(linter_warnings, target_file)
 
     return {
         "success": True,
