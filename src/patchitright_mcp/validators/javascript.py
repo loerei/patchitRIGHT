@@ -26,7 +26,7 @@ class JsTsValidator(BaseValidator):
         # Check package runners globally/locally without requiring package.json
         npx = shutil.which("npx")
         if npx:
-            return npx, ["-y", "@biomejs/biome", "check"]
+            return npx, ["--offline", "@biomejs/biome", "check"]
         yarn = shutil.which("yarn")
         if yarn:
             return yarn, ["dlx", "@biomejs/biome", "check"]
