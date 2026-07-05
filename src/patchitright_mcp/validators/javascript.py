@@ -72,7 +72,12 @@ class JsTsValidator(BaseValidator):
                 if process.returncode != 0:
                     output = process.stderr or process.stdout
                     if "pars" in output.lower() or "syntax" in output.lower() or "error[" in output.lower():
-                        err_line = output.splitlines()[0] if output.splitlines() else "Unknown parse error"
+                        # Filter out empty lines and box-drawing header lines (containing ━)
+                        clean_lines = [
+                            l.strip() for l in output.splitlines()
+                            if l.strip() and "━━" not in l
+                        ]
+                        err_line = clean_lines[0] if clean_lines else "Unknown parse error"
                         raise SyntaxValidationError(
                             message=f"Biome Syntax Error: {err_line}",
                             filename=filename
