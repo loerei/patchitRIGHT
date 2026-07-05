@@ -383,16 +383,18 @@ def _apply_patch_content(
             entries=[{"target_path": target_path, "patched_content": patched_file}],
             original_contents={str(target_path): file_content, target_file: file_content},
         )
-        return {
+        res = {
             "success": True,
             "dryRun": True,
             "message": output,
             "occurrences": 1,
             "run_id": run_id,
             "expires_in": cache.get_ttl(),
-            "warnings": linter_warnings,
-            "suggestion": _get_linter_suggestion(target_file) if linter_warnings else ""
         }
+        if linter_warnings:
+            res["warnings"] = linter_warnings
+            res["suggestion"] = _get_linter_suggestion(target_file)
+        return res
         
     try:
         is_self_mod = target_path.resolve().is_relative_to(Path(__file__).parent.resolve())
@@ -409,14 +411,16 @@ def _apply_patch_content(
         
     output = f"- Target file: `{target_file}`\n"
     output += "- Format: Unified Diff (Strict Fuzz = 0) applied successfully\n"
-    return {
+    res = {
         "success": True,
         "dryRun": False,
         "message": output,
         "occurrences": 1,
-        "warnings": linter_warnings,
-        "suggestion": _get_linter_suggestion(target_file) if linter_warnings else ""
     }
+    if linter_warnings:
+        res["warnings"] = linter_warnings
+        res["suggestion"] = _get_linter_suggestion(target_file)
+    return res
 
 
 def _apply_classic_replacement(  # NOSONAR
@@ -468,16 +472,18 @@ def _apply_classic_replacement(  # NOSONAR
             entries=[{"target_path": target_path, "patched_content": patched_file}],
             original_contents={str(target_path): file_content, target_file: file_content},
         )
-        return {
+        res = {
             "success": True,
             "dryRun": True,
             "message": output,
             "occurrences": occurrences,
             "run_id": run_id,
             "expires_in": cache.get_ttl(),
-            "warnings": linter_warnings,
-            "suggestion": _get_linter_suggestion(target_file) if linter_warnings else ""
         }
+        if linter_warnings:
+            res["warnings"] = linter_warnings
+            res["suggestion"] = _get_linter_suggestion(target_file)
+        return res
 
     try:
         is_self_mod = target_path.resolve().is_relative_to(Path(__file__).parent.resolve())
@@ -509,14 +515,16 @@ def _apply_classic_replacement(  # NOSONAR
         output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
     elif occurrences > 1:
         output += f"*Warning:* Replaced {occurrences} identical occurrences.\n"
-    return {
+    res = {
         "success": True,
         "dryRun": False,
         "message": output,
         "occurrences": occurrences,
-        "warnings": linter_warnings,
-        "suggestion": _get_linter_suggestion(target_file) if linter_warnings else ""
     }
+    if linter_warnings:
+        res["warnings"] = linter_warnings
+        res["suggestion"] = _get_linter_suggestion(target_file)
+    return res
 
 
 def _handle_patch_file_value_error(e: ValueError, target_file: str) -> dict:

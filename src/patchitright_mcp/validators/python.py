@@ -45,7 +45,7 @@ class PythonValidator(BaseValidator):
             if process.stdout:
                 for line in process.stdout.splitlines():
                     line = line.strip()
-                    if line and not line.startswith("Found ") and not line.startswith("[*] "):
+                    if line and not line.startswith("Found ") and not line.startswith("[*] ") and not line.startswith("All checks passed"):
                         if line.startswith("-:"):
                             line = line[2:]
                         warnings.append(line)
