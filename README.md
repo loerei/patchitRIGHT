@@ -80,6 +80,22 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
    * `_resolve_allowed_base_dir`: Resolves the absolute project root.
    * `_resolve_ast_boundaries`: Scopes edits by looking up symbol definitions (returning `start_line` and `end_line`).
 
+### 📊 Comparison Matrix: jCodeMunch Mode vs. Standalone Mode
+
+| Feature / Aspect | jCodeMunch Mode (Indexed) | Standalone Mode (No-Dependency) |
+| :--- | :--- | :--- |
+| **Dependencies** | Requires `jcodemunch-mcp` and an indexed repository SQLite database | **None** (zero-dependency Python package) |
+| **AST Symbol Scoping (`symbol_name`)** | **Supported** (O(1) lookup of class/function boundaries) | Unsupported (resolves to whole file scope unless custom parser is plugged in) |
+| **Exact Search & Replace** | Supported | Supported |
+| **Line-Range Scoping (`start_line`/`end_line`)** | Supported | Supported |
+| **Unified Diff Patches (`patch_content`)** | Supported | Supported |
+| **Multi-patch Queueing (`replacements`)** | Supported | Supported |
+| **Transactional Batch Patches** | Supported | Supported |
+| **Safety & Syntax Verification** | Supported | Supported |
+| **Subprocess Timeouts & Delayed Writes** | Supported | Supported |
+| **Setup Overhead** | Requires indexing repository metadata upfront | **Zero setup** (instant plug-and-play) |
+| **Ideal For** | Large projects, complex AI coding agents requiring symbol understanding | CI/CD pipelines, lightweight integrations, local dry-run validation |
+
 ---
 
 ## 📄 License & Terms
