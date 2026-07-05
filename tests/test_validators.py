@@ -88,6 +88,14 @@ def test_json_validator():
         val.validate('{"key": "value", "arr": [1, 2,]}', "config.json")
     assert exc_info.value.filename == "config.json"
 
+    # Test Biome JSON linting
+    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
+        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/biome" if cmd == "biome" else None
+        mock_run.return_value = MagicMock(returncode=0, stdout="warning: duplicate key 'key'", stderr="")
+        
+        warnings = val.lint('{"key": "value", "key": "value2"}', "config.json")
+        assert any("duplicate key" in w for w in warnings)
+
 
 def test_toml_validator():
     val = TomlValidator()
