@@ -429,8 +429,10 @@ source = { editable = "." }
 dependencies = [
     { name = "jcodemunch-mcp" },
     { name = "mcp" },
+    { name = "pyyaml" },
     { name = "rapidfuzz" },
     { name = "ruff" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.dev-dependencies]
@@ -443,8 +445,10 @@ dev = [
 requires-dist = [
     { name = "jcodemunch-mcp", directory = "../jcodemunch-mcp" },
     { name = "mcp", specifier = ">=1.10.0,<2.0.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "rapidfuzz", specifier = ">=3.0.0" },
     { name = "ruff" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
 ]
 
 [package.metadata.requires-dev]
