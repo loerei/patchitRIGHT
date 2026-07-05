@@ -22,6 +22,22 @@ class PatchEngine:
         self.linter_warnings = []
         self.validator = ValidationService()
 
+    def _find_occurrence_line_ranges(
+        self, content: str, search: str, base_line_offset: int = 0
+    ) -> list[tuple[int, int]]:
+        """Finds the 1-based start and end line numbers of all occurrences of search in content."""
+        ranges = []
+        start_pos = 0
+        while True:
+            idx = content.find(search, start_pos)
+            if idx == -1:
+                break
+            start_line = base_line_offset + content[:idx].count("\n") + 1
+            end_line = start_line + search.count("\n")
+            ranges.append((start_line, end_line))
+            start_pos = idx + max(1, len(search))
+        return ranges
+
     def _handle_zero_occurrences(
         self,
         norm_search: str,
@@ -43,9 +59,11 @@ class PatchEngine:
             return new_start, new_end, new_slice, 1
 
         if total_occurrences > 1 and not allow_multiple:
+            ranges = self._find_occurrence_line_ranges(self.norm_content, norm_search)
+            ranges_str = ", ".join(f"lines {s}-{e}" for s, e in ranges)
             raise ValueError(
                 f"Error: Search content not found inside the specified scope (lines {start_idx + 1} to {end_idx + 1}), "
-                f"but it occurs {total_occurrences} times in the entire file. "
+                f"but it occurs {total_occurrences} times in the entire file (at {ranges_str}). "
                 "Cannot relocate safely."
             )
         if did_you_mean:
@@ -121,8 +139,10 @@ class PatchEngine:
             )
 
         if not allow_multiple and occurrences > 1:
+            ranges = self._find_occurrence_line_ranges(target_slice, norm_search, base_line_offset=start_idx)
+            ranges_str = ", ".join(f"lines {s}-{e}" for s, e in ranges)
             raise ValueError(
-                f"Error: Search content occurs {occurrences} times within the specified scope (lines {start_idx + 1} to {end_idx + 1}). "
+                f"Error: Search content occurs {occurrences} times within the specified scope (lines {start_idx + 1} to {end_idx + 1}): {ranges_str}. "
                 "To replace all, set 'allow_multiple: true'."
             )
 
