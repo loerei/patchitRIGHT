@@ -55,7 +55,7 @@ class JsTsValidator(BaseValidator):
                 if orig_process.returncode != 0:
                     orig_output = orig_process.stderr or orig_process.stdout
                     # Only skip if there is a specific Biome parsing error diagnostic (avoid false positives from npm/npx logs)
-                    if "error[" in orig_output.lower() and ("parse" in orig_output.lower() or "syntax" in orig_output.lower()):
+                    if "error[" in orig_output.lower() and ("pars" in orig_output.lower() or "syntax" in orig_output.lower()):
                         # Original content is invalid, skip validation
                         return
 
@@ -68,10 +68,10 @@ class JsTsValidator(BaseValidator):
                     shell=(os.name == 'nt'),
                     encoding="utf-8"
                 )
-                # Biome formats syntax errors in stderr/stdout with "parse" or "error"
+                # Biome formats syntax errors in stderr/stdout with "pars" or "error"
                 if process.returncode != 0:
                     output = process.stderr or process.stdout
-                    if "parse" in output.lower() or "syntax" in output.lower() or "error[" in output.lower():
+                    if "pars" in output.lower() or "syntax" in output.lower() or "error[" in output.lower():
                         err_line = output.splitlines()[0] if output.splitlines() else "Unknown parse error"
                         raise SyntaxValidationError(
                             message=f"Biome Syntax Error: {err_line}",

@@ -134,3 +134,23 @@ def test_validation_service():
     with pytest.raises(SyntaxValidationError):
         service.validate_file("app.json", '{"a": 1,}')
 
+
+def test_js_ts_validator_real(tmp_path, monkeypatch):
+    from patchitright_mcp.patch_file import patch_file
+    monkeypatch.chdir(tmp_path)
+    f = tmp_path / "temp_test.ts"
+    f.write_text("const x: number = 1;\n")
+
+    # Patch that introduces a syntax error
+    res = patch_file(
+        target_file="temp_test.ts",
+        search_content="const x: number = 1;",
+        replace_content="const x:",
+        dry_run=False
+    )
+    import shutil
+    if shutil.which("npx"):
+        assert "error" in res
+        assert "Syntax Error" in res["error"] or "Biome Syntax Error" in res["error"]
+        assert f.read_text() == "const x: number = 1;\n"
+
