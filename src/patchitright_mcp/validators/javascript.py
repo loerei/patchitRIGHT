@@ -54,7 +54,8 @@ class JsTsValidator(BaseValidator):
                 )
                 if orig_process.returncode != 0:
                     orig_output = orig_process.stderr or orig_process.stdout
-                    if "parse" in orig_output.lower() or "syntax" in orig_output.lower() or "error[" in orig_output.lower():
+                    # Only skip if there is a specific Biome parsing error diagnostic (avoid false positives from npm/npx logs)
+                    if "error[" in orig_output.lower() and ("parse" in orig_output.lower() or "syntax" in orig_output.lower()):
                         # Original content is invalid, skip validation
                         return
 
