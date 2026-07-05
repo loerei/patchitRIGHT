@@ -152,5 +152,7 @@ def test_js_ts_validator_real(tmp_path, monkeypatch):
     if shutil.which("npx"):
         assert "error" in res
         assert "Syntax Error" in res["error"] or "Biome Syntax Error" in res["error"]
+        assert res["line"] == 1
+        assert res["column"] in (7, 9)
         assert f.read_text() == "const x: number = 1;\n"
 

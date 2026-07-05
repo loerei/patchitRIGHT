@@ -40,12 +40,15 @@ class JsTsValidator(BaseValidator):
         biome_cmd = self._get_biome_command()
         if biome_cmd:
             biome_exe, base_args = biome_cmd
-            args = base_args + [f"--stdin-file-path={filename}"]
+            # Create a temporary file next to the target file to get full diagnostics (Biome stdin does not output line/col)
+            # Keep the original extension so that Biome/linter processes it correctly
+            suffix = f".patchitright_temp{Path(filename).suffix}"
+            temp_path = Path(filename).with_suffix(suffix)
             try:
-                # First check if original content was valid
+                # Check original
+                temp_path.write_text(original_content, encoding="utf-8")
                 orig_process = subprocess.run(
-                    [biome_exe] + args,
-                    input=original_content,
+                    [biome_exe] + base_args + [str(temp_path)],
                     text=True,
                     capture_output=True,
                     check=False,
@@ -59,9 +62,10 @@ class JsTsValidator(BaseValidator):
                         # Original content is invalid, skip validation
                         return
 
+                # Check new
+                temp_path.write_text(content, encoding="utf-8")
                 process = subprocess.run(
-                    [biome_exe] + args,
-                    input=content,
+                    [biome_exe] + base_args + [str(temp_path)],
                     text=True,
                     capture_output=True,
                     check=False,
@@ -78,14 +82,28 @@ class JsTsValidator(BaseValidator):
                             if l.strip() and "━━" not in l
                         ]
                         err_line = clean_lines[0] if clean_lines else "Unknown parse error"
+                        import re
+                        line, column = None, None
+                        match = re.search(rf"{re.escape(temp_path.name)}:(\d+):(\d+)", output)
+                        if match:
+                            line = int(match.group(1))
+                            column = int(match.group(2))
                         raise SyntaxValidationError(
                             message=f"Biome Syntax Error: {err_line}",
-                            filename=filename
+                            filename=filename,
+                            line=line,
+                            column=column
                         )
             except SyntaxValidationError:
                 raise
             except (FileNotFoundError, OSError):
                 pass
+            finally:
+                if temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except Exception:
+                        pass
             return
 
         # Fallback to node --check if node is available (JS/CJS/MJS only)
@@ -113,9 +131,18 @@ class JsTsValidator(BaseValidator):
                     )
                     if process.returncode != 0:
                         err_msg = process.stderr.strip() if process.stderr else "Syntax Error"
+                        import re
+                        line, column = None, None
+                        match = re.search(r"\[stdin\]:(\d+)(?::(\d+))?", err_msg)
+                        if match:
+                            line = int(match.group(1))
+                            if match.group(2):
+                                column = int(match.group(2))
                         raise SyntaxValidationError(
                             message=f"Node JS Syntax Error: {err_msg}",
-                            filename=filename
+                            filename=filename,
+                            line=line,
+                            column=column
                         )
                 except SyntaxValidationError:
                     raise
