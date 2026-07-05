@@ -1025,7 +1025,7 @@ class TestApplyLastDryRun:
             dry_run=False
         )
         assert res["success"] is True
-        assert "Linter Warnings:" in res["message"]
-        assert "F401" in res["message"]
+        assert "warnings" in res
+        assert any("F401" in w for w in res["warnings"])
 
 
