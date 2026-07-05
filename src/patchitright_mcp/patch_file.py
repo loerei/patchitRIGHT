@@ -549,6 +549,26 @@ def run_startup_recovery(workspace_path: Path) -> None:
     FileTransaction.run_startup_recovery(workspace_path)
 
 
+def _verify_dry_run_hashes(files: list[dict]) -> Optional[dict]:
+    """Verify that all target files are unchanged since the dry-run."""
+    for f in files:
+        target_path: Path = f["target_path"]
+        original_hash: str = f["original_hash"]
+        try:
+            current_text = target_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            return {"error": f"Cannot read '{target_path}' for hash check: {e}"}
+        current_hash = hashlib.sha256(current_text.encode()).hexdigest()
+        if current_hash != original_hash:
+            return {
+                "error": (
+                    f"File '{target_path.name}' was modified after the dry-run "
+                    "(hash mismatch). Re-run with dry_run=true to preview the updated diff."
+                )
+            }
+    return None
+
+
 def apply_last_dry_run(run_id: str) -> dict:
     """Commit the patch cached under *run_id* from a previous dry-run call.
 
@@ -568,21 +588,9 @@ def apply_last_dry_run(run_id: str) -> dict:
     files = entry["files"]
 
     # Hash guard: verify all files are unchanged before writing any
-    for f in files:
-        target_path: Path = f["target_path"]
-        original_hash: str = f["original_hash"]
-        try:
-            current_text = target_path.read_text(encoding="utf-8", errors="replace")
-        except Exception as e:
-            return {"error": f"Cannot read '{target_path}' for hash check: {e}"}
-        current_hash = hashlib.sha256(current_text.encode()).hexdigest()
-        if current_hash != original_hash:
-            return {
-                "error": (
-                    f"File '{target_path.name}' was modified after the dry-run "
-                    "(hash mismatch). Re-run with dry_run=true to preview the updated diff."
-                )
-            }
+    error_response = _verify_dry_run_hashes(files)
+    if error_response:
+        return error_response
 
     # All guards passed — write all files
     applied: list[str] = []

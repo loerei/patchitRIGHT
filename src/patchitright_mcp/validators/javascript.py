@@ -64,18 +64,12 @@ class JsTsValidator(BaseValidator):
         log_step("JsTsValidator: No biome runner found")
         return None
 
-    def _validate_with_biome(self, biome_cmd: tuple[str, list[str]], content: str, filename: str, original_content: str) -> None:
-        biome_exe, base_args = biome_cmd
-        # Create a temporary file next to the target file to get full diagnostics (Biome stdin does not output line/col)
-        # Keep the original extension so that Biome/linter processes it correctly
-        suffix = f".patchitright_temp{Path(filename).suffix}"
-        temp_path = Path(filename).with_suffix(suffix)
-        log_step(f"JsTsValidator.validate: using temp path {temp_path}")
+    def _check_original_validity(self, biome_exe: str, base_args: list[str], temp_path: Path, original_content: str) -> bool:
+        """Return True if original content has syntax errors, indicating we should skip validation."""
+        log_step("JsTsValidator.validate: writing original content to temp path...")
+        temp_path.write_text(original_content, encoding="utf-8")
+        log_step(f"JsTsValidator.validate: running orig check with {biome_exe}...")
         try:
-            # Check original
-            log_step("JsTsValidator.validate: writing original content to temp path...")
-            temp_path.write_text(original_content, encoding="utf-8")
-            log_step(f"JsTsValidator.validate: running orig check with {biome_exe}...")
             orig_process = subprocess.run(
                 [biome_exe] + base_args + [str(temp_path)],
                 text=True,
@@ -89,10 +83,47 @@ class JsTsValidator(BaseValidator):
             log_step(f"JsTsValidator.validate: orig check done. Code={orig_process.returncode}")
             if orig_process.returncode != 0:
                 orig_output = orig_process.stderr or orig_process.stdout
-                # Only skip if there is a specific Biome parsing error diagnostic (avoid false positives from npm/npx logs)
                 if "error[" in orig_output.lower() and ("pars" in orig_output.lower() or "syntax" in orig_output.lower()):
                     log_step("JsTsValidator.validate: original content has syntax error, skipping validation")
-                    return
+                    return True
+        except OSError as e:
+            log_step(f"JsTsValidator.validate: biome original check failed: {e}")
+        return False
+
+    def _parse_biome_error(self, output: str, temp_name: str, filename: str) -> SyntaxValidationError | None:
+        """Parse Biome output for syntax error diagnostics and return SyntaxValidationError if found."""
+        if "pars" in output.lower() or "syntax" in output.lower() or "error[" in output.lower():
+            # Filter out empty lines and box-drawing header lines (containing ━━)
+            clean_lines = [
+                l.strip() for l in output.splitlines()
+                if l.strip() and "━━" not in l
+            ]
+            err_line = clean_lines[0] if clean_lines else "Unknown parse error"
+            err_line = _clean_biome_output(err_line)
+            import re
+            line, column = None, None
+            match = re.search(rf"{re.escape(temp_name)}:(\d+):(\d+)", output)
+            if match:
+                line = int(match.group(1))
+                column = int(match.group(2))
+            return SyntaxValidationError(
+                message=f"Biome Syntax Error: {err_line}",
+                filename=filename,
+                line=line,
+                column=column
+            )
+        return None
+
+    def _validate_with_biome(self, biome_cmd: tuple[str, list[str]], content: str, filename: str, original_content: str) -> None:
+        biome_exe, base_args = biome_cmd
+        # Create a temporary file next to the target file to get full diagnostics (Biome stdin does not output line/col)
+        # Keep the original extension so that Biome/linter processes it correctly
+        suffix = f".patchitright_temp{Path(filename).suffix}"
+        temp_path = Path(filename).with_suffix(suffix)
+        log_step(f"JsTsValidator.validate: using temp path {temp_path}")
+        try:
+            if self._check_original_validity(biome_exe, base_args, temp_path, original_content):
+                return
 
             # Check new
             log_step("JsTsValidator.validate: writing new content to temp path...")
@@ -112,28 +143,10 @@ class JsTsValidator(BaseValidator):
             # Biome formats syntax errors in stderr/stdout with "pars" or "error"
             if process.returncode != 0:
                 output = process.stderr or process.stdout
-                if "pars" in output.lower() or "syntax" in output.lower() or "error[" in output.lower():
-                    # Filter out empty lines and box-drawing header lines (containing ━━)
-                    clean_lines = [
-                        l.strip() for l in output.splitlines()
-                        if l.strip() and "━━" not in l
-                    ]
-                    err_line = clean_lines[0] if clean_lines else "Unknown parse error"
-                    # Convert to ASCII-safe representation to prevent Windows stdout encoding crashes
-                    err_line = _clean_biome_output(err_line)
-                    import re
-                    line, column = None, None
-                    match = re.search(rf"{re.escape(temp_path.name)}:(\d+):(\d+)", output)
-                    if match:
-                        line = int(match.group(1))
-                        column = int(match.group(2))
-                    log_step(f"JsTsValidator.validate: raising SyntaxValidationError for line={line} col={column}")
-                    raise SyntaxValidationError(
-                        message=f"Biome Syntax Error: {err_line}",
-                        filename=filename,
-                        line=line,
-                        column=column
-                    )
+                err = self._parse_biome_error(output, temp_path.name, filename)
+                if err:
+                    log_step(f"JsTsValidator.validate: raising SyntaxValidationError for line={err.line} col={err.column}")
+                    raise err
         except SyntaxValidationError:
             raise
         except OSError as e:
