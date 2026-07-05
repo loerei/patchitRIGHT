@@ -11,8 +11,9 @@ from .workspace import Workspace
 from .engine import PatchEngine
 from .transaction import FileTransaction
 from .run_cache import get_cache
+from .validators import SyntaxValidationError
 
-RUFF_WARNINGS_PREFIX = "\n*Ruff Warnings:*\n"
+LINTER_WARNINGS_PREFIX = "\n*Linter Warnings:*\n"
 
 
 def generate_diff(original: str, modified: str, filename: str) -> str:
@@ -270,6 +271,13 @@ def patch_file(  # noqa: C901 # NOSONAR
                 line_filter=line_filter,
                 did_you_mean=did_you_mean
             )
+        except SyntaxValidationError as e:
+            return {
+                "error": f"Syntax Error: {str(e)}",
+                "filename": e.filename,
+                "line": e.line,
+                "column": e.column
+            }
         except ValueError as e:
             if not did_you_mean:
                 try:
@@ -305,6 +313,13 @@ def patch_file(  # noqa: C901 # NOSONAR
             symbol_name, resolved_start_line, resolved_end_line, start_line, end_line, engine
         )
 
+    except SyntaxValidationError as e:
+        return {
+            "error": f"Syntax Error: {str(e)}",
+            "filename": e.filename,
+            "line": e.line,
+            "column": e.column
+        }
     except ValueError as e:
         return _handle_patch_file_value_error(e, target_file)
 
@@ -319,18 +334,25 @@ def _apply_patch_content(
 ) -> dict:
     try:
         patched_file = engine.apply_unified_patch(patch_content)
+    except SyntaxValidationError as e:
+        return {
+            "error": f"Syntax Error: {str(e)}",
+            "filename": e.filename,
+            "line": e.line,
+            "column": e.column
+        }
     except ValueError as e:
         return {"error": str(e)}
         
-    ruff_warnings = getattr(engine, "ruff_warnings", [])
+    linter_warnings = getattr(engine, "linter_warnings", [])
     if dry_run:
         diff_text = generate_diff(file_content, patched_file, target_file)
         output = f"```diff\n{diff_text}```\n"
         output += f"- Target file: `{target_file}`\n"
         output += "- Format: Unified Diff (Strict Fuzz = 0)\n"
-        if ruff_warnings:
-            output += RUFF_WARNINGS_PREFIX
-            for w in ruff_warnings:
+        if linter_warnings:
+            output += LINTER_WARNINGS_PREFIX
+            for w in linter_warnings:
                 output += f"- {w}\n"
         cache = get_cache()
         run_id = cache.store(
@@ -353,9 +375,9 @@ def _apply_patch_content(
         
     output = f"- Target file: `{target_file}`\n"
     output += "- Format: Unified Diff (Strict Fuzz = 0) applied successfully\n"
-    if ruff_warnings:
-        output += RUFF_WARNINGS_PREFIX
-        for w in ruff_warnings:
+    if linter_warnings:
+        output += LINTER_WARNINGS_PREFIX
+        for w in linter_warnings:
             output += f"- {w}\n"
     return {
         "success": True,
@@ -390,7 +412,7 @@ def _apply_classic_replacement(  # NOSONAR
         resolved_start_line = engine.relocated_start_line
         resolved_end_line = engine.relocated_end_line
 
-    ruff_warnings = getattr(engine, "ruff_warnings", [])
+    linter_warnings = getattr(engine, "linter_warnings", [])
     if dry_run:
         diff_text = generate_diff(file_content, patched_file, target_file)
         output = f"```diff\n{diff_text}```\n"
@@ -409,9 +431,9 @@ def _apply_classic_replacement(  # NOSONAR
             output += "*Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
         elif is_relocated:
             output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
-        if ruff_warnings:
-            output += RUFF_WARNINGS_PREFIX
-            for w in ruff_warnings:
+        if linter_warnings:
+            output += LINTER_WARNINGS_PREFIX
+            for w in linter_warnings:
                 output += f"- {w}\n"
 
         cache = get_cache()
@@ -450,9 +472,9 @@ def _apply_classic_replacement(  # NOSONAR
         output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
     elif occurrences > 1:
         output += f"*Warning:* Replaced {occurrences} identical occurrences.\n"
-    if ruff_warnings:
-        output += RUFF_WARNINGS_PREFIX
-        for w in ruff_warnings:
+    if linter_warnings:
+        output += LINTER_WARNINGS_PREFIX
+        for w in linter_warnings:
             output += f"- {w}\n"
 
     return {
