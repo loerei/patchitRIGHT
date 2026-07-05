@@ -98,9 +98,19 @@ class TomlValidator(BaseValidator):
         try:
             tomllib.loads(content)
         except Exception as e:
+            line = None
+            column = None
+            err_msg = str(e)
+            import re
+            match = re.search(r"line\s+(\d+),\s+column\s+(\d+)", err_msg)
+            if match:
+                line = int(match.group(1))
+                column = int(match.group(2))
             raise SyntaxValidationError(
-                message=f"TOML Syntax Error: {e}",
-                filename=filename
+                message=f"TOML Syntax Error: {err_msg}",
+                filename=filename,
+                line=line,
+                column=column
             )
 
 
@@ -122,7 +132,14 @@ class YamlValidator(BaseValidator):
             # Degrade gracefully if PyYAML is not installed
             pass
         except Exception as e:
+            line = None
+            column = None
+            if hasattr(e, "problem_mark") and e.problem_mark is not None:
+                line = e.problem_mark.line + 1
+                column = e.problem_mark.column + 1
             raise SyntaxValidationError(
                 message=f"YAML Syntax Error: {e}",
-                filename=filename
+                filename=filename,
+                line=line,
+                column=column
             )

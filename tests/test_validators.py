@@ -107,6 +107,8 @@ def test_toml_validator():
     with pytest.raises(SyntaxValidationError) as exc_info:
         val.validate('title = "TOML Example"\n[owner\nname = "Tom"', "config.toml")
     assert exc_info.value.filename == "config.toml"
+    assert exc_info.value.line in (2, 3)
+    assert exc_info.value.column is not None
 
 
 def test_yaml_validator():
@@ -119,6 +121,8 @@ def test_yaml_validator():
     with pytest.raises(SyntaxValidationError) as exc_info:
         val.validate("key: value\nlist:\n  - item 1\n  -item 2\n", "config.yaml")
     assert exc_info.value.filename == "config.yaml"
+    assert exc_info.value.line == 5
+    assert exc_info.value.column == 1
 
 
 def test_validation_service():
