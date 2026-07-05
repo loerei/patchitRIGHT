@@ -1,7 +1,14 @@
 import json
-import sys
 from .base import BaseValidator
 from .errors import SyntaxValidationError
+
+try:
+    import tomllib  # type: ignore
+except ImportError:
+    try:
+        import tomli as tomllib  # type: ignore
+    except ImportError:
+        tomllib = None  # type: ignore
 
 class JsonValidator(BaseValidator):
     """Validator adapter for JSON files using Python's built-in json module."""
@@ -57,7 +64,8 @@ class JsonValidator(BaseValidator):
                 input=content,
                 text=True,
                 capture_output=True,
-                check=False
+                check=False,
+                timeout=10
             )
             warnings = []
             output = process.stdout or process.stderr
@@ -77,39 +85,23 @@ class TomlValidator(BaseValidator):
     def validate(self, content: str, filename: str, original_content: str = "") -> None:
         if not content.strip():
             return
+        if tomllib is None:
+            return
 
-        # Python 3.11+ has built-in tomllib
-        if sys.version_info >= (3, 11):
-            import tomllib
-            if original_content.strip():
-                try:
-                    tomllib.loads(original_content)
-                except tomllib.TOMLDecodeError:
-                    return
+        if original_content.strip():
             try:
-                tomllib.loads(content)
-            except tomllib.TOMLDecodeError as e:
-                raise SyntaxValidationError(
-                    message=f"TOML Syntax Error: {e}",
-                    filename=filename
-                )
-        else:
-            try:
-                import tomli
-                if original_content.strip():
-                    try:
-                        tomli.loads(original_content)
-                    except Exception:
-                        return
-                tomli.loads(content)
-            except ImportError:
-                # If tomli is not installed yet, skip validation to degrade gracefully
-                pass
-            except Exception as e:
-                raise SyntaxValidationError(
-                    message=f"TOML Syntax Error: {e}",
-                    filename=filename
-                )
+                tomllib.loads(original_content)
+            except Exception:
+                # Original content was already invalid, skip syntax validation
+                return
+
+        try:
+            tomllib.loads(content)
+        except Exception as e:
+            raise SyntaxValidationError(
+                message=f"TOML Syntax Error: {e}",
+                filename=filename
+            )
 
 
 class YamlValidator(BaseValidator):

@@ -38,7 +38,8 @@ class PythonValidator(BaseValidator):
                 input=content,
                 text=True,
                 capture_output=True,
-                check=False
+                check=False,
+                timeout=10
             )
             warnings = []
             if process.stdout:

@@ -21,4 +21,5 @@ class BaseValidator:
         Returns:
             A list of linter warnings (already parsed and standardized).
         """
+        _ = filename
         return []
