@@ -155,25 +155,35 @@ class JsTsValidator(BaseValidator):
             return []
         
         biome_exe, base_args = biome_cmd
-        args = base_args + [f"--stdin-file-path={filename}"]
-
+        suffix = f".patchitright_temp{Path(filename).suffix}"
+        temp_path = Path(filename).with_suffix(suffix)
         try:
+            temp_path.write_text(content, encoding="utf-8")
             process = subprocess.run(
-                [biome_exe] + args,
-                input=content,
+                [biome_exe] + base_args + [str(temp_path)],
                 text=True,
                 capture_output=True,
                 check=False,
                 shell=(os.name == 'nt'),
                 encoding="utf-8"
             )
-            warnings = []
-            output = process.stdout or process.stderr
-            if output:
+            if process.returncode != 0:
+                output = process.stderr or process.stdout
+                warnings = []
                 for line in output.splitlines():
                     line = line.strip()
-                    if line and ("warning" in line.lower() or "error" in line.lower() or line.startswith("  ")):
-                        warnings.append(line)
-            return warnings
-        except Exception:
-            return []
+                    if not line or "━━" in line or "Found" in line or "Checked" in line or "emitted" in line:
+                        continue
+                    # Clean up the temp filename from warnings
+                    line = line.replace(temp_path.name, Path(filename).name)
+                    warnings.append(line)
+                return warnings
+        except (FileNotFoundError, OSError):
+            pass
+        finally:
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
+        return []
