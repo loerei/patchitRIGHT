@@ -1,6 +1,7 @@
 import re
 from typing import Optional, Union
 from rapidfuzz import fuzz
+from .validators import ValidationService
 
 class PatchEngine:
     """Core in-memory engine to apply search-and-replace and unified diff patches."""
@@ -18,59 +19,8 @@ class PatchEngine:
         self.is_relocated = False
         self.relocated_start_line = None
         self.relocated_end_line = None
-        self.ruff_warnings = []
-
-    def run_ruff_linter(self, content: str) -> list[str]:
-        """Runs Ruff check on the code content and returns a list of warnings."""
-        if not self.filename.endswith(".py"):
-            return []
-        
-        import subprocess
-        import shutil
-        import sys
-        from pathlib import Path
-        
-        executable_dir = Path(sys.executable).parent
-        ruff_exe = shutil.which("ruff", path=str(executable_dir)) or shutil.which("ruff")
-        if not ruff_exe:
-            return []
-            
-        try:
-            process = subprocess.run(
-                [ruff_exe, "check", "-", "--no-cache"],
-                input=content,
-                text=True,
-                capture_output=True,
-                check=False
-            )
-            warnings = []
-            if process.stdout:
-                for line in process.stdout.splitlines():
-                    line = line.strip()
-                    if line and not line.startswith("Found ") and not line.startswith("[*] "):
-                        if line.startswith("-:"):
-                            line = line[2:]
-                        warnings.append(line)
-            return warnings
-        except Exception:
-            return []
-
-    def validate_syntax(self, content: str) -> None:
-        """Validates that the patched content is syntactically correct for supported languages."""
-        if self.filename.endswith(".py"):
-            import ast
-            is_originally_valid = False
-            try:
-                ast.parse(self.file_content)
-                is_originally_valid = True
-            except SyntaxError:
-                pass
-
-            if is_originally_valid:
-                try:
-                    ast.parse(content)
-                except SyntaxError as e:
-                    raise ValueError(f"Syntax Error: Patched file is not syntactically valid Python code: {e}")
+        self.linter_warnings = []
+        self.validator = ValidationService()
 
     def _handle_zero_occurrences(
         self,
@@ -187,8 +137,8 @@ class PatchEngine:
         after_part = "\n" + "\n".join(self.file_lines[end_idx + 1:]) if end_idx < len(self.file_lines) - 1 else ""
         patched_file = before_part + patched_slice + after_part
 
-        self.validate_syntax(patched_file)
-        self.ruff_warnings = self.run_ruff_linter(patched_file)
+        self.validator.validate_file(self.filename, patched_file, self.file_content)
+        self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
 
         if self.is_crlf:
             patched_file = patched_file.replace("\n", "\r\n")
@@ -298,8 +248,8 @@ class PatchEngine:
 
         patched_file = "\n".join(file_lines)
 
-        self.validate_syntax(patched_file)
-        self.ruff_warnings = self.run_ruff_linter(patched_file)
+        self.validator.validate_file(self.filename, patched_file, self.file_content)
+        self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
 
         if self.is_crlf:
             patched_file = patched_file.replace("\n", "\r\n")

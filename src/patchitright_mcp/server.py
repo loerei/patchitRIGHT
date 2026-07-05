@@ -25,7 +25,9 @@ async def list_tools() -> list[Tool]:
             name="patch_file",
             description=(
                 "Edit a file by replacing an exact text block (search_content/replace_content) "
-                "or applying a unified diff (patch_content). Optionally scope to a line range or AST symbol."
+                "or applying a unified diff (patch_content). Optionally scope to a line range or AST symbol. "
+                "CRITICAL: Do not pass large blocks of code (over 50 lines) into search_content/replace_content. "
+                "Instead, use 'symbol_name' to target class/function boundaries for safer, faster edits with less token overhead."
             ),
             inputSchema={
                 "type": "object",
@@ -36,11 +38,11 @@ async def list_tools() -> list[Tool]:
                     },
                     "search_content": {
                         "type": "string",
-                        "description": "The exact string block to search for. Must match uniquely within the scope unless allow_multiple is True."
+                        "description": "The exact string block to search for. Must match uniquely within the scope unless allow_multiple is True. Avoid passing blocks larger than 50 lines; use 'symbol_name' instead."
                     },
                     "replace_content": {
                         "type": "string",
-                        "description": "The string block to replace the search content with."
+                        "description": "The string block to replace the search content with. Avoid passing blocks larger than 50 lines; use 'symbol_name' instead."
                     },
                     "patch_content": {
                         "type": "string",

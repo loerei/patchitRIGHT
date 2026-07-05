@@ -11,8 +11,37 @@ from .workspace import Workspace
 from .engine import PatchEngine
 from .transaction import FileTransaction
 from .run_cache import get_cache
+from .validators import SyntaxValidationError
 
-RUFF_WARNINGS_PREFIX = "\n*Ruff Warnings:*\n"
+LINTER_WARNINGS_PREFIX = "\n*Linter Warnings:*\n"
+
+
+def _get_linter_suggestion(target_file: str) -> str:
+    suffix = Path(target_file).suffix.lower()
+    if suffix in (".js", ".ts", ".jsx", ".tsx", ".json"):
+        return "You can run `npx --offline @biomejs/biome check --write` on this file to automatically fix lint/format warnings."
+    elif suffix == ".py":
+        return "You can run `ruff check --fix` on this file to automatically fix lint warnings."
+    return ""
+
+
+def _write_file_with_delay(path: Path, content: str, delay: float = 0.5) -> None:
+    """Write content to path after a short delay on a background thread.
+
+    This prevents process watchers from killing the MCP server before the JSON-RPC
+    response has been sent.
+    """
+    import threading
+    import time
+
+    def worker():
+        time.sleep(delay)
+        try:
+            path.write_text(content, encoding="utf-8")
+        except Exception:
+            pass
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 def generate_diff(original: str, modified: str, filename: str) -> str:
@@ -270,6 +299,13 @@ def patch_file(  # noqa: C901 # NOSONAR
                 line_filter=line_filter,
                 did_you_mean=did_you_mean
             )
+        except SyntaxValidationError as e:
+            return {
+                "error": f"Syntax Error: {str(e)}",
+                "filename": e.filename,
+                "line": e.line,
+                "column": e.column
+            }
         except ValueError as e:
             if not did_you_mean:
                 try:
@@ -305,6 +341,13 @@ def patch_file(  # noqa: C901 # NOSONAR
             symbol_name, resolved_start_line, resolved_end_line, start_line, end_line, engine
         )
 
+    except SyntaxValidationError as e:
+        return {
+            "error": f"Syntax Error: {str(e)}",
+            "filename": e.filename,
+            "line": e.line,
+            "column": e.column
+        }
     except ValueError as e:
         return _handle_patch_file_value_error(e, target_file)
 
@@ -319,25 +362,28 @@ def _apply_patch_content(
 ) -> dict:
     try:
         patched_file = engine.apply_unified_patch(patch_content)
+    except SyntaxValidationError as e:
+        return {
+            "error": f"Syntax Error: {str(e)}",
+            "filename": e.filename,
+            "line": e.line,
+            "column": e.column
+        }
     except ValueError as e:
         return {"error": str(e)}
         
-    ruff_warnings = getattr(engine, "ruff_warnings", [])
+    linter_warnings = getattr(engine, "linter_warnings", [])
     if dry_run:
         diff_text = generate_diff(file_content, patched_file, target_file)
         output = f"```diff\n{diff_text}```\n"
         output += f"- Target file: `{target_file}`\n"
         output += "- Format: Unified Diff (Strict Fuzz = 0)\n"
-        if ruff_warnings:
-            output += RUFF_WARNINGS_PREFIX
-            for w in ruff_warnings:
-                output += f"- {w}\n"
         cache = get_cache()
         run_id = cache.store(
             entries=[{"target_path": target_path, "patched_content": patched_file}],
             original_contents={str(target_path): file_content, target_file: file_content},
         )
-        return {
+        res = {
             "success": True,
             "dryRun": True,
             "message": output,
@@ -345,24 +391,36 @@ def _apply_patch_content(
             "run_id": run_id,
             "expires_in": cache.get_ttl(),
         }
+        if linter_warnings:
+            res["warnings"] = linter_warnings
+            res["suggestion"] = _get_linter_suggestion(target_file)
+        return res
         
     try:
-        target_path.write_text(patched_file, encoding="utf-8")
-    except Exception as e:
-        return {"error": f"Failed to write patched file: {e}"}
+        is_self_mod = target_path.resolve().is_relative_to(Path(__file__).parent.resolve())
+    except Exception:
+        is_self_mod = False
+
+    if is_self_mod:
+        _write_file_with_delay(target_path, patched_file, delay=0.5)
+    else:
+        try:
+            target_path.write_text(patched_file, encoding="utf-8")
+        except Exception as e:
+            return {"error": f"Failed to write patched file: {e}"}
         
     output = f"- Target file: `{target_file}`\n"
     output += "- Format: Unified Diff (Strict Fuzz = 0) applied successfully\n"
-    if ruff_warnings:
-        output += RUFF_WARNINGS_PREFIX
-        for w in ruff_warnings:
-            output += f"- {w}\n"
-    return {
+    res = {
         "success": True,
         "dryRun": False,
         "message": output,
-        "occurrences": 1
+        "occurrences": 1,
     }
+    if linter_warnings:
+        res["warnings"] = linter_warnings
+        res["suggestion"] = _get_linter_suggestion(target_file)
+    return res
 
 
 def _apply_classic_replacement(  # NOSONAR
@@ -390,7 +448,7 @@ def _apply_classic_replacement(  # NOSONAR
         resolved_start_line = engine.relocated_start_line
         resolved_end_line = engine.relocated_end_line
 
-    ruff_warnings = getattr(engine, "ruff_warnings", [])
+    linter_warnings = getattr(engine, "linter_warnings", [])
     if dry_run:
         diff_text = generate_diff(file_content, patched_file, target_file)
         output = f"```diff\n{diff_text}```\n"
@@ -409,17 +467,12 @@ def _apply_classic_replacement(  # NOSONAR
             output += "*Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
         elif is_relocated:
             output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
-        if ruff_warnings:
-            output += RUFF_WARNINGS_PREFIX
-            for w in ruff_warnings:
-                output += f"- {w}\n"
-
         cache = get_cache()
         run_id = cache.store(
             entries=[{"target_path": target_path, "patched_content": patched_file}],
             original_contents={str(target_path): file_content, target_file: file_content},
         )
-        return {
+        res = {
             "success": True,
             "dryRun": True,
             "message": output,
@@ -427,11 +480,23 @@ def _apply_classic_replacement(  # NOSONAR
             "run_id": run_id,
             "expires_in": cache.get_ttl(),
         }
+        if linter_warnings:
+            res["warnings"] = linter_warnings
+            res["suggestion"] = _get_linter_suggestion(target_file)
+        return res
 
     try:
-        target_path.write_text(patched_file, encoding="utf-8")
-    except Exception as e:
-        return {"error": f"Failed to write patched file: {e}"}
+        is_self_mod = target_path.resolve().is_relative_to(Path(__file__).parent.resolve())
+    except Exception:
+        is_self_mod = False
+
+    if is_self_mod:
+        _write_file_with_delay(target_path, patched_file, delay=0.5)
+    else:
+        try:
+            target_path.write_text(patched_file, encoding="utf-8")
+        except Exception as e:
+            return {"error": f"Failed to write patched file: {e}"}
 
     output = f"- Target file: `{target_file}`\n"
     if is_did_you_mean_applied:
@@ -450,17 +515,16 @@ def _apply_classic_replacement(  # NOSONAR
         output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
     elif occurrences > 1:
         output += f"*Warning:* Replaced {occurrences} identical occurrences.\n"
-    if ruff_warnings:
-        output += RUFF_WARNINGS_PREFIX
-        for w in ruff_warnings:
-            output += f"- {w}\n"
-
-    return {
+    res = {
         "success": True,
         "dryRun": False,
         "message": output,
-        "occurrences": occurrences
+        "occurrences": occurrences,
     }
+    if linter_warnings:
+        res["warnings"] = linter_warnings
+        res["suggestion"] = _get_linter_suggestion(target_file)
+    return res
 
 
 def _handle_patch_file_value_error(e: ValueError, target_file: str) -> dict:
@@ -485,6 +549,26 @@ def run_startup_recovery(workspace_path: Path) -> None:
     FileTransaction.run_startup_recovery(workspace_path)
 
 
+def _verify_dry_run_hashes(files: list[dict]) -> Optional[dict]:
+    """Verify that all target files are unchanged since the dry-run."""
+    for f in files:
+        target_path: Path = f["target_path"]
+        original_hash: str = f["original_hash"]
+        try:
+            current_text = target_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            return {"error": f"Cannot read '{target_path}' for hash check: {e}"}
+        current_hash = hashlib.sha256(current_text.encode()).hexdigest()
+        if current_hash != original_hash:
+            return {
+                "error": (
+                    f"File '{target_path.name}' was modified after the dry-run "
+                    "(hash mismatch). Re-run with dry_run=true to preview the updated diff."
+                )
+            }
+    return None
+
+
 def apply_last_dry_run(run_id: str) -> dict:
     """Commit the patch cached under *run_id* from a previous dry-run call.
 
@@ -504,30 +588,27 @@ def apply_last_dry_run(run_id: str) -> dict:
     files = entry["files"]
 
     # Hash guard: verify all files are unchanged before writing any
-    for f in files:
-        target_path: Path = f["target_path"]
-        original_hash: str = f["original_hash"]
-        try:
-            current_text = target_path.read_text(encoding="utf-8", errors="replace")
-        except Exception as e:
-            return {"error": f"Cannot read '{target_path}' for hash check: {e}"}
-        current_hash = hashlib.sha256(current_text.encode()).hexdigest()
-        if current_hash != original_hash:
-            return {
-                "error": (
-                    f"File '{target_path.name}' was modified after the dry-run "
-                    "(hash mismatch). Re-run with dry_run=true to preview the updated diff."
-                )
-            }
+    error_response = _verify_dry_run_hashes(files)
+    if error_response:
+        return error_response
 
     # All guards passed — write all files
     applied: list[str] = []
     for f in files:
         target_path = f["target_path"]
+        patched_content = f["patched_content"]
         try:
-            target_path.write_text(f["patched_content"], encoding="utf-8")
-        except Exception as e:
-            return {"error": f"Failed to write '{target_path}': {e}"}
+            is_self_mod = target_path.resolve().is_relative_to(Path(__file__).parent.resolve())
+        except Exception:
+            is_self_mod = False
+
+        if is_self_mod:
+            _write_file_with_delay(target_path, patched_content, delay=0.5)
+        else:
+            try:
+                target_path.write_text(patched_content, encoding="utf-8")
+            except Exception as e:
+                return {"error": f"Failed to write '{target_path}': {e}"}
         applied.append(str(target_path))
 
     output = f"Applied cached patch (run_id={run_id}). Wrote **{len(applied)}** file(s).\n"

@@ -1012,7 +1012,7 @@ class TestApplyLastDryRun:
         assert app_file.read_text() == "line 1\nnew line 2\nand extra 2\nline 3\nnew line 4\nand extra 4\n"
 
     def test_ruff_linter_warnings(self, tmp_path, monkeypatch):
-        """Ruff linter warnings should be returned in message for Python files."""
+        """Ruff/Linter warnings should be returned in message for Python files."""
         monkeypatch.chdir(tmp_path)
         app_file = tmp_path / "app.py"
         app_file.write_text("def func():\n    pass\n")
@@ -1025,7 +1025,7 @@ class TestApplyLastDryRun:
             dry_run=False
         )
         assert res["success"] is True
-        assert "Ruff Warnings:" in res["message"]
-        assert "F401" in res["message"]
+        assert "warnings" in res
+        assert any("F401" in w for w in res["warnings"])
 
 

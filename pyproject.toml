@@ -12,6 +12,8 @@ dependencies = [
     "jcodemunch-mcp>=1.108.24",
     "rapidfuzz>=3.0.0",
     "ruff",
+    "PyYAML>=6.0",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.scripts]
