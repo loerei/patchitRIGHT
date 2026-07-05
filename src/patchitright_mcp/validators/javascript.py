@@ -65,7 +65,8 @@ class JsTsValidator(BaseValidator):
                     capture_output=True,
                     check=False,
                     shell=(os.name == 'nt'),
-                    encoding="utf-8"
+                    encoding="utf-8",
+                    stdin=subprocess.DEVNULL
                 )
                 log_step(f"JsTsValidator.validate: orig check done. Code={orig_process.returncode}")
                 if orig_process.returncode != 0:
@@ -85,7 +86,8 @@ class JsTsValidator(BaseValidator):
                     capture_output=True,
                     check=False,
                     shell=(os.name == 'nt'),
-                    encoding="utf-8"
+                    encoding="utf-8",
+                    stdin=subprocess.DEVNULL
                 )
                 log_step(f"JsTsValidator.validate: new check done. Code={process.returncode}")
                 # Biome formats syntax errors in stderr/stdout with "pars" or "error"
@@ -196,7 +198,8 @@ class JsTsValidator(BaseValidator):
                 capture_output=True,
                 check=False,
                 shell=(os.name == 'nt'),
-                encoding="utf-8"
+                encoding="utf-8",
+                stdin=subprocess.DEVNULL
             )
             log_step(f"JsTsValidator.lint: check completed with code={process.returncode}")
             if process.returncode != 0:
