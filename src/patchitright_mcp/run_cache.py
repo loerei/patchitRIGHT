@@ -81,7 +81,9 @@ class RunCache:
                 str(target_path),
                 original_contents.get(target_path.name, ""),
             )
-            original_hash = hashlib.sha256(original_text.encode()).hexdigest()
+            # Normalize newlines to LF for robust hash comparison
+            norm_original = original_text.replace("\r\n", "\n").replace("\r", "")
+            original_hash = hashlib.sha256(norm_original.encode()).hexdigest()
 
             enriched.append({
                 "target_path": target_path,

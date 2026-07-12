@@ -67,6 +67,30 @@ def test_js_ts_validator_mocked():
         assert "Node JS Syntax Error" in str(exc_info.value)
 
 
+def test_js_ts_validator_tsc_fallback():
+    val = JsTsValidator()
+    # Mock tsc is found and Biome is not found, validate fails on syntax error
+    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
+        # biome not found, tsc found
+        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/tsc" if cmd == "tsc" else None
+
+        # Valid original check passes (0)
+        orig_res = MagicMock(returncode=0, stdout="", stderr="")
+        # New check fails (1) with syntax error
+        new_res = MagicMock(
+            returncode=1,
+            stdout="app.patchitright_temp.ts(1,7): error TS1005: ';' expected.",
+            stderr=""
+        )
+        mock_run.side_effect = [orig_res, new_res]
+
+        with pytest.raises(SyntaxValidationError) as exc_info:
+            val.validate("const a =", "app.ts", "const a = 1;")
+        assert "TSC TS Syntax Error" in str(exc_info.value)
+        assert exc_info.value.line == 1
+        assert exc_info.value.column == 7
+
+
 def test_json_validator():
     val = JsonValidator()
     

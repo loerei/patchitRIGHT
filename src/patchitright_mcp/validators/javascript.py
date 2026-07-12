@@ -67,7 +67,8 @@ class JsTsValidator(BaseValidator):
     def _check_original_validity(self, biome_exe: str, base_args: list[str], temp_path: Path, original_content: str) -> bool:
         """Return True if original content has syntax errors, indicating we should skip validation."""
         log_step("JsTsValidator.validate: writing original content to temp path...")
-        temp_path.write_text(original_content, encoding="utf-8")
+        with open(temp_path, "w", encoding="utf-8", newline="") as f:
+            f.write(original_content)
         log_step(f"JsTsValidator.validate: running orig check with {biome_exe}...")
         try:
             orig_process = subprocess.run(
@@ -186,7 +187,8 @@ class JsTsValidator(BaseValidator):
 
             # Check new
             log_step("JsTsValidator.validate: writing new content to temp path...")
-            temp_path.write_text(content, encoding="utf-8")
+            with open(temp_path, "w", encoding="utf-8", newline="") as f:
+                f.write(content)
             log_step(f"JsTsValidator.validate: running new check with {biome_exe}...")
             process = subprocess.run(
                 [biome_exe] + base_args + ["--reporter=json", str(temp_path)],
@@ -272,13 +274,92 @@ class JsTsValidator(BaseValidator):
         except OSError as e:
             log_step(f"JsTsValidator.validate: node execution failed: {e}")
 
+    def _validate_with_tsc(self, content: str, filename: str, original_content: str) -> None:
+        if not filename.endswith((".ts", ".tsx")):
+            return
+        tsc_exe = shutil.which("tsc")
+        log_step(f"JsTsValidator.validate: fallback tsc check path: {tsc_exe}")
+        if not tsc_exe:
+            # Also try npx tsc
+            npx = shutil.which("npx")
+            if npx:
+                tsc_cmd = [npx, "tsc"]
+            else:
+                return
+        else:
+            tsc_cmd = [tsc_exe]
+
+        suffix = f".patchitright_temp{Path(filename).suffix}"
+        temp_path = Path(filename).with_suffix(suffix)
+        try:
+            # Check original first
+            with open(temp_path, "w", encoding="utf-8", newline="") as f:
+                f.write(original_content)
+            orig_process = subprocess.run(
+                tsc_cmd + ["--noEmit", "--skipLibCheck", str(temp_path)],
+                text=True,
+                capture_output=True,
+                check=False,
+                shell=(os.name == 'nt'),
+                encoding="utf-8",
+                stdin=subprocess.DEVNULL,
+                timeout=15
+            )
+            if orig_process.returncode != 0:
+                log_step("JsTsValidator.validate: original failed tsc check, skipping validation")
+                return
+
+            # Check new content
+            with open(temp_path, "w", encoding="utf-8", newline="") as f:
+                f.write(content)
+            process = subprocess.run(
+                tsc_cmd + ["--noEmit", "--skipLibCheck", str(temp_path)],
+                text=True,
+                capture_output=True,
+                check=False,
+                shell=(os.name == 'nt'),
+                encoding="utf-8",
+                stdin=subprocess.DEVNULL,
+                timeout=15
+            )
+            if process.returncode != 0:
+                err_msg = process.stdout or process.stderr
+                err_msg = err_msg.encode("ascii", errors="replace").decode("ascii")
+                # Parse tsc output (typically looks like: temp_test.ts(1,9): error TS1005: ';' expected.)
+                import re
+                line, column = None, None
+                match = re.search(rf"{re.escape(temp_path.name)}\((\d+),(\d+)\)", err_msg)
+                if match:
+                    line = int(match.group(1))
+                    column = int(match.group(2))
+                log_step(f"JsTsValidator.validate: raising tsc SyntaxValidationError for line={line}")
+                raise SyntaxValidationError(
+                    message=f"TSC TS Syntax Error: {err_msg.strip()}",
+                    filename=filename,
+                    line=line,
+                    column=column
+                )
+        except SyntaxValidationError:
+            raise
+        except OSError as e:
+            log_step(f"JsTsValidator.validate: tsc execution failed: {e}")
+        finally:
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
+
     def validate(self, content: str, filename: str, original_content: str = "") -> None:
         log_step(f"JsTsValidator.validate: starting for {filename}...")
         biome_cmd = self._get_biome_command()
         if biome_cmd:
             self._validate_with_biome(biome_cmd, content, filename, original_content)
         else:
-            self._validate_with_node(content, filename, original_content)
+            if filename.endswith((".ts", ".tsx")):
+                self._validate_with_tsc(content, filename, original_content)
+            else:
+                self._validate_with_node(content, filename, original_content)
 
     def lint(self, content: str, filename: str) -> list[str]:
         log_step(f"JsTsValidator.lint: starting for {filename}...")
@@ -292,7 +373,8 @@ class JsTsValidator(BaseValidator):
         temp_path = Path(filename).with_suffix(suffix)
         log_step(f"JsTsValidator.lint: using temp path {temp_path}")
         try:
-            temp_path.write_text(content, encoding="utf-8")
+            with open(temp_path, "w", encoding="utf-8", newline="") as f:
+                f.write(content)
             log_step(f"JsTsValidator.lint: running check with {biome_exe}...")
             process = subprocess.run(
                 [biome_exe] + base_args + [str(temp_path)],
@@ -312,7 +394,7 @@ class JsTsValidator(BaseValidator):
                     # Preserve indentation spaces (which are important for alignment)
                     # but strip trailing spaces
                     line = line.rstrip()
-                    if not line.strip() or "━━" in line or "Found" in line or "Checked" in line or "emitted" in line:
+                    if not line.strip() or "\u2501\u2501" in line or "Found" in line or "Checked" in line or "emitted" in line:
                         continue
                     # Clean up the temp filename from warnings
                     line = line.replace(temp_path.name, Path(filename).name)
