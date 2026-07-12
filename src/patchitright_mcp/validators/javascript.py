@@ -1,6 +1,8 @@
 import os
 import shutil
 import subprocess
+import json
+import re
 from pathlib import Path
 from .base import BaseValidator
 from .errors import SyntaxValidationError
@@ -64,6 +66,96 @@ class JsTsValidator(BaseValidator):
         log_step("JsTsValidator: No biome runner found")
         return None
 
+    def _parse_biome_json(self, output: str) -> tuple[dict | None, bool]:
+        """Attempt to parse output as structured JSON. Returns (data, success)."""
+        try:
+            json_start = output.find('{')
+            json_end = output.rfind('}')
+            if json_start != -1 and json_end != -1 and json_end > json_start:
+                data = json.loads(output[json_start:json_end+1])
+                return data, True
+        except Exception:
+            pass
+        return None, False
+
+    def _find_json_syntax_error(self, diagnostics: list) -> dict | None:
+        """Find the earliest syntax error diagnostic in the list, if any."""
+        syntax_errors = [
+            d for d in diagnostics
+            if d.get("category", "").startswith("parse") or d.get("category", "").startswith("syntax")
+        ]
+        if not syntax_errors:
+            return None
+        
+        # Sort syntax errors so the earliest in the file is selected
+        def get_sort_key(d):
+            loc = d.get("location", {})
+            start = loc.get("start") or loc.get("range", {}).get("start", {})
+            line_val = start.get("line") if start else None
+            col_val = start.get("column") if start else None
+            return (line_val if line_val is not None else 999999, col_val if col_val is not None else 999999)
+        
+        syntax_errors.sort(key=get_sort_key)
+        return syntax_errors[0]
+
+    def _find_text_syntax_error(self, output: str, temp_name: str) -> tuple[str, int | None, int | None] | None:
+        """Fallback check for syntax errors in plain-text output."""
+        if ("pars" in output.lower() or "syntax" in output.lower() or "error[" in output.lower()) and "error[lint/" not in output.lower():
+            clean_lines = [
+                l.strip() for l in output.splitlines()
+                if l.strip() and "━━" not in l
+            ]
+            err_line = clean_lines[0] if clean_lines else "Unknown parse error"
+            err_line = _clean_biome_output(err_line)
+            line, column = None, None
+            match = re.search(rf"{re.escape(temp_name)}:(\d+):(\d+)", output)
+            if match:
+                line = int(match.group(1))
+                column = int(match.group(2))
+            return err_line, line, column
+        return None
+
+    def _get_tsc_command(self) -> list[str] | None:
+        """Check for tsc globally or via npx."""
+        tsc_exe = shutil.which("tsc")
+        log_step(f"JsTsValidator.validate: fallback tsc check path: {tsc_exe}")
+        if tsc_exe:
+            return [tsc_exe]
+        npx = shutil.which("npx")
+        if npx:
+            return [npx, "tsc"]
+        return None
+
+    def _run_tsc_check(self, tsc_cmd: list[str], temp_path: Path, content: str) -> subprocess.CompletedProcess:
+        """Run tsc check on a temp file."""
+        with open(temp_path, "w", encoding="utf-8", newline="") as f:
+            f.write(content)
+        return subprocess.run(
+            tsc_cmd + ["--noEmit", "--skipLibCheck", str(temp_path)],
+            text=True,
+            capture_output=True,
+            check=False,
+            shell=(os.name == 'nt'),
+            encoding="utf-8",
+            stdin=subprocess.DEVNULL,
+            timeout=15
+        )
+
+    def _parse_tsc_error(self, err_msg: str, temp_name: str, filename: str) -> SyntaxValidationError:
+        """Parse tsc error output and return SyntaxValidationError."""
+        err_msg = err_msg.encode("ascii", errors="replace").decode("ascii")
+        line, column = None, None
+        match = re.search(rf"{re.escape(temp_name)}\((\d+),(\d+)\)", err_msg)
+        if match:
+            line = int(match.group(1))
+            column = int(match.group(2))
+        return SyntaxValidationError(
+            message=f"TSC TS Syntax Error: {err_msg.strip()}",
+            filename=filename,
+            line=line,
+            column=column
+        )
+
     def _check_original_validity(self, biome_exe: str, base_args: list[str], temp_path: Path, original_content: str) -> bool:
         """Return True if original content has syntax errors, indicating we should skip validation."""
         log_step("JsTsValidator.validate: writing original content to temp path...")
@@ -84,28 +176,16 @@ class JsTsValidator(BaseValidator):
             log_step(f"JsTsValidator.validate: orig check done. Code={orig_process.returncode}")
             if orig_process.returncode != 0:
                 orig_output = (orig_process.stdout or "") + "\n" + (orig_process.stderr or "")
-                has_orig_syntax_error = False
-                json_parsed_successfully = False
-                try:
-                    json_start = orig_output.find('{')
-                    json_end = orig_output.rfind('}')
-                    if json_start != -1 and json_end != -1 and json_end > json_start:
-                        import json
-                        orig_data = json.loads(orig_output[json_start:json_end+1])
-                        json_parsed_successfully = True
-                        orig_diagnostics = orig_data.get("diagnostics", [])
-                        if any(d.get("category", "").startswith("parse") or d.get("category", "").startswith("syntax") for d in orig_diagnostics):
-                            has_orig_syntax_error = True
-                except Exception:
-                    pass
-
-                if not json_parsed_successfully and not has_orig_syntax_error:
-                    if "error[" in orig_output.lower() and ("pars" in orig_output.lower() or "syntax" in orig_output.lower()) and "error[lint/" not in orig_output.lower():
-                        has_orig_syntax_error = True
-
-                if has_orig_syntax_error:
-                    log_step("JsTsValidator.validate: original content has syntax error, skipping validation")
-                    return True
+                data, json_parsed_successfully = self._parse_biome_json(orig_output)
+                if json_parsed_successfully:
+                    diagnostics = data.get("diagnostics", []) if data else []
+                    if self._find_json_syntax_error(diagnostics) is not None:
+                        log_step("JsTsValidator.validate: original content has syntax error, skipping validation")
+                        return True
+                else:
+                    if self._find_text_syntax_error(orig_output, temp_path.name) is not None:
+                        log_step("JsTsValidator.validate: original content has syntax error, skipping validation")
+                        return True
         except OSError as e:
             log_step(f"JsTsValidator.validate: biome original check failed: {e}")
         return False
@@ -113,61 +193,30 @@ class JsTsValidator(BaseValidator):
     def _parse_biome_error(self, output: str, temp_name: str, filename: str) -> SyntaxValidationError | None:
         """Parse Biome output for syntax error diagnostics and return SyntaxValidationError if found."""
         is_syntax_err = False
-        json_parsed_successfully = False
         err_line = "Unknown parse error"
         line, column = None, None
 
         # Attempt to parse as structured JSON
-        try:
-            json_start = output.find('{')
-            json_end = output.rfind('}')
-            if json_start != -1 and json_end != -1 and json_end > json_start:
-                import json
-                data = json.loads(output[json_start:json_end+1])
-                json_parsed_successfully = True
-                diagnostics = data.get("diagnostics", [])
-                syntax_errors = [
-                    d for d in diagnostics
-                    if d.get("category", "").startswith("parse") or d.get("category", "").startswith("syntax")
-                ]
-                if syntax_errors:
-                    # Sort syntax errors so the earliest in the file is selected
-                    def get_sort_key(d):
-                        loc = d.get("location", {})
-                        start = loc.get("start") or loc.get("range", {}).get("start", {})
-                        line_val = start.get("line") if start else None
-                        col_val = start.get("column") if start else None
-                        return (line_val if line_val is not None else 999999, col_val if col_val is not None else 999999)
-                    
-                    syntax_errors.sort(key=get_sort_key)
-                    is_syntax_err = True
-                    err = syntax_errors[0]
-                    err_line = err.get("description") or err.get("message", "Syntax error")
-                    err_line = _clean_biome_output(err_line)
-                    location = err.get("location", {})
-                    if location:
-                        start_pos = location.get("start") or location.get("range", {}).get("start", {})
-                        if start_pos:
-                            line = start_pos.get("line")
-                            column = start_pos.get("column")
-        except Exception:
-            pass
-
-        # Fallback to plain text check
-        if not json_parsed_successfully and not is_syntax_err:
-            if ("pars" in output.lower() or "syntax" in output.lower() or "error[" in output.lower()) and "error[lint/" not in output.lower():
+        data, json_parsed_successfully = self._parse_biome_json(output)
+        if json_parsed_successfully:
+            diagnostics = data.get("diagnostics", []) if data else []
+            err = self._find_json_syntax_error(diagnostics)
+            if err:
                 is_syntax_err = True
-                clean_lines = [
-                    l.strip() for l in output.splitlines()
-                    if l.strip() and "━━" not in l
-                ]
-                err_line = clean_lines[0] if clean_lines else "Unknown parse error"
+                err_line = err.get("description") or err.get("message", "Syntax error")
                 err_line = _clean_biome_output(err_line)
-                import re
-                match = re.search(rf"{re.escape(temp_name)}:(\d+):(\d+)", output)
-                if match:
-                    line = int(match.group(1))
-                    column = int(match.group(2))
+                location = err.get("location", {})
+                if location:
+                    start_pos = location.get("start") or location.get("range", {}).get("start", {})
+                    if start_pos:
+                        line = start_pos.get("line")
+                        column = start_pos.get("column")
+        else:
+            # Fallback to plain text check
+            text_err = self._find_text_syntax_error(output, temp_name)
+            if text_err:
+                is_syntax_err = True
+                err_line, line, column = text_err
 
         if is_syntax_err:
             return SyntaxValidationError(
@@ -281,68 +330,25 @@ class JsTsValidator(BaseValidator):
     def _validate_with_tsc(self, content: str, filename: str, original_content: str) -> None:
         if not filename.endswith((".ts", ".tsx")):
             return
-        tsc_exe = shutil.which("tsc")
-        log_step(f"JsTsValidator.validate: fallback tsc check path: {tsc_exe}")
-        if not tsc_exe:
-            # Also try npx tsc
-            npx = shutil.which("npx")
-            if npx:
-                tsc_cmd = [npx, "tsc"]
-            else:
-                return
-        else:
-            tsc_cmd = [tsc_exe]
+        tsc_cmd = self._get_tsc_command()
+        if not tsc_cmd:
+            return
 
         suffix = f".patchitright_temp{Path(filename).suffix}"
         temp_path = Path(filename).with_suffix(suffix)
         try:
             # Check original first
-            with open(temp_path, "w", encoding="utf-8", newline="") as f:
-                f.write(original_content)
-            orig_process = subprocess.run(
-                tsc_cmd + ["--noEmit", "--skipLibCheck", str(temp_path)],
-                text=True,
-                capture_output=True,
-                check=False,
-                shell=(os.name == 'nt'),
-                encoding="utf-8",
-                stdin=subprocess.DEVNULL,
-                timeout=15
-            )
+            orig_process = self._run_tsc_check(tsc_cmd, temp_path, original_content)
             if orig_process.returncode != 0:
                 log_step("JsTsValidator.validate: original failed tsc check, skipping validation")
                 return
 
             # Check new content
-            with open(temp_path, "w", encoding="utf-8", newline="") as f:
-                f.write(content)
-            process = subprocess.run(
-                tsc_cmd + ["--noEmit", "--skipLibCheck", str(temp_path)],
-                text=True,
-                capture_output=True,
-                check=False,
-                shell=(os.name == 'nt'),
-                encoding="utf-8",
-                stdin=subprocess.DEVNULL,
-                timeout=15
-            )
+            process = self._run_tsc_check(tsc_cmd, temp_path, content)
             if process.returncode != 0:
                 err_msg = process.stdout or process.stderr
-                err_msg = err_msg.encode("ascii", errors="replace").decode("ascii")
-                # Parse tsc output (typically looks like: temp_test.ts(1,9): error TS1005: ';' expected.)
-                import re
-                line, column = None, None
-                match = re.search(rf"{re.escape(temp_path.name)}\((\d+),(\d+)\)", err_msg)
-                if match:
-                    line = int(match.group(1))
-                    column = int(match.group(2))
-                log_step(f"JsTsValidator.validate: raising tsc SyntaxValidationError for line={line}")
-                raise SyntaxValidationError(
-                    message=f"TSC TS Syntax Error: {err_msg.strip()}",
-                    filename=filename,
-                    line=line,
-                    column=column
-                )
+                log_step(f"JsTsValidator.validate: raising tsc SyntaxValidationError")
+                raise self._parse_tsc_error(err_msg, temp_path.name, filename)
         except SyntaxValidationError:
             raise
         except OSError as e:
