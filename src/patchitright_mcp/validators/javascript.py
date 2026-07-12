@@ -178,6 +178,14 @@ class JsTsValidator(BaseValidator):
                 column = start_pos.get("column")
         return err_line, line, column
 
+    def _is_orig_output_invalid(self, orig_output: str, temp_name: str) -> bool:
+        """Helper to determine if the original output contains syntax errors."""
+        data, json_parsed_successfully = self._parse_biome_json(orig_output)
+        if json_parsed_successfully:
+            diagnostics = data.get("diagnostics", []) if data else []
+            return self._find_json_syntax_error(diagnostics) is not None
+        return self._find_text_syntax_error(orig_output, temp_name) is not None
+
     def _check_original_validity(self, biome_exe: str, base_args: list[str], temp_path: Path, original_content: str) -> bool:
         """Return True if original content has syntax errors, indicating we should skip validation."""
         log_step("JsTsValidator.validate: writing original content to temp path...")
@@ -198,16 +206,9 @@ class JsTsValidator(BaseValidator):
             log_step(f"JsTsValidator.validate: orig check done. Code={orig_process.returncode}")
             if orig_process.returncode != 0:
                 orig_output = (orig_process.stdout or "") + "\n" + (orig_process.stderr or "")
-                data, json_parsed_successfully = self._parse_biome_json(orig_output)
-                if json_parsed_successfully:
-                    diagnostics = data.get("diagnostics", []) if data else []
-                    if self._find_json_syntax_error(diagnostics) is not None:
-                        log_step("JsTsValidator.validate: original content has syntax error, skipping validation")
-                        return True
-                else:
-                    if self._find_text_syntax_error(orig_output, temp_path.name) is not None:
-                        log_step("JsTsValidator.validate: original content has syntax error, skipping validation")
-                        return True
+                if self._is_orig_output_invalid(orig_output, temp_path.name):
+                    log_step("JsTsValidator.validate: original content has syntax error, skipping validation")
+                    return True
         except OSError as e:
             log_step(f"JsTsValidator.validate: biome original check failed: {e}")
         return False
