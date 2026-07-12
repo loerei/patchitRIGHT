@@ -368,6 +368,41 @@ def patch_file(  # noqa: C901 # NOSONAR
         return _handle_patch_file_value_error(e, target_file)
 
 
+def _write_file_dry_run(
+    target_file: str,
+    target_path: Path,
+    code_content: str,
+    original_content: str,
+    file_exists: bool,
+    linter_warnings: list[str],
+) -> dict:
+    """Handle the dry_run=True logic for write_file."""
+    if file_exists:
+        diff_text = generate_diff(original_content, code_content, target_file)
+        output = f"```diff\n{diff_text}```\n"
+        output += f"- Target file: `{target_file}` (Overwriting existing file)\n"
+    else:
+        output = f"Preview of creating new file `{target_file}`:\n"
+        output += f"```\n{code_content}\n```\n"
+    
+    cache = get_cache()
+    run_id = cache.store(
+        entries=[{"target_path": target_path, "patched_content": code_content}],
+        original_contents={str(target_path): original_content, target_file: original_content},
+    )
+    res = {
+        "success": True,
+        "dryRun": True,
+        "message": output,
+        "run_id": run_id,
+        "expires_in": cache.get_ttl(),
+    }
+    if linter_warnings:
+        res["warnings"] = linter_warnings
+        res["suggestion"] = _get_linter_suggestion(target_file)
+    return res
+
+
 def write_file(
     target_file: str,
     code_content: str,
@@ -404,30 +439,14 @@ def write_file(
         linter_warnings = validator.lint_file(target_file, code_content)
 
         if dry_run:
-            if file_exists:
-                diff_text = generate_diff(original_content, code_content, target_file)
-                output = f"```diff\n{diff_text}```\n"
-                output += f"- Target file: `{target_file}` (Overwriting existing file)\n"
-            else:
-                output = f"Preview of creating new file `{target_file}`:\n"
-                output += f"```\n{code_content}\n```\n"
-            
-            cache = get_cache()
-            run_id = cache.store(
-                entries=[{"target_path": target_path, "patched_content": code_content}],
-                original_contents={str(target_path): original_content, target_file: original_content},
+            return _write_file_dry_run(
+                target_file=target_file,
+                target_path=target_path,
+                code_content=code_content,
+                original_content=original_content,
+                file_exists=file_exists,
+                linter_warnings=linter_warnings
             )
-            res = {
-                "success": True,
-                "dryRun": True,
-                "message": output,
-                "run_id": run_id,
-                "expires_in": cache.get_ttl(),
-            }
-            if linter_warnings:
-                res["warnings"] = linter_warnings
-                res["suggestion"] = _get_linter_suggestion(target_file)
-            return res
 
         # Ensure parent directory exists before writing
         target_path.parent.mkdir(parents=True, exist_ok=True)

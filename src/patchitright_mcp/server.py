@@ -16,6 +16,8 @@ from .patch_file import patch_file, batch_patch_files, run_startup_recovery, app
 # Create the MCP server instance
 server = Server("patchitright-mcp")
 
+STORAGE_PATH_DESC = "Optional custom path to the jCodeMunch SQLite index database."
+
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
@@ -92,7 +94,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "storage_path": {
                         "type": "string",
-                        "description": "Optional custom path to the jCodeMunch SQLite index database."
+                        "description": STORAGE_PATH_DESC
                     },
                     "replacements": {
                         "type": "array",
@@ -155,7 +157,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "storage_path": {
                         "type": "string",
-                        "description": "Optional custom path to the jCodeMunch SQLite index database."
+                        "description": STORAGE_PATH_DESC
                     }
                 },
                 "required": ["patches"]
@@ -208,7 +210,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "storage_path": {
                         "type": "string",
-                        "description": "Optional custom path to the jCodeMunch SQLite index database."
+                        "description": STORAGE_PATH_DESC
                     }
                 },
                 "required": ["target_file", "code_content"]
