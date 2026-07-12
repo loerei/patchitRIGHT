@@ -85,19 +85,21 @@ class JsTsValidator(BaseValidator):
             if orig_process.returncode != 0:
                 orig_output = (orig_process.stdout or "") + "\n" + (orig_process.stderr or "")
                 has_orig_syntax_error = False
+                json_parsed_successfully = False
                 try:
                     json_start = orig_output.find('{')
                     json_end = orig_output.rfind('}')
                     if json_start != -1 and json_end != -1 and json_end > json_start:
                         import json
                         orig_data = json.loads(orig_output[json_start:json_end+1])
+                        json_parsed_successfully = True
                         orig_diagnostics = orig_data.get("diagnostics", [])
                         if any(d.get("category", "").startswith("parse") or d.get("category", "").startswith("syntax") for d in orig_diagnostics):
                             has_orig_syntax_error = True
                 except Exception:
                     pass
 
-                if not has_orig_syntax_error:
+                if not json_parsed_successfully and not has_orig_syntax_error:
                     if "error[" in orig_output.lower() and ("pars" in orig_output.lower() or "syntax" in orig_output.lower()) and "error[lint/" not in orig_output.lower():
                         has_orig_syntax_error = True
 
@@ -111,6 +113,7 @@ class JsTsValidator(BaseValidator):
     def _parse_biome_error(self, output: str, temp_name: str, filename: str) -> SyntaxValidationError | None:
         """Parse Biome output for syntax error diagnostics and return SyntaxValidationError if found."""
         is_syntax_err = False
+        json_parsed_successfully = False
         err_line = "Unknown parse error"
         line, column = None, None
 
@@ -121,6 +124,7 @@ class JsTsValidator(BaseValidator):
             if json_start != -1 and json_end != -1 and json_end > json_start:
                 import json
                 data = json.loads(output[json_start:json_end+1])
+                json_parsed_successfully = True
                 diagnostics = data.get("diagnostics", [])
                 syntax_errors = [
                     d for d in diagnostics
@@ -150,7 +154,7 @@ class JsTsValidator(BaseValidator):
             pass
 
         # Fallback to plain text check
-        if not is_syntax_err:
+        if not json_parsed_successfully and not is_syntax_err:
             if ("pars" in output.lower() or "syntax" in output.lower() or "error[" in output.lower()) and "error[lint/" not in output.lower():
                 is_syntax_err = True
                 clean_lines = [

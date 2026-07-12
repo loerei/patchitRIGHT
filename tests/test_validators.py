@@ -163,6 +163,39 @@ def test_validation_service():
         service.validate_file("app.json", '{"a": 1,}')
 
 
+def test_js_ts_validator_biome_warnings_only():
+    val = JsTsValidator()
+    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
+        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/biome" if cmd == "biome" else None
+        
+        # Valid original check passes (0)
+        orig_res = MagicMock(returncode=0, stdout="", stderr="")
+        # New check returns 1 (non-zero due to warnings), but only contains a lint warning, no syntax error
+        biome_output = '{"summary":{"changed":0,"unchanged":1,"matches":0,"errors":0,"warnings":1,"infos":0},"diagnostics":[{"severity":"warning","message":"This let declares a variable that is only assigned once.","category":"lint/style/useConst"}],"command":"check"}'
+        new_res = MagicMock(returncode=1, stdout=biome_output, stderr="")
+        mock_run.side_effect = [orig_res, new_res]
+        
+        # This should NOT raise any SyntaxValidationError because there is no parse/syntax error
+        val.validate("let x = 1; console.log(x);", "app.ts", "const x = 1;")
+        assert mock_run.call_count == 2
+
+
+def test_js_ts_validator_biome_original_warnings_only():
+    val = JsTsValidator()
+    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
+        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/biome" if cmd == "biome" else None
+        
+        # Original check returns 1 (warnings)
+        biome_output = '{"summary":{"changed":0,"unchanged":1,"matches":0,"errors":0,"warnings":1,"infos":0},"diagnostics":[{"severity":"warning","message":"This let declares a variable that is only assigned once.","category":"lint/style/useConst"}],"command":"check"}'
+        orig_res = MagicMock(returncode=1, stdout=biome_output, stderr="")
+        new_res = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.side_effect = [orig_res, new_res]
+        
+        # This should call the new check because original has no syntax error (so we do not skip validation)
+        val.validate("const x = 1;", "app.ts", "let x = 1;")
+        assert mock_run.call_count == 2
+
+
 def test_js_ts_validator_real(tmp_path, monkeypatch):
     from patchitright_mcp.patch_file import patch_file
     monkeypatch.chdir(tmp_path)
