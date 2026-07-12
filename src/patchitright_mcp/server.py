@@ -4,13 +4,13 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
-from typing import Optional
+
 
 from mcp.server import Server
 from mcp.types import Tool, TextContent
 
 from . import __version__
-from .patch_file import patch_file, batch_patch_files, run_startup_recovery, apply_last_dry_run
+from .patch_file import patch_file, batch_patch_files, run_startup_recovery, apply_last_dry_run, write_file
 
 
 # Create the MCP server instance
@@ -178,6 +178,41 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["run_id"]
             }
+        ),
+        Tool(
+            name="write_file",
+            description=(
+                "Create a new file or fully overwrite an existing file. "
+                "Automatically runs syntax validation and linting on the content before writing."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_file": {
+                        "type": "string",
+                        "description": "Absolute or relative path to the file to write. Forward slashes (/) recommended."
+                    },
+                    "code_content": {
+                        "type": "string",
+                        "description": "The complete content of the file."
+                    },
+                    "allow_overwrite": {
+                        "type": "boolean",
+                        "description": "If True, allows overwriting an existing file. Defaults to False, which blocks the write if the file already exists.",
+                        "default": False
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "If True, runs syntax validation and linting, and shows a preview of the write/diff without writing to disk. Defaults to False.",
+                        "default": False
+                    },
+                    "storage_path": {
+                        "type": "string",
+                        "description": "Optional custom path to the jCodeMunch SQLite index database."
+                    }
+                },
+                "required": ["target_file", "code_content"]
+            }
         )
     ]
 
@@ -185,7 +220,7 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Execute the requested tool."""
-    if name not in ("patch_file", "batch_patch_files", "apply_last_dry_run"):
+    if name not in ("patch_file", "batch_patch_files", "apply_last_dry_run", "write_file"):
         raise ValueError(f"Unknown tool: {name}")
 
     try:
@@ -193,10 +228,34 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _execute_apply_last_dry_run(arguments)
         elif name == "batch_patch_files":
             return _execute_batch_patch_files(arguments)
+        elif name == "write_file":
+            return _execute_write_file(arguments)
         else:
             return _execute_patch_file(arguments)
     except Exception as e:
         return [TextContent(type="text", text=f"Error executing {name}: {str(e)}")]
+
+
+def _execute_write_file(arguments: dict) -> list[TextContent]:
+    target_file = arguments.get("target_file")
+    code_content = arguments.get("code_content")
+    allow_overwrite = bool(arguments.get("allow_overwrite", False))
+    dry_run = bool(arguments.get("dry_run", False))
+    storage_path = arguments.get("storage_path")
+
+    if not target_file:
+        return [TextContent(type="text", text="Error: target_file is required.")]
+    if code_content is None:
+        return [TextContent(type="text", text="Error: code_content is required.")]
+
+    res = write_file(
+        target_file=target_file,
+        code_content=code_content,
+        allow_overwrite=allow_overwrite,
+        dry_run=dry_run,
+        storage_path=storage_path,
+    )
+    return [TextContent(type="text", text=json.dumps(res, indent=2))]
 
 
 def _execute_apply_last_dry_run(arguments: dict) -> list[TextContent]:
