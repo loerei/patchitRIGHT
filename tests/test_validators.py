@@ -67,6 +67,30 @@ def test_js_ts_validator_mocked():
         assert "Node JS Syntax Error" in str(exc_info.value)
 
 
+def test_js_ts_validator_tsc_fallback():
+    val = JsTsValidator()
+    # Mock tsc is found and Biome is not found, validate fails on syntax error
+    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
+        # biome not found, tsc found
+        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/tsc" if cmd == "tsc" else None
+
+        # Valid original check passes (0)
+        orig_res = MagicMock(returncode=0, stdout="", stderr="")
+        # New check fails (1) with syntax error
+        new_res = MagicMock(
+            returncode=1,
+            stdout="app.patchitright_temp.ts(1,7): error TS1005: ';' expected.",
+            stderr=""
+        )
+        mock_run.side_effect = [orig_res, new_res]
+
+        with pytest.raises(SyntaxValidationError) as exc_info:
+            val.validate("const a =", "app.ts", "const a = 1;")
+        assert "TSC TS Syntax Error" in str(exc_info.value)
+        assert exc_info.value.line == 1
+        assert exc_info.value.column == 7
+
+
 def test_json_validator():
     val = JsonValidator()
     
@@ -137,6 +161,39 @@ def test_validation_service():
     service.validate_file("app.json", '{"a": 1}')
     with pytest.raises(SyntaxValidationError):
         service.validate_file("app.json", '{"a": 1,}')
+
+
+def test_js_ts_validator_biome_warnings_only():
+    val = JsTsValidator()
+    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
+        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/biome" if cmd == "biome" else None
+        
+        # Valid original check passes (0)
+        orig_res = MagicMock(returncode=0, stdout="", stderr="")
+        # New check returns 1 (non-zero due to warnings), but only contains a lint warning, no syntax error
+        biome_output = '{"summary":{"changed":0,"unchanged":1,"matches":0,"errors":0,"warnings":1,"infos":0},"diagnostics":[{"severity":"warning","message":"This let declares a variable that is only assigned once.","category":"lint/style/useConst"}],"command":"check"}'
+        new_res = MagicMock(returncode=1, stdout=biome_output, stderr="")
+        mock_run.side_effect = [orig_res, new_res]
+        
+        # This should NOT raise any SyntaxValidationError because there is no parse/syntax error
+        val.validate("let x = 1; console.log(x);", "app.ts", "const x = 1;")
+        assert mock_run.call_count == 2
+
+
+def test_js_ts_validator_biome_original_warnings_only():
+    val = JsTsValidator()
+    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
+        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/biome" if cmd == "biome" else None
+        
+        # Original check returns 1 (warnings)
+        biome_output = '{"summary":{"changed":0,"unchanged":1,"matches":0,"errors":0,"warnings":1,"infos":0},"diagnostics":[{"severity":"warning","message":"This let declares a variable that is only assigned once.","category":"lint/style/useConst"}],"command":"check"}'
+        orig_res = MagicMock(returncode=1, stdout=biome_output, stderr="")
+        new_res = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.side_effect = [orig_res, new_res]
+        
+        # This should call the new check because original has no syntax error (so we do not skip validation)
+        val.validate("const x = 1;", "app.ts", "let x = 1;")
+        assert mock_run.call_count == 2
 
 
 def test_js_ts_validator_real(tmp_path, monkeypatch):

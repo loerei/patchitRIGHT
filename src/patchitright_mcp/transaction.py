@@ -65,7 +65,8 @@ class FileTransaction:
         written = []
         try:
             for target_path, content in modifications.items():
-                target_path.write_text(content, encoding="utf-8")
+                with open(target_path, "w", encoding="utf-8", newline="") as f:
+                    f.write(content)
                 written.append(target_path)
         except Exception as e:
             # Rollback written ones and propagate error

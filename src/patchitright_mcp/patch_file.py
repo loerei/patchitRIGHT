@@ -37,7 +37,8 @@ def _write_file_with_delay(path: Path, content: str, delay: float = 0.5) -> None
     def worker():
         time.sleep(delay)
         try:
-            path.write_text(content, encoding="utf-8")
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(content)
         except Exception:
             pass
 
@@ -54,7 +55,8 @@ def _write_patched_file(target_path: Path, content: str) -> None:
     if is_self_mod:
         _write_file_with_delay(target_path, content, delay=0.5)
     else:
-        target_path.write_text(content, encoding="utf-8")
+        with open(target_path, "w", encoding="utf-8", newline="") as f:
+            f.write(content)
 
 
 def generate_diff(original: str, modified: str, filename: str) -> str:
@@ -140,7 +142,8 @@ def _read_file_and_check_filters(
         return None, {"error": f"Target file not found at {target_path}"}
 
     try:
-        return target_path.read_text(encoding="utf-8", errors="replace"), None
+        with open(target_path, "r", encoding="utf-8", newline="", errors="replace") as f:
+            return f.read(), None
     except Exception as e:
         return None, {"error": f"Failed to read file: {e}"}
 
@@ -552,10 +555,13 @@ def _verify_dry_run_hashes(files: list[dict]) -> Optional[dict]:
         target_path: Path = f["target_path"]
         original_hash: str = f["original_hash"]
         try:
-            current_text = target_path.read_text(encoding="utf-8", errors="replace")
+            with open(target_path, "r", encoding="utf-8", newline="", errors="replace") as file_handle:
+                current_text = file_handle.read()
         except Exception as e:
             return {"error": f"Cannot read '{target_path}' for hash check: {e}"}
-        current_hash = hashlib.sha256(current_text.encode()).hexdigest()
+        # Normalize newlines to LF for robust hash comparison
+        norm_current = current_text.replace("\r\n", "\n").replace("\r", "")
+        current_hash = hashlib.sha256(norm_current.encode()).hexdigest()
         if current_hash != original_hash:
             return {
                 "error": (
