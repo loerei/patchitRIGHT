@@ -35,6 +35,7 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 | :--- | :--- | :--- |
 | `patch_file` | Performs surgical code replacement on a single target file. | `target_file`, `search_content`/`replace_content` OR `patch_content` OR `replacements` |
 | `batch_patch_files` | Performs an atomic, transactional refactoring operation across multiple target files. | `patches` (array of patch objects containing target_file and patch_content) |
+| `write_file` | Create a new file or fully overwrite an existing file with syntax validation. | `target_file`, `code_content`, `allow_overwrite` |
 | `apply_last_dry_run` | Applies a previously cached dry-run patch. | `run_id` (a cached run ID valid for 300 seconds) |
 
 ---
@@ -53,6 +54,17 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 | `allow_multiple` | `boolean` | Options | If `true`, replaces all occurrences of the search content within the scope. Defaults to `false`. |
 | `did_you_mean` | `boolean` | Options | If `true`, automatically applies the replacement to the closest matching block if similarity is >= 80%. |
 | `dry_run` | `boolean` | Options | Returns a unified git-style diff preview of the changes and caches the `run_id` without writing to disk. |
+
+---
+
+## ⚙️ `write_file` Parameters
+
+| Parameter | Type | Mode | Description |
+| :--- | :--- | :--- | :--- |
+| `target_file` | `string` | Required | Path to the target file to write. |
+| `code_content` | `string` | Required | The complete content of the file. |
+| `allow_overwrite` | `boolean` | Optional | If `true`, allows overwriting an existing file. Defaults to `false` (blocks write if file exists). |
+| `dry_run` | `boolean` | Optional | Returns a preview of the write/diff and caches the `run_id` without writing to disk. Defaults to `false`. |
 
 ---
 

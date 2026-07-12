@@ -368,6 +368,118 @@ def patch_file(  # noqa: C901 # NOSONAR
         return _handle_patch_file_value_error(e, target_file)
 
 
+def _write_file_dry_run(
+    target_file: str,
+    target_path: Path,
+    code_content: str,
+    original_content: str,
+    file_exists: bool,
+    linter_warnings: list[str],
+) -> dict:
+    """Handle the dry_run=True logic for write_file."""
+    if file_exists:
+        diff_text = generate_diff(original_content, code_content, target_file)
+        output = f"```diff\n{diff_text}```\n"
+        output += f"- Target file: `{target_file}` (Overwriting existing file)\n"
+    else:
+        output = f"Preview of creating new file `{target_file}`:\n"
+        output += f"```\n{code_content}\n```\n"
+    
+    cache = get_cache()
+    run_id = cache.store(
+        entries=[{"target_path": target_path, "patched_content": code_content}],
+        original_contents={str(target_path): original_content, target_file: original_content},
+    )
+    res = {
+        "success": True,
+        "dryRun": True,
+        "message": output,
+        "run_id": run_id,
+        "expires_in": cache.get_ttl(),
+    }
+    if linter_warnings:
+        res["warnings"] = linter_warnings
+        res["suggestion"] = _get_linter_suggestion(target_file)
+    return res
+
+
+def write_file(
+    target_file: str,
+    code_content: str,
+    allow_overwrite: bool = False,
+    dry_run: bool = False,
+    **kwargs,
+) -> dict:
+    """Create or overwrite a file with syntax validation and linting."""
+    storage_path = kwargs.get("storage_path")
+    try:
+        target_file = os.path.normpath(target_file)
+        cwd = Path.cwd().resolve()
+        workspace = Workspace(cwd, storage_path)
+        target_path = workspace.resolve_safe_path(target_file)
+
+        # File existence check
+        file_exists = target_path.exists()
+        original_content = ""
+        if file_exists:
+            if not allow_overwrite:
+                return {
+                    "error": f"File already exists at '{target_file}'. To overwrite it, set 'allow_overwrite' to true."
+                }
+            try:
+                with open(target_path, "r", encoding="utf-8", newline="", errors="replace") as f:
+                    original_content = f.read()
+            except Exception as e:
+                return {"error": f"Failed to read existing file: {e}"}
+
+        # Run validation and linting
+        from .validators import ValidationService
+        validator = ValidationService()
+        validator.validate_file(target_file, code_content, original_content)
+        linter_warnings = validator.lint_file(target_file, code_content)
+
+        if dry_run:
+            return _write_file_dry_run(
+                target_file=target_file,
+                target_path=target_path,
+                code_content=code_content,
+                original_content=original_content,
+                file_exists=file_exists,
+                linter_warnings=linter_warnings
+            )
+
+        # Ensure parent directory exists before writing
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Actual write
+        try:
+            _write_patched_file(target_path, code_content)
+        except Exception as e:
+            return {"error": f"Failed to write file: {e}"}
+
+        output = f"- Target file: `{target_file}` "
+        output += "overwritten successfully\n" if file_exists else "created successfully\n"
+        res = {
+            "success": True,
+            "dryRun": False,
+            "message": output,
+        }
+        if linter_warnings:
+            res["warnings"] = linter_warnings
+            res["suggestion"] = _get_linter_suggestion(target_file)
+        return res
+
+    except SyntaxValidationError as e:
+        return {
+            "error": f"Syntax Error: {str(e)}",
+            "filename": e.filename,
+            "line": e.line,
+            "column": e.column
+        }
+    except ValueError as e:
+        return _handle_patch_file_value_error(e, target_file)
+
+
 def _apply_patch_content(
     engine: PatchEngine,
     patch_content: str,
@@ -551,9 +663,15 @@ def run_startup_recovery(workspace_path: Path) -> None:
 
 def _verify_dry_run_hashes(files: list[dict]) -> Optional[dict]:
     """Verify that all target files are unchanged since the dry-run."""
+    empty_hash = hashlib.sha256(b"").hexdigest()
     for f in files:
         target_path: Path = f["target_path"]
         original_hash: str = f["original_hash"]
+        if not target_path.exists():
+            if original_hash == empty_hash:
+                # File did not exist and still does not exist, which is expected for new file creation
+                continue
+            return {"error": f"File '{target_path.name}' does not exist but was expected to exist based on dry-run."}
         try:
             with open(target_path, "r", encoding="utf-8", newline="", errors="replace") as file_handle:
                 current_text = file_handle.read()
