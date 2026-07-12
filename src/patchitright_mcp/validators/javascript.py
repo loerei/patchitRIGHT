@@ -156,6 +156,28 @@ class JsTsValidator(BaseValidator):
             column=column
         )
 
+    def _cleanup_temp_path(self, temp_path: Path) -> None:
+        """Clean up the temporary validation file."""
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+                log_step("JsTsValidator.validate: deleted temp path")
+            except Exception as e:
+                log_step(f"JsTsValidator.validate: failed to delete temp path: {e}")
+
+    def _extract_json_error_details(self, err: dict) -> tuple[str, int | None, int | None]:
+        """Extract error message, line, and column from JSON diagnostic."""
+        err_line = err.get("description") or err.get("message", "Syntax error")
+        err_line = _clean_biome_output(err_line)
+        line, column = None, None
+        location = err.get("location", {})
+        if location:
+            start_pos = location.get("start") or location.get("range", {}).get("start", {})
+            if start_pos:
+                line = start_pos.get("line")
+                column = start_pos.get("column")
+        return err_line, line, column
+
     def _check_original_validity(self, biome_exe: str, base_args: list[str], temp_path: Path, original_content: str) -> bool:
         """Return True if original content has syntax errors, indicating we should skip validation."""
         log_step("JsTsValidator.validate: writing original content to temp path...")
@@ -203,14 +225,7 @@ class JsTsValidator(BaseValidator):
             err = self._find_json_syntax_error(diagnostics)
             if err:
                 is_syntax_err = True
-                err_line = err.get("description") or err.get("message", "Syntax error")
-                err_line = _clean_biome_output(err_line)
-                location = err.get("location", {})
-                if location:
-                    start_pos = location.get("start") or location.get("range", {}).get("start", {})
-                    if start_pos:
-                        line = start_pos.get("line")
-                        column = start_pos.get("column")
+                err_line, line, column = self._extract_json_error_details(err)
         else:
             # Fallback to plain text check
             text_err = self._find_text_syntax_error(output, temp_name)
@@ -266,12 +281,7 @@ class JsTsValidator(BaseValidator):
         except OSError as e:
             log_step(f"JsTsValidator.validate: biome execution failed: {e}")
         finally:
-            if temp_path.exists():
-                try:
-                    temp_path.unlink()
-                    log_step("JsTsValidator.validate: deleted temp path")
-                except Exception as e:
-                    log_step(f"JsTsValidator.validate: failed to delete temp path: {e}")
+            self._cleanup_temp_path(temp_path)
         log_step("JsTsValidator.validate: Biome check finished successfully")
 
     def _validate_with_node(self, content: str, filename: str, original_content: str) -> None:
@@ -347,7 +357,7 @@ class JsTsValidator(BaseValidator):
             process = self._run_tsc_check(tsc_cmd, temp_path, content)
             if process.returncode != 0:
                 err_msg = process.stdout or process.stderr
-                log_step(f"JsTsValidator.validate: raising tsc SyntaxValidationError")
+                log_step("JsTsValidator.validate: raising tsc SyntaxValidationError")
                 raise self._parse_tsc_error(err_msg, temp_path.name, filename)
         except SyntaxValidationError:
             raise
