@@ -71,7 +71,7 @@ class JsTsValidator(BaseValidator):
         log_step(f"JsTsValidator.validate: running orig check with {biome_exe}...")
         try:
             orig_process = subprocess.run(
-                [biome_exe] + base_args + [str(temp_path)],
+                [biome_exe] + base_args + ["--reporter=json", str(temp_path)],
                 text=True,
                 capture_output=True,
                 check=False,
@@ -82,8 +82,25 @@ class JsTsValidator(BaseValidator):
             )
             log_step(f"JsTsValidator.validate: orig check done. Code={orig_process.returncode}")
             if orig_process.returncode != 0:
-                orig_output = orig_process.stderr or orig_process.stdout
-                if "error[" in orig_output.lower() and ("pars" in orig_output.lower() or "syntax" in orig_output.lower()):
+                orig_output = (orig_process.stdout or "") + "\n" + (orig_process.stderr or "")
+                has_orig_syntax_error = False
+                try:
+                    json_start = orig_output.find('{')
+                    json_end = orig_output.rfind('}')
+                    if json_start != -1 and json_end != -1 and json_end > json_start:
+                        import json
+                        orig_data = json.loads(orig_output[json_start:json_end+1])
+                        orig_diagnostics = orig_data.get("diagnostics", [])
+                        if any(d.get("category", "").startswith("parse") or d.get("category", "").startswith("syntax") for d in orig_diagnostics):
+                            has_orig_syntax_error = True
+                except Exception:
+                    pass
+
+                if not has_orig_syntax_error:
+                    if "error[" in orig_output.lower() and ("pars" in orig_output.lower() or "syntax" in orig_output.lower()) and "error[lint/" not in orig_output.lower():
+                        has_orig_syntax_error = True
+
+                if has_orig_syntax_error:
                     log_step("JsTsValidator.validate: original content has syntax error, skipping validation")
                     return True
         except OSError as e:
@@ -92,20 +109,62 @@ class JsTsValidator(BaseValidator):
 
     def _parse_biome_error(self, output: str, temp_name: str, filename: str) -> SyntaxValidationError | None:
         """Parse Biome output for syntax error diagnostics and return SyntaxValidationError if found."""
-        if "pars" in output.lower() or "syntax" in output.lower() or "error[" in output.lower():
-            # Filter out empty lines and box-drawing header lines (containing ━━)
-            clean_lines = [
-                l.strip() for l in output.splitlines()
-                if l.strip() and "━━" not in l
-            ]
-            err_line = clean_lines[0] if clean_lines else "Unknown parse error"
-            err_line = _clean_biome_output(err_line)
-            import re
-            line, column = None, None
-            match = re.search(rf"{re.escape(temp_name)}:(\d+):(\d+)", output)
-            if match:
-                line = int(match.group(1))
-                column = int(match.group(2))
+        is_syntax_err = False
+        err_line = "Unknown parse error"
+        line, column = None, None
+
+        # Attempt to parse as structured JSON
+        try:
+            json_start = output.find('{')
+            json_end = output.rfind('}')
+            if json_start != -1 and json_end != -1 and json_end > json_start:
+                import json
+                data = json.loads(output[json_start:json_end+1])
+                diagnostics = data.get("diagnostics", [])
+                syntax_errors = [
+                    d for d in diagnostics
+                    if d.get("category", "").startswith("parse") or d.get("category", "").startswith("syntax")
+                ]
+                if syntax_errors:
+                    # Sort syntax errors so the earliest in the file is selected
+                    def get_sort_key(d):
+                        loc = d.get("location", {})
+                        start = loc.get("start") or loc.get("range", {}).get("start", {})
+                        line_val = start.get("line") if start else None
+                        col_val = start.get("column") if start else None
+                        return (line_val if line_val is not None else 999999, col_val if col_val is not None else 999999)
+                    
+                    syntax_errors.sort(key=get_sort_key)
+                    is_syntax_err = True
+                    err = syntax_errors[0]
+                    err_line = err.get("description") or err.get("message", "Syntax error")
+                    err_line = _clean_biome_output(err_line)
+                    location = err.get("location", {})
+                    if location:
+                        start_pos = location.get("start") or location.get("range", {}).get("start", {})
+                        if start_pos:
+                            line = start_pos.get("line")
+                            column = start_pos.get("column")
+        except Exception:
+            pass
+
+        # Fallback to plain text check
+        if not is_syntax_err:
+            if ("pars" in output.lower() or "syntax" in output.lower() or "error[" in output.lower()) and "error[lint/" not in output.lower():
+                is_syntax_err = True
+                clean_lines = [
+                    l.strip() for l in output.splitlines()
+                    if l.strip() and "━━" not in l
+                ]
+                err_line = clean_lines[0] if clean_lines else "Unknown parse error"
+                err_line = _clean_biome_output(err_line)
+                import re
+                match = re.search(rf"{re.escape(temp_name)}:(\d+):(\d+)", output)
+                if match:
+                    line = int(match.group(1))
+                    column = int(match.group(2))
+
+        if is_syntax_err:
             return SyntaxValidationError(
                 message=f"Biome Syntax Error: {err_line}",
                 filename=filename,
@@ -130,7 +189,7 @@ class JsTsValidator(BaseValidator):
             temp_path.write_text(content, encoding="utf-8")
             log_step(f"JsTsValidator.validate: running new check with {biome_exe}...")
             process = subprocess.run(
-                [biome_exe] + base_args + [str(temp_path)],
+                [biome_exe] + base_args + ["--reporter=json", str(temp_path)],
                 text=True,
                 capture_output=True,
                 check=False,
@@ -142,7 +201,7 @@ class JsTsValidator(BaseValidator):
             log_step(f"JsTsValidator.validate: new check done. Code={process.returncode}")
             # Biome formats syntax errors in stderr/stdout with "pars" or "error"
             if process.returncode != 0:
-                output = process.stderr or process.stdout
+                output = (process.stdout or "") + "\n" + (process.stderr or "")
                 err = self._parse_biome_error(output, temp_path.name, filename)
                 if err:
                     log_step(f"JsTsValidator.validate: raising SyntaxValidationError for line={err.line} col={err.column}")
