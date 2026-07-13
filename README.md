@@ -1,8 +1,8 @@
 # patchitRIGHT
 
-**patchitRIGHT** is a single-tool AST-bounded secure code-writing MCP server.
+**patchitRIGHT** is a high-performance, single-tool, AST-bounded secure code-writing and file-manipulation MCP server. 
 
-It leverages [jCodeMunch](https://github.com/jgravelle/jcodemunch-mcp) index engines to perform surgical search-and-replace (`patch_file`) operations within precise AST scopes (such as functions or classes), complete with line filters and safe dry-run previews.
+It acts as a safe, surgical companion for AI coding agents and developers. It leverages [jCodeMunch](https://github.com/jgravelle/jcodemunch-mcp) index engines to resolve symbol ranges, validates syntax dynamically, and runs integrated linting prior to writing changes to disk.
 
 ---
 
@@ -20,12 +20,21 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
         "patchitright_mcp.server"
       ],
       "env": {
-        "PYTHONPATH": "d:/Projects/patchitRIGHT/src"
+        "PYTHONPATH": "d:/Projects/patchitRIGHT/src",
+        "PATCHITRIGHT_SYNC_JCODEMUNCH": "true"
       }
     }
   }
 }
 ```
+
+---
+
+## ⚙️ Advanced Configuration & Integration
+
+### jCodeMunch Index Synchronization
+* **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true` / `false`, default: `false`):
+  When enabled, `patchitRIGHT` automatically triggers a background thread to call `jCodeMunch`'s file indexer (`index-file`) immediately after writing a change. This keeps the AST index in sync in real-time, making subsequent search or impact queries instantly consistent.
 
 ---
 
@@ -40,44 +49,53 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 
 ---
 
-## ⚙️ `patch_file` Parameters
+## ⚙️ `patch_file` & `write_file` Parameters
 
-| Parameter | Type | Mode | Description |
-| :--- | :--- | :--- | :--- |
-| `target_file` | `string` | All | Path to the target file to modify. |
-| `search_content` | `string` | Search-and-Replace | The exact code block to search for. Must match uniquely. **Blocks over 50 lines are discouraged** (use `symbol_name` instead). |
-| `replace_content` | `string` | Search-and-Replace | The replacement code block. |
-| `patch_content` | `string` | Unified Diff | Unified Diff string to apply strictly (`Fuzz = 0`). |
-| `replacements` | `array` | Multi-patch | List of replacement objects applied bottom-up to prevent line-drift. |
-| `symbol_name` | `string` | Scope | Restricts the search scope to a specific AST symbol (function/class) using jCodeMunch index. |
-| `start_line` / `end_line` | `integer` | Scope | Limits the search region to a specific 1-indexed line range. |
-| `allow_multiple` | `boolean` | Options | If `true`, replaces all occurrences of the search content within the scope. Defaults to `false`. |
-| `did_you_mean` | `boolean` | Options | If `true`, automatically applies the replacement to the closest matching block if similarity is >= 80%. |
-| `dry_run` | `boolean` | Options | Returns a unified git-style diff preview of the changes and caches the `run_id` without writing to disk. |
-
----
-
-## ⚙️ `write_file` Parameters
-
-| Parameter | Type | Mode | Description |
-| :--- | :--- | :--- | :--- |
-| `target_file` | `string` | Required | Path to the target file to write. |
-| `code_content` | `string` | Required | The complete content of the file. |
-| `allow_overwrite` | `boolean` | Optional | If `true`, allows overwriting an existing file. Defaults to `false` (blocks write if file exists). |
-| `dry_run` | `boolean` | Optional | Returns a preview of the write/diff and caches the `run_id` without writing to disk. Defaults to `false`. |
-
----
-
-## 🔒 Safety & Validation Features
-
-| Feature | Protection Mechanism | Details |
+| Parameter | Type | Description |
 | :--- | :--- | :--- |
-| **Path Traversal Protection** | Folder containment | Normalizes paths using `os.path.realpath` and rejects any path containing directory traversal sequences (`..`) outside the active workspace. |
-| **Line Ending Normalization** | Format matching | Automatically normalizes CRLF (`\r\n`) and LF (`\n`) line endings during matching and patching. The original file's dominant line ending is preserved. |
-| **Python AST Verification** | Syntax checking | Validates modified `.py` files using Python's standard `ast` module. If a patch introduces a syntax error, the edit is aborted. |
-| **Linter Integration & Timeouts** | Code quality | Runs `ruff check` on Python files and `biome check` on JS/TS/JSON files. All subprocess runs are capped at a **10-second timeout** to prevent hangs. |
-| **Self-Modification Safety** | Connection preservation | Detects writes to the MCP server's own codebase and delays writes by **500ms** using a daemon background thread, allowing the response to be sent before hot-reloads. |
-| **Transactional Auto-recovery** | Transaction rollback | Rollback is performed on all files if any file in a `batch_patch_files` transaction fails. Recovery of dirty backups is run on next startup from `.patchitRIGHT/backups/`. |
+| `target_file` | `string` | Path to the target file to modify. Contains path traversal guards. |
+| `search_content` | `string` | Exact code block to find. Block sizes > 50 lines are discouraged (use `symbol_name` instead). |
+| `replace_content` | `string` | The replacement code block. |
+| `patch_content` | `string` | Strict Unified Diff string to apply (`Fuzz = 0`). |
+| `replacements` | `array` | List of replacement objects applied bottom-up to prevent line-drift. |
+| `symbol_name` | `string` | Scopes search matching to a specific class/function AST boundary using jCodeMunch. |
+| `start_line` / `end_line`| `integer` | Scopes search matching to a specific 1-indexed line range. |
+| `allow_multiple` | `boolean` | Replaces all occurrences of the search content within the scope. Defaults to `false`. |
+| `did_you_mean` | `boolean` | Automatically matches and replaces the closest block of code if similarity is >= 80%. |
+| `dry_run` | `boolean` | Returns a unified git-style diff preview and caches the change (`run_id` expires in 300s). |
+| `allow_overwrite` | `boolean` | Allows overwriting an existing file in `write_file`. Defaults to `false`. |
+
+---
+
+## 🔒 Safety, Validation, & Recovery Features
+
+### 1. Multi-Language Syntax Validation
+Every write or patch is validated before committing. If syntax validation fails, the write is aborted, returning detailed diagnostic line/column coordinates:
+- **Python**: Parses code using Python's native `ast` parser.
+- **JavaScript & TypeScript (JS/TS/JSX/TSX)**: Runs validation using **Biome**. If Biome is missing, it falls back to a non-emitting **TypeScript compiler check** (`tsc --noEmit --skipLibCheck`) to detect TypeScript errors.
+- **JSON & JSONC**: Validates JSON content after stripping single-line (`//`) and multi-line (`/* */`) comments.
+- **TOML**: Parses content using Python 3.11's built-in `tomllib` (or `tomli` fallback).
+- **YAML**: Parses content using `PyYAML`'s `safe_load` parser.
+
+> [!TIP]
+> **Original-Content Syntax Guard**: Before validating a modified file, `patchitRIGHT` checks if the original file was already syntactically invalid. If the original code was already broken, the syntax check is skipped. This prevents legacy syntax errors in existing files from blocking your edits!
+
+### 2. Integrated Linting
+After syntax validation, `patchitRIGHT` runs integrated linters and attaches clean, noise-filtered warning diagnostics to the tool response:
+- **Python**: Lints using the fast Python linter **Ruff** (`ruff check - --no-cache`).
+- **JS/TS/JSX/TSX/JSON**: Lints using **Biome** (`biome check`).
+- **Timeout Protection**: All linter subprocesses are capped at a **10-second timeout** to ensure the server never hangs.
+
+### 3. Transactional Safety & Startup Recovery
+- **Atomic Commits**: For `batch_patch_files`, if any write fails, a full transaction rollback is executed, restoring all files to their original state.
+- **File Backups**: Before writing, backups are stored in a hidden `.patchitRIGHT/backups` folder.
+- **Startup Recovery**: If the MCP process crashes mid-write, `patchitRIGHT` automatically scans for dirty backups on next startup and recovers them safely to prevent code loss.
+
+### 4. Self-Modification Protection
+To prevent process watchers or bundlers from killing the MCP process before the JSON-RPC response is delivered, writes targeting the server's own codebase (`src/patchitright_mcp/`) are run with a **500ms delay** on a daemon thread.
+
+### 5. Path Traversal Containment
+Paths are normalized and checked to ensure no operations escape the active workspace root.
 
 ---
 
@@ -110,16 +128,7 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 
 ---
 
-## ⚙️ Advanced Integration Configuration
-
-When running alongside `jCodeMunch`, you can enable automatic index synchronization:
-
-* **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true` / `false`, default: `false`):
-  If set to `true`, `patchitRIGHT` will automatically trigger `jCodeMunch` in a background thread to re-index the patched file(s) immediately after writing changes. This ensures subsequent search and symbol queries are immediately consistent with the new code state.
-
----
-
 ## 📄 License & Terms
 
 * **patchitRIGHT** is distributed under the **MIT License**.
-* When configured to dynamically interface with [jCodeMunch-MCP](https://github.com/jgravelle/jcodemunch-mcp) (Copyright © 2024-2026 J. Gravelle), usage must comply with the [jCodeMunch Dual-Use License](https://j.gravelle.us/jCodeMunch/descriptions.php). The verbatim text of this license is included in the [LICENSE](LICENSE) file. Standalone mode or custom AST engine integrations are exempt from jCodeMunch license terms..
+* When configured to dynamically interface with [jCodeMunch-MCP](https://github.com/jgravelle/jcodemunch-mcp) (Copyright © 2024-2026 J. Gravelle), usage must comply with the [jCodeMunch Dual-Use License](https://j.gravelle.us/jCodeMunch/descriptions.php). The verbatim text of this license is included in the [LICENSE](LICENSE) file. Standalone mode or custom AST engine integrations are exempt from jCodeMunch license terms.
