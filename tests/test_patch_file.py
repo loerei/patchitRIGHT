@@ -1011,6 +1011,23 @@ class TestApplyLastDryRun:
         assert res["success"] is True
         assert app_file.read_text() == "line 1\nnew line 2\nand extra 2\nline 3\nnew line 4\nand extra 4\n"
 
+    def test_multi_patch_intermediate_syntax_invalid(self, tmp_path, monkeypatch):
+        """Multi-patch replacements should succeed even if intermediate states are invalid, provided final is valid."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text("x = 1\ny = 2\n")
+
+        res = patch_file(
+            target_file="app.py",
+            replacements=[
+                {"search_content": "x = 1", "replace_content": "def func():\n    x = 1", "start_line": 1, "end_line": 1},
+                {"search_content": "y = 2", "replace_content": "    y = 2", "start_line": 2, "end_line": 2},
+            ],
+            dry_run=False
+        )
+        assert res["success"] is True
+        assert app_file.read_text() == "def func():\n    x = 1\n    y = 2\n"
+
     def test_ruff_linter_warnings(self, tmp_path, monkeypatch):
         """Ruff/Linter warnings should be returned in message for Python files."""
         monkeypatch.chdir(tmp_path)

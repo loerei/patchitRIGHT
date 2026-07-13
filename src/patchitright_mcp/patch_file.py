@@ -87,7 +87,7 @@ def _resolve_ast_boundaries(
 
     try:
         from jcodemunch_mcp.tools.resolve_repo import resolve_repo as resolve_repo_fn
-        repo_res = resolve_repo_fn(str(cwd), storage_path)
+        repo_res = resolve_repo_fn(str(target_path), storage_path)
         if not repo_res.get("found"):
             return None, None, {"error": f"Workspace at '{cwd}' is not indexed. Call index_folder first to resolve symbols."}
         
@@ -201,9 +201,10 @@ def patch_file(  # noqa: C901 # NOSONAR
             )
 
             # Helper to run the chain of replacements
-            def run_chain(contents: str, suggest_idx: Optional[int] = None) -> tuple[str, int]:
+            def run_chain(contents: str, suggest_idx: Optional[int] = None) -> tuple[str, int, list[str]]:
                 temp_content = contents
                 occurrences_sum = 0
+                last_linter_warnings = []
                 for idx, r in enumerate(sorted_replacements):
                     r_engine = PatchEngine(temp_content, target_file)
                     sym_name = r.get("symbol_name")
@@ -227,13 +228,16 @@ def patch_file(  # noqa: C901 # NOSONAR
                         symbol_boundaries=r_symbol_boundaries,
                         symbol_name=sym_name,
                         line_filter=r.get("line_filter"),
-                        did_you_mean=is_suggest or did_you_mean
+                        did_you_mean=is_suggest or did_you_mean,
+                        validate=(idx == len(sorted_replacements) - 1) and (suggest_idx is None)
                     )
                     occurrences_sum += occ
-                return temp_content, occurrences_sum
+                    if idx == len(sorted_replacements) - 1:
+                        last_linter_warnings = r_engine.linter_warnings
+                return temp_content, occurrences_sum, last_linter_warnings
 
             try:
-                patched_file, occurrences = run_chain(file_content)
+                patched_file, occurrences, last_warnings = run_chain(file_content)
             except ValueError as e:
                 if not did_you_mean:
                     try:
@@ -262,14 +266,15 @@ def patch_file(  # noqa: C901 # NOSONAR
                                     symbol_boundaries=r_symbol_boundaries,
                                     symbol_name=sym_name,
                                     line_filter=r.get("line_filter"),
-                                    did_you_mean=False
+                                    did_you_mean=False,
+                                    validate=False
                                 )
                             except ValueError:
                                 failed_idx = idx
                                 break
 
                         if failed_idx is not None:
-                            suggested_patched_file, _ = run_chain(file_content, suggest_idx=failed_idx)
+                            suggested_patched_file, _, _ = run_chain(file_content, suggest_idx=failed_idx)
                             cache = get_cache()
                             run_id = cache.store(
                                 entries=[{"target_path": target_path, "patched_content": suggested_patched_file}],
@@ -286,6 +291,7 @@ def patch_file(  # noqa: C901 # NOSONAR
                 return {"error": str(e)}
 
             engine = PatchEngine(patched_file, target_file)
+            engine.linter_warnings = last_warnings
             return _apply_classic_replacement(
                 dry_run, file_content, patched_file, target_file, target_path, occurrences,
                 symbol_name, None, None, None, None, engine
