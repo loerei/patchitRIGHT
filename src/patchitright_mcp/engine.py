@@ -120,6 +120,7 @@ class PatchEngine:
         symbol_name: Optional[str] = None,
         line_filter: Optional[Union[str, int]] = None,
         did_you_mean: bool = False,
+        validate: bool = True,
     ) -> tuple[str, int]:
         """Applies a classic search-and-replace patch inside line/symbol scope."""
         norm_search = search_content.replace("\r\n", "\n").replace("\r", "")
@@ -157,8 +158,9 @@ class PatchEngine:
         after_part = "\n" + "\n".join(self.file_lines[end_idx + 1:]) if end_idx < len(self.file_lines) - 1 else ""
         patched_file = before_part + patched_slice + after_part
 
-        self.validator.validate_file(self.filename, patched_file, self.file_content)
-        self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
+        if validate:
+            self.validator.validate_file(self.filename, patched_file, self.file_content)
+            self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
 
         if self.is_crlf:
             patched_file = patched_file.replace("\n", "\r\n")
