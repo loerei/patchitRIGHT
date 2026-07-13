@@ -4,7 +4,7 @@ import difflib
 import hashlib
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from jcodemunch_mcp.storage import IndexStore
 from .workspace import Workspace
@@ -14,6 +14,54 @@ from .run_cache import get_cache
 from .validators import SyntaxValidationError
 
 LINTER_WARNINGS_PREFIX = "\n*Linter Warnings:*\n"
+
+
+def trigger_jcodemunch_sync(file_paths: Union[Path, list[Path]], storage_path: Optional[str] = None) -> None:
+    """Trigger jcodemunch file index update using direct python import or subprocess fallback."""
+    import os
+    import threading
+
+    # Read environment variable to check if sync is enabled
+    enabled = os.environ.get("PATCHITRIGHT_SYNC_JCODEMUNCH", "").lower() in ("true", "1", "yes")
+    if not enabled:
+        return
+
+    if isinstance(file_paths, Path):
+        file_paths = [file_paths]
+
+    def worker():
+        for path in file_paths:
+            try:
+                abs_path = str(path.resolve())
+                try:
+                    # Attempt direct python import
+                    from jcodemunch_mcp.tools.index_file import index_file as jm_index_file
+                    jm_index_file(path=abs_path, use_ai_summaries=False, storage_path=storage_path)
+                except ImportError:
+                    # Fallback to subprocess
+                    import subprocess
+                    import sys
+                    cmd = ["jcodemunch-mcp", "index-file", abs_path]
+                    if storage_path:
+                        cmd.extend(["--db", storage_path])
+
+                    startupinfo = None
+                    if sys.platform == "win32":
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+                    subprocess.run(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        startupinfo=startupinfo,
+                        shell=sys.platform == "win32"
+                    )
+            except Exception as e:
+                import sys
+                print(f"[PATCHITRIGHT] Warning: Failed to trigger jcodemunch sync for {path}: {e}", file=sys.stderr)
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 def _get_linter_suggestion(target_file: str) -> str:
@@ -39,6 +87,7 @@ def _write_file_with_delay(path: Path, content: str, delay: float = 0.5) -> None
         try:
             with open(path, "w", encoding="utf-8", newline="") as f:
                 f.write(content)
+            trigger_jcodemunch_sync(path)
         except Exception:
             pass
 
@@ -57,6 +106,7 @@ def _write_patched_file(target_path: Path, content: str) -> None:
     else:
         with open(target_path, "w", encoding="utf-8", newline="") as f:
             f.write(content)
+        trigger_jcodemunch_sync(target_path)
 
 
 def generate_diff(original: str, modified: str, filename: str) -> str:
@@ -884,6 +934,9 @@ def _commit_batch_transaction(transaction: FileTransaction, processed_patches: l
         
     # Clean up backups on success
     transaction.cleanup()
+
+    # Trigger jcodemunch sync for all patched files
+    trigger_jcodemunch_sync(list(modifications.keys()))
             
     output = f"Transaction applied successfully. Patched **{len(processed_patches)}** files.\n"
     for item in processed_patches:
