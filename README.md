@@ -36,6 +36,13 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 * **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true` / `false`, default: `false`):
   When enabled, `patchitRIGHT` automatically triggers a background thread to call `jCodeMunch`'s file indexer (`index-file`) immediately after writing a change. This keeps the AST index in sync in real-time, making subsequent search or impact queries instantly consistent.
 
+### Exposing the Bypass Validation Flag
+* **`PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION`** (`true` / `false`, default: `false`):
+  By default, the `bypass_validation` tool parameter is hidden from the MCP schema to prevent AI agents from bypassing syntax/lint checks to escape code-correctness guards. 
+  If set to `true`, the `bypass_validation` parameter will be exposed in the schemas for `patch_file`, `batch_patch_files`, and `write_file`.
+  
+  *Note:* The underlying server always accepts `bypass_validation: true` in the API arguments regardless of whether it is exposed in the schema, allowing programmatic override when needed.
+
 ---
 
 ## 🛠️ Provided Tools
