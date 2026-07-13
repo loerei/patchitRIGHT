@@ -110,6 +110,15 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 
 ---
 
+## ⚙️ Advanced Integration Configuration
+
+When running alongside `jCodeMunch`, you can enable automatic index synchronization:
+
+* **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true` / `false`, default: `false`):
+  If set to `true`, `patchitRIGHT` will automatically trigger `jCodeMunch` in a background thread to re-index the patched file(s) immediately after writing changes. This ensures subsequent search and symbol queries are immediately consistent with the new code state.
+
+---
+
 ## 📄 License & Terms
 
 * **patchitRIGHT** is distributed under the **MIT License**.
