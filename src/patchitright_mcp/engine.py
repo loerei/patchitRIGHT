@@ -6,7 +6,7 @@ from .validators import ValidationService
 class PatchEngine:
     """Core in-memory engine to apply search-and-replace and unified diff patches."""
 
-    def __init__(self, file_content: str, filename: str):
+    def __init__(self, file_content: str, filename: str, bypass_validation: bool = False):
         self.file_content = file_content
         self.filename = filename
         self.is_crlf = "\r\n" in file_content
@@ -21,6 +21,7 @@ class PatchEngine:
         self.relocated_end_line = None
         self.linter_warnings = []
         self.validator = ValidationService()
+        self.bypass_validation = bypass_validation
 
     def _find_occurrence_line_ranges(
         self, content: str, search: str, base_line_offset: int = 0
@@ -158,7 +159,7 @@ class PatchEngine:
         after_part = "\n" + "\n".join(self.file_lines[end_idx + 1:]) if end_idx < len(self.file_lines) - 1 else ""
         patched_file = before_part + patched_slice + after_part
 
-        if validate:
+        if validate and not self.bypass_validation:
             self.validator.validate_file(self.filename, patched_file, self.file_content)
             self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
 
@@ -270,8 +271,9 @@ class PatchEngine:
 
         patched_file = "\n".join(file_lines)
 
-        self.validator.validate_file(self.filename, patched_file, self.file_content)
-        self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
+        if not self.bypass_validation:
+            self.validator.validate_file(self.filename, patched_file, self.file_content)
+            self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
 
         if self.is_crlf:
             patched_file = patched_file.replace("\n", "\r\n")

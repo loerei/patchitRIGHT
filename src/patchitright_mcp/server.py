@@ -22,7 +22,10 @@ STORAGE_PATH_DESC = "Optional custom path to the jCodeMunch SQLite index databas
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """List all available tools."""
-    return [
+    import os
+    expose_bypass = os.environ.get("PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION", "").lower() in ("true", "1", "yes")
+
+    tools = [
         Tool(
             name="patch_file",
             description=(
@@ -218,6 +221,17 @@ async def list_tools() -> list[Tool]:
         )
     ]
 
+    if expose_bypass:
+        for tool in tools:
+            if tool.name in ("patch_file", "batch_patch_files", "write_file"):
+                tool.inputSchema["properties"]["bypass_validation"] = {
+                    "type": "boolean",
+                    "description": "If True, bypasses syntax validation and linting checks. Use with caution.",
+                    "default": False
+                }
+
+    return tools
+
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
@@ -244,6 +258,7 @@ def _execute_write_file(arguments: dict) -> list[TextContent]:
     allow_overwrite = bool(arguments.get("allow_overwrite", False))
     dry_run = bool(arguments.get("dry_run", False))
     storage_path = arguments.get("storage_path")
+    bypass_validation = bool(arguments.get("bypass_validation", False))
 
     if not target_file:
         return [TextContent(type="text", text="Error: target_file is required.")]
@@ -256,6 +271,7 @@ def _execute_write_file(arguments: dict) -> list[TextContent]:
         allow_overwrite=allow_overwrite,
         dry_run=dry_run,
         storage_path=storage_path,
+        bypass_validation=bypass_validation,
     )
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
 
@@ -274,11 +290,13 @@ def _execute_batch_patch_files(arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text="Error: patches array is required for batch_patch_files.")]
     dry_run = bool(arguments.get("dry_run", False))
     storage_path = arguments.get("storage_path")
+    bypass_validation = bool(arguments.get("bypass_validation", False))
     
     res = batch_patch_files(
         patches=patches,
         dry_run=dry_run,
-        storage_path=storage_path
+        storage_path=storage_path,
+        bypass_validation=bypass_validation,
     )
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
 
@@ -314,6 +332,7 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
     did_you_mean = bool(arguments.get("did_you_mean", False))
     dry_run = bool(arguments.get("dry_run", False))
     storage_path = arguments.get("storage_path")
+    bypass_validation = bool(arguments.get("bypass_validation", False))
 
     res = patch_file(
         target_file=target_file,
@@ -331,6 +350,7 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
         patch_content=patch_content,
         did_you_mean=did_you_mean,
         replacements=replacements,
+        bypass_validation=bypass_validation,
     )
 
     return [TextContent(type="text", text=json.dumps(res, indent=2))]

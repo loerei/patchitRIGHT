@@ -88,6 +88,16 @@ def test_write_file_syntax_error(temp_workspace):
     assert not (temp_workspace / target).exists()
 
 
+def test_write_file_bypass_validation(temp_workspace):
+    target = "bad.py"
+    code = "print('hello'\n"
+    res = write_file(target_file=target, code_content=code, allow_overwrite=False, bypass_validation=True)
+    
+    assert res.get("success") is True
+    assert (temp_workspace / target).exists()
+    assert (temp_workspace / target).read_text(encoding="utf-8") == code
+
+
 def test_write_file_dry_run_and_apply(temp_workspace):
     target = "dry_run_test.py"
     code = "x = 42\n"

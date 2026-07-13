@@ -211,6 +211,7 @@ def patch_file(  # noqa: C901 # NOSONAR
 ) -> dict:
     """Perform a robust search-and-replace or apply a strict unified diff (Fuzz = 0)."""
     did_you_mean = bool(kwargs.get("did_you_mean", False))
+    bypass_validation = bool(kwargs.get("bypass_validation", False))
     storage_path = kwargs.get("storage_path")
     folder_filter = kwargs.get("folder_filter")
     file_filter = kwargs.get("file_filter")
@@ -232,7 +233,7 @@ def patch_file(  # noqa: C901 # NOSONAR
 
         # Handle Unified Diff patch format
         if patch_content is not None:
-            engine = PatchEngine(file_content, target_file)
+            engine = PatchEngine(file_content, target_file, bypass_validation=bypass_validation)
             return _apply_patch_content(
                 engine, patch_content, dry_run, target_file, target_path, file_content
             )
@@ -256,7 +257,7 @@ def patch_file(  # noqa: C901 # NOSONAR
                 occurrences_sum = 0
                 last_linter_warnings = []
                 for idx, r in enumerate(sorted_replacements):
-                    r_engine = PatchEngine(temp_content, target_file)
+                    r_engine = PatchEngine(temp_content, target_file, bypass_validation=bypass_validation)
                     sym_name = r.get("symbol_name")
                     r_start = r.get("start_line")
                     r_end = r.get("end_line")
@@ -295,7 +296,7 @@ def patch_file(  # noqa: C901 # NOSONAR
                         temp_content = file_content
                         failed_idx = None
                         for idx, r in enumerate(sorted_replacements):
-                            r_engine = PatchEngine(temp_content, target_file)
+                            r_engine = PatchEngine(temp_content, target_file, bypass_validation=bypass_validation)
                             sym_name = r.get("symbol_name")
                             r_start = r.get("start_line")
                             r_end = r.get("end_line")
@@ -340,7 +341,7 @@ def patch_file(  # noqa: C901 # NOSONAR
                         pass
                 return {"error": str(e)}
 
-            engine = PatchEngine(patched_file, target_file)
+            engine = PatchEngine(patched_file, target_file, bypass_validation=bypass_validation)
             engine.linter_warnings = last_warnings
             return _apply_classic_replacement(
                 dry_run, file_content, patched_file, target_file, target_path, occurrences,
@@ -358,7 +359,7 @@ def patch_file(  # noqa: C901 # NOSONAR
         if err:
             return err
 
-        engine = PatchEngine(file_content, target_file)
+        engine = PatchEngine(file_content, target_file, bypass_validation=bypass_validation)
         try:
             patched_file, occurrences = engine.apply_classic_patch(
                 search_content=search_content,
@@ -381,7 +382,7 @@ def patch_file(  # noqa: C901 # NOSONAR
         except ValueError as e:
             if not did_you_mean:
                 try:
-                    suggest_engine = PatchEngine(file_content, target_file)
+                    suggest_engine = PatchEngine(file_content, target_file, bypass_validation=bypass_validation)
                     suggested_patched_file, _ = suggest_engine.apply_classic_patch(
                         search_content=search_content,
                         replace_content=replace_content,
@@ -489,10 +490,13 @@ def write_file(
                 return {"error": f"Failed to read existing file: {e}"}
 
         # Run validation and linting
-        from .validators import ValidationService
-        validator = ValidationService()
-        validator.validate_file(target_file, code_content, original_content)
-        linter_warnings = validator.lint_file(target_file, code_content)
+        linter_warnings = []
+        bypass_validation = bool(kwargs.get("bypass_validation", False))
+        if not bypass_validation:
+            from .validators import ValidationService
+            validator = ValidationService()
+            validator.validate_file(target_file, code_content, original_content)
+            linter_warnings = validator.lint_file(target_file, code_content)
 
         if dry_run:
             return _write_file_dry_run(
@@ -795,6 +799,7 @@ def batch_patch_files(
     patches: list[dict],
     dry_run: bool = False,
     storage_path: Optional[str] = None,
+    **kwargs
 ) -> dict:
     """Atomically apply a batch of unified diffs across multiple files with Fuzz=0 and rollback support."""
     for p in patches:
@@ -808,8 +813,10 @@ def batch_patch_files(
     transaction = FileTransaction(workspace_root)
     processed_patches = []
     
+    bypass_validation = bool(kwargs.get("bypass_validation", False))
+    
     try:
-        err = _process_patches_list(patches, workspace, transaction, processed_patches)
+        err = _process_patches_list(patches, workspace, transaction, processed_patches, bypass_validation=bypass_validation)
         if err:
             return err
     except ValueError as e:
@@ -833,7 +840,11 @@ def _resolve_workspace_root(patches: list[dict], workspace: Workspace, cwd: Path
 
 
 def _process_patches_list(
-    patches: list[dict], workspace: Workspace, transaction: FileTransaction, processed_patches: list[dict]
+    patches: list[dict],
+    workspace: Workspace,
+    transaction: FileTransaction,
+    processed_patches: list[dict],
+    bypass_validation: bool = False,
 ) -> Optional[dict]:
     for p in patches:
         raw_target = p.get("target_file")
@@ -847,7 +858,7 @@ def _process_patches_list(
             
         original_content = transaction.register_file(target_path)
         
-        engine = PatchEngine(original_content, raw_target)
+        engine = PatchEngine(original_content, raw_target, bypass_validation=bypass_validation)
         try:
             patched_content = engine.apply_unified_patch(patch_content)
         except ValueError as err:
