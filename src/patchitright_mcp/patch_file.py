@@ -61,7 +61,11 @@ def trigger_jcodemunch_sync(file_paths: Union[Path, list[Path]], storage_path: O
                 import sys
                 print(f"[PATCHITRIGHT] Warning: Failed to trigger jcodemunch sync for {path}: {e}", file=sys.stderr)
 
-    threading.Thread(target=worker, daemon=True).start()
+    try:
+        threading.Thread(target=worker, daemon=True).start()
+    except Exception as e:
+        import sys
+        print(f"[PATCHITRIGHT] Warning: Failed to spawn jcodemunch sync thread: {e}", file=sys.stderr)
 
 
 def _get_linter_suggestion(target_file: str) -> str:
@@ -91,7 +95,11 @@ def _write_file_with_delay(path: Path, content: str, delay: float = 0.5) -> None
         except Exception:
             pass
 
-    threading.Thread(target=worker, daemon=True).start()
+    try:
+        threading.Thread(target=worker, daemon=True).start()
+    except Exception as e:
+        import sys
+        print(f"[PATCHITRIGHT] Warning: Failed to spawn jcodemunch sync thread: {e}", file=sys.stderr)
 
 
 def _write_patched_file(target_path: Path, content: str) -> None:
