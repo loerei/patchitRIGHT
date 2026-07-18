@@ -99,6 +99,20 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": STORAGE_PATH_DESC
                     },
+                    "symbol_scope": {
+                        "type": "string",
+                        "enum": ["boundary", "full", "body"],
+                        "default": "boundary",
+                        "description": (
+                            "Controls how 'symbol_name' is used. "
+                            "'boundary' (default): scopes search_content matching to symbol's line range. "
+                            "'full': replaces the entire symbol (signature+body) with replace_content, no search_content needed. "
+                            "WARNING: 'full' includes decorators, 'export' keywords, and JSDoc — you MUST include these in replace_content. "
+                            "'body': replaces only the function body with replace_content, preserving the signature. "
+                            "For arrow expression bodies, provide the exact replacement expression — "
+                            "if returning an object literal, include the parentheses: ({ key: value })."
+                        )
+                    },
                     "replacements": {
                         "type": "array",
                         "items": {
@@ -109,6 +123,12 @@ async def list_tools() -> list[Tool]:
                                 "start_line": {"type": "integer", "description": "Optional starting line number (1-indexed, inclusive) of the scope to search."},
                                 "end_line": {"type": "integer", "description": "Optional ending line number (1-indexed, inclusive) of the scope to search."},
                                 "symbol_name": {"type": "string", "description": "Optional AST symbol name to scope this replacement to."},
+                                "symbol_scope": {
+                                    "type": "string",
+                                    "enum": ["boundary", "full", "body"],
+                                    "default": "boundary",
+                                    "description": "Controls how symbol_name is used for this replacement."
+                                },
                                 "allow_multiple": {"type": "boolean", "description": "If True, replaces all occurrences of search_content within the scope. Defaults to False."},
                                 "line_filter": {
                                     "anyOf": [
@@ -117,8 +137,7 @@ async def list_tools() -> list[Tool]:
                                     ],
                                     "description": "Optional assertion (line number or substring check)."
                                 }
-                            },
-                            "required": ["search_content", "replace_content"]
+                            }
                         },
                         "description": "Optional list of replacements to apply in a single call to the same file. Applied bottom-up to avoid line-drift."
                     }
@@ -306,20 +325,25 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
     search_content = arguments.get("search_content")
     replace_content = arguments.get("replace_content")
     patch_content = arguments.get("patch_content")
+    symbol_scope = arguments.get("symbol_scope", "boundary")
+    symbol_name = arguments.get("symbol_name")
     
     if not target_file:
         return [TextContent(type="text", text="Error: target_file is required.")]
 
     replacements = arguments.get("replacements")
 
-    if patch_content is None and replacements is None and (search_content is None or replace_content is None):
-        return [TextContent(type="text", text="Error: Either replacements, patch_content, OR both search_content and replace_content are required.")]
+    if symbol_scope in ("full", "body"):
+        if not symbol_name or replace_content is None:
+            return [TextContent(type="text", text="Error: Both symbol_name and replace_content are required when symbol_scope is 'full' or 'body'.")]
+    else:
+        if patch_content is None and replacements is None and (search_content is None or replace_content is None):
+            return [TextContent(type="text", text="Error: Either replacements, patch_content, OR both search_content and replace_content are required.")]
 
     folder_filter = arguments.get("folder_filter")
     file_filter = arguments.get("file_filter")
     start_line = int(arguments.get("start_line")) if arguments.get("start_line") is not None else None
     end_line = int(arguments.get("end_line")) if arguments.get("end_line") is not None else None
-    symbol_name = arguments.get("symbol_name")
     allow_multiple = bool(arguments.get("allow_multiple", False))
     
     line_filter = arguments.get("line_filter")
@@ -351,6 +375,7 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
         did_you_mean=did_you_mean,
         replacements=replacements,
         bypass_validation=bypass_validation,
+        symbol_scope=symbol_scope,
     )
 
     return [TextContent(type="text", text=json.dumps(res, indent=2))]

@@ -14,6 +14,7 @@ dependencies = [
     "ruff",
     "PyYAML>=6.0",
     "tomli>=2.0; python_version < '3.11'",
+    "tree-sitter-language-pack>=0.7.0",
 ]
 
 [project.scripts]

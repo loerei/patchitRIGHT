@@ -22,6 +22,9 @@ class PatchEngine:
         self.linter_warnings = []
         self.validator = ValidationService()
         self.bypass_validation = bypass_validation
+        self.indentation_adjusted = False
+        self.indent_delta = ""
+        self.newline_padded = False
 
     def _find_occurrence_line_ranges(
         self, content: str, search: str, base_line_offset: int = 0
@@ -405,3 +408,94 @@ class PatchEngine:
             else:
                 current_hunk['lines'].append((' ', line))
         return current_hunk
+
+    def apply_symbol_replacement(
+        self,
+        replace_content: str,
+        start_line: int,       # 1-indexed
+        start_col: int,        # 0-indexed char offset
+        end_line: int,         # 1-indexed
+        end_col: int,          # 0-indexed char offset
+        symbol_scope: str,     # "full" or "body"
+        is_expression: bool = False,
+    ) -> tuple[str, int]:
+        """Replace the resolved symbol or body in-place."""
+        start_line_idx = start_line - 1
+        end_line_idx = end_line - 1
+
+        # Check line limits (avoid out of range)
+        start_line_idx = max(0, min(start_line_idx, len(self.file_lines) - 1))
+        end_line_idx = max(start_line_idx, min(end_line_idx, len(self.file_lines) - 1))
+
+        from .body_parser import detect_indent, normalize_indent, pad_block_newlines
+
+        if symbol_scope == "body":
+            # Extract current body content for indent detection
+            if start_line_idx == end_line_idx:
+                body_text = self.file_lines[start_line_idx][start_col:end_col]
+            else:
+                first = self.file_lines[start_line_idx][start_col:]
+                last = self.file_lines[end_line_idx][:end_col]
+                middle = self.file_lines[start_line_idx + 1:end_line_idx]
+                body_text = "\n".join([first] + middle + [last])
+            
+            body_lines = body_text.split("\n")
+            sig_line = self.file_lines[start_line_idx]
+            
+            # 1. Detect base indent
+            target_indent = detect_indent(body_lines, sig_line, self.file_lines)
+            
+            # 2. Re-indent replace_content in isolation
+            replace_content, adjusted, delta = normalize_indent(replace_content, target_indent)
+            self.indentation_adjusted = adjusted
+            self.indent_delta = delta
+
+            # 3. Smart newline padding (skip for expression bodies and
+            #    single-line bodies where the replacement is also single-line)
+            self.newline_padded = False
+            is_single_line_body = start_line_idx == end_line_idx
+            replacement_is_multiline = "\n" in replace_content
+            if not is_expression and (not is_single_line_body or replacement_is_multiline):
+                sig_indent = sig_line[:len(sig_line) - len(sig_line.lstrip())]
+                replace_content, padded = pad_block_newlines(replace_content, sig_indent, False)
+                self.newline_padded = padded
+
+            # 4. Line-level column splicing
+            start_line_text = self.file_lines[start_line_idx]
+            end_line_text = self.file_lines[end_line_idx]
+
+            prefix = start_line_text[:start_col]
+            suffix = end_line_text[end_col:]
+
+            spliced_str = prefix + replace_content + suffix
+            spliced_lines = spliced_str.split("\n")
+
+            patched_lines = list(self.file_lines)
+            patched_lines[start_line_idx:end_line_idx + 1] = spliced_lines
+            patched_file = "\n".join(patched_lines)
+
+        else:  # "full"
+            # Resolve signature indent
+            sig_line = self.file_lines[start_line_idx]
+            sig_indent = sig_line[:len(sig_line) - len(sig_line.lstrip())]
+            
+            # 1. Re-indent full replacement to match signature indent
+            replace_content, adjusted, delta = normalize_indent(replace_content, sig_indent)
+            self.indentation_adjusted = adjusted
+            self.indent_delta = delta
+            self.newline_padded = False
+
+            # 2. Line replacement
+            patched_lines = list(self.file_lines)
+            patched_lines[start_line_idx:end_line_idx + 1] = replace_content.split("\n")
+            patched_file = "\n".join(patched_lines)
+
+        # Validate
+        if not self.bypass_validation:
+            self.validator.validate_file(self.filename, patched_file, self.file_content)
+            self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
+
+        if self.is_crlf:
+            patched_file = patched_file.replace("\n", "\r\n")
+
+        return patched_file, 1
