@@ -21,6 +21,12 @@ FUNCTION_LIKE_TYPES = frozenset({
     "method_definition",
     "generator_function",
     "generator_function_declaration",
+    # Group 1: C-Style
+    "method_declaration",        # Java, C#
+    "constructor_declaration",   # Java, C#
+    "function_item",             # Rust
+    "function_definition",       # C/C++
+    # Go uses "function_declaration" and "method_declaration"
 })
 
 # File extensions that are JSX/TSX — fallback bracket matcher is explicitly
@@ -41,6 +47,19 @@ EXTENSION_TO_LANGUAGE = {
     ".mts": "typescript",
     ".cts": "typescript",
     ".tsx": "tsx",
+    # Group 1: C-Style
+    ".go": "go",
+    ".rs": "rust",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
+    ".java": "java",
+    ".cs": "csharp",
 }
 
 
@@ -150,7 +169,10 @@ def get_body_range(
             "Install tree-sitter-language-pack or use start_line/end_line manual scoping."
         )
 
-    result = _bracket_match_fallback(source, symbol_start_line, symbol_end_line)
+    try:
+        result = _bracket_match_fallback(source, symbol_start_line, symbol_end_line)
+    except ValueError:
+        raise
     if result is None:
         raise ValueError(
             f"Could not determine function body boundaries in '{file_path}' "
@@ -285,7 +307,11 @@ def _try_tree_sitter(
         """
         best = None
 
-        if node.type in FUNCTION_LIKE_TYPES:
+        # In C/C++, function declarations in header files (prototypes) are parsed as "function_declaration".
+        # We need to recognize them to raise a ValueError, but _find_best_function should only return nodes that actually have a body.
+        # So we check that node.type is FUNCTION_LIKE_TYPES or function_declaration, but body must not be None.
+        is_func = node.type in FUNCTION_LIKE_TYPES or node.type == "function_declaration"
+        if is_func:
             n_start = node.start_point[0]
             n_end = node.end_point[0]
             if n_start >= target_start and n_end <= target_end:
@@ -318,12 +344,18 @@ def _try_tree_sitter(
             if (
                 node.type in FUNCTION_LIKE_TYPES
                 or node.type in ("function_signature", "method_signature", "abstract_method_signature")
+                or node.type == "function_declaration"  # C/C++ forward declarations can be function_declaration
+                or node.type == "function_definition"  # C/C++ function definitions
+                or node.type == "declaration"           # generic declaration node which tree-sitter C/C++ might use
             ):
                 n_start = node.start_point[0]
                 n_end = node.end_point[0]
                 if n_start >= target_start and n_end <= target_end:
-                    if node.child_by_field_name("body") is None:
+                    body = node.child_by_field_name("body")
+                    if body is None:
                         return True
+                    # In C/C++, a function_definition AST node has a body but it might be missing in a prototype.
+                    # Some TS overload signatures might have type declarations as their child but no body.
             return any(_has_bodiless_function(c) for c in node.children)
 
         if _has_bodiless_function(tree.root_node):
@@ -334,7 +366,15 @@ def _try_tree_sitter(
         return None
 
     _, body_node = match
-    is_expression = body_node.type != "statement_block"
+
+    # Extract body node source to check if it's a brace block (starts with `{` and ends with `}`).
+    body_bytes = source_bytes[body_node.start_byte : body_node.end_byte]
+    try:
+        body_text = body_bytes.decode("utf-8").strip()
+    except Exception:
+        body_text = ""
+
+    is_expression = not (body_text.startswith("{") and body_text.endswith("}"))
 
     if is_expression:
         # Arrow expression body — return exact expression boundaries.

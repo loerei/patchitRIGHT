@@ -309,3 +309,62 @@ class TestErrorCases:
         src = "abstract class C {\n  abstract m(): void;\n}"
         with pytest.raises(ValueError, match="without a body"):
             get_body_range(src, "test.ts", 2, 2)
+
+    # ---------------------------------------------------------------------------
+    # Group 1 Languages (Go, Rust, C/C++, Java, C#) Tests
+    # ---------------------------------------------------------------------------
+
+    def test_go_function(self):
+        src = "func add(a int, b int) int {\n  return a + b\n}"
+        r = get_body_range(src, "test.go", 1, 3)
+        assert r.is_expression is False
+        # Body start/end checking:
+        # start_line is 1 (where '{' is).
+        # end_line is 3 (where '}' is).
+        # inner is the content between { and }
+        lines = src.split("\n")
+        inner_first_line = lines[r.start_line - 1][r.start_col:]
+        inner_last_line = lines[r.end_line - 1][:r.end_col]
+        assert inner_first_line.strip() == ""
+        assert inner_last_line.strip() == ""
+        assert lines[1].strip() == "return a + b"
+
+    def test_rust_function(self):
+        src = "fn compute() -> u32 {\n    let x = 42;\n    x\n}"
+        r = get_body_range(src, "test.rs", 1, 4)
+        assert r.is_expression is False
+        assert r.start_line == 1
+        assert r.end_line == 4
+        # Slice check
+        body_lines = src.split("\n")
+        # Line 1 start col is after '{'
+        # Line 4 end col is before '}'
+        assert body_lines[1].strip() == "let x = 42;"
+
+    def test_cpp_function(self):
+        src = "int calculateTotal(int x, int y) {\n    return x + y;\n}"
+        r = get_body_range(src, "test.cpp", 1, 3)
+        assert r.is_expression is False
+        assert r.start_line == 1
+        assert r.end_line == 3
+
+    def test_cpp_header_prototype_raises(self):
+        src = "int calculateTotal(int x, int y);"
+        with pytest.raises(ValueError, match="without a body"):
+            get_body_range(src, "test.h", 1, 1)
+
+    def test_java_method(self):
+        src = "public class A {\n    public int compute() {\n        return 10;\n    }\n}"
+        r = get_body_range(src, "A.java", 2, 4)
+        assert r.is_expression is False
+        assert r.start_line == 2
+        assert r.end_line == 4
+
+    def test_csharp_expression_bodied(self):
+        src = "public class C {\n    public int Add(int a, int b) => a + b;\n}"
+        r = get_body_range(src, "test.cs", 2, 2)
+        assert r.is_expression is True
+        # Check that it extracted "=> a + b;" or similar body node
+        lines = src.split("\n")
+        inner = lines[r.start_line - 1][r.start_col : r.end_col]
+        assert inner.strip() == "=> a + b"
