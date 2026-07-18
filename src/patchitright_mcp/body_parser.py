@@ -25,8 +25,10 @@ FUNCTION_LIKE_TYPES = frozenset({
     "method_declaration",        # Java, C#
     "constructor_declaration",   # Java, C#
     "function_item",             # Rust
-    "function_definition",       # C/C++
-    # Go uses "function_declaration" and "method_declaration"
+    "function_definition",       # C/C++, Python
+    # Group 2: Python
+    "async_function_definition", # Python async def
+    "class_definition",          # Python, JS, C++
 })
 
 # File extensions that are JSX/TSX — fallback bracket matcher is explicitly
@@ -60,6 +62,10 @@ EXTENSION_TO_LANGUAGE = {
     ".hxx": "cpp",
     ".java": "java",
     ".cs": "csharp",
+    # Group 2: Python
+    ".py": "python",
+    ".pyi": "python",
+    ".pyw": "python",
 }
 
 
@@ -162,7 +168,16 @@ def get_body_range(
             byte_count,
         )
 
-    # Fallback: bracket matcher.
+    # Fallback: bracket matcher / AST parser.
+    if language == "python":
+        py_result = _python_ast_fallback(source, symbol_start_line, symbol_end_line)
+        if py_result is not None:
+            return py_result
+        raise ValueError(
+            f"Could not determine Python function body boundaries in '{file_path}' "
+            f"(lines {symbol_start_line}-{symbol_end_line})."
+        )
+
     if ext in JSX_EXTENSIONS:
         raise ValueError(
             f"Cannot use bracket-matching fallback for JSX/TSX file '{file_path}'. "
@@ -367,6 +382,22 @@ def _try_tree_sitter(
 
     _, body_node = match
 
+    if body_node.type == "arrow_expression_clause":
+        expr_child = body_node.child_by_field_name("expression")
+        if expr_child is not None:
+            body_node = expr_child
+
+    if language == "python":
+        block_start_row, block_start_byte_col = body_node.start_point
+        block_end_row, block_end_byte_col = body_node.end_point
+        return BodyRange(
+            start_line=block_start_row + 1,
+            start_col=_bytes_to_char_col(lines[block_start_row], block_start_byte_col),
+            end_line=block_end_row + 1,
+            end_col=_bytes_to_char_col(lines[block_end_row], block_end_byte_col),
+            is_expression=False,
+        )
+
     # Extract body node source to check if it's a brace block (starts with `{` and ends with `}`).
     body_bytes = source_bytes[body_node.start_byte : body_node.end_byte]
     try:
@@ -407,6 +438,62 @@ def _try_tree_sitter(
         end_col=inner_end_col,
         is_expression=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Python AST fallback
+# ---------------------------------------------------------------------------
+
+def _python_ast_fallback(
+    source: str,
+    symbol_start_line: int,
+    symbol_end_line: int,
+) -> Optional[BodyRange]:
+    """Extract Python function or class body range using stdlib ast module."""
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except Exception as exc:
+        logger.warning("ast.parse failed on Python source: %s", exc)
+        return None
+
+    lines = source.split("\n")
+    best_node = None
+    best_span = -1
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            n_start = node.lineno
+            n_end = getattr(node, "end_lineno", n_start)
+            # Find node within target range (1-indexed line bounds from indexer)
+            if n_start >= symbol_start_line and n_end <= symbol_end_line:
+                if node.body:
+                    first_stmt = node.body[0]
+                    last_stmt = node.body[-1]
+                    s_line = first_stmt.lineno
+                    e_line = getattr(last_stmt, "end_lineno", s_line)
+                    span = (e_line - s_line + 1) * 1000 + (getattr(last_stmt, "end_col_offset", 0) - first_stmt.col_offset)
+                    if span > best_span:
+                        best_span = span
+                        best_node = node
+
+    if best_node and best_node.body:
+        first_stmt = best_node.body[0]
+        last_stmt = best_node.body[-1]
+        start_line = first_stmt.lineno
+        start_col = first_stmt.col_offset
+        end_line = getattr(last_stmt, "end_lineno", last_stmt.lineno)
+        end_col = getattr(last_stmt, "end_col_offset", len(lines[end_line - 1]))
+        return BodyRange(
+            start_line=start_line,
+            start_col=start_col,
+            end_line=end_line,
+            end_col=end_col,
+            is_expression=False,
+        )
+
+    return None
 
 
 # ---------------------------------------------------------------------------

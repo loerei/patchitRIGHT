@@ -1596,3 +1596,45 @@ class TestSymbolScope:
         # Spliced correctly with CRLF preserved
         assert b"\r\n" in app_file.read_bytes()
         assert b"\n" not in app_file.read_bytes().replace(b"\r\n", b"")
+
+    def test_python_body_scope(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text("def foo(a, b):\n    return a + b\n")
+
+        from jcodemunch_mcp.tools.index_folder import index_folder
+        store_path = str(tmp_path / "store")
+        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
+
+        res = patch_file(
+            target_file="app.py",
+            replace_content="    return a * b",
+            symbol_name="foo",
+            symbol_scope="body",
+            dry_run=False,
+            storage_path=store_path
+        )
+        assert res.get("success") is True
+        expected = "def foo(a, b):\n    return a * b\n"
+        assert app_file.read_text() == expected
+
+    def test_python_full_scope(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "app.py"
+        app_file.write_text("def foo(a, b):\n    return a + b\n")
+
+        from jcodemunch_mcp.tools.index_folder import index_folder
+        store_path = str(tmp_path / "store")
+        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
+
+        res = patch_file(
+            target_file="app.py",
+            replace_content="def foo(a, b):\n    return a * b",
+            symbol_name="foo",
+            symbol_scope="full",
+            dry_run=False,
+            storage_path=store_path
+        )
+        assert res.get("success") is True
+        expected = "def foo(a, b):\n    return a * b\n"
+        assert app_file.read_text() == expected
