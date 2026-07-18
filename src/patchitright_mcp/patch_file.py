@@ -11,6 +11,7 @@ from .workspace import Workspace
 from .engine import PatchEngine
 from .transaction import FileTransaction
 from .run_cache import get_cache
+from .body_parser import BodyRange
 from .validators import SyntaxValidationError
 
 LINTER_WARNINGS_PREFIX = "\n*Linter Warnings:*\n"
@@ -138,16 +139,18 @@ def _resolve_ast_boundaries(
     storage_path: Optional[str],
     start_line: Optional[int],
     end_line: Optional[int],
-) -> tuple[Optional[int], Optional[int], Optional[dict]]:
+    symbol_scope: str = "boundary",
+    file_content: Optional[str] = None,
+) -> tuple[Optional[int], Optional[int], Optional[dict], Optional["BodyRange"]]:
     """Resolve start and end lines for AST symbolName boundary."""
     if not symbol_name:
-        return start_line, end_line, None
+        return start_line, end_line, None, None
 
     try:
         from jcodemunch_mcp.tools.resolve_repo import resolve_repo as resolve_repo_fn
         repo_res = resolve_repo_fn(str(target_path), storage_path)
         if not repo_res.get("found"):
-            return None, None, {"error": f"Workspace at '{cwd}' is not indexed. Call index_folder first to resolve symbols."}
+            return None, None, {"error": f"Workspace at '{cwd}' is not indexed. Call index_folder first to resolve symbols."}, None
         
         repo_id = repo_res["repo"]
         owner, name = repo_id.split("/", 1)
@@ -155,7 +158,7 @@ def _resolve_ast_boundaries(
         store = IndexStore(base_path=storage_path)
         index = store.load_index(owner, name)
         if not index:
-            return None, None, {"error": f"Index for '{repo_id}' could not be loaded."}
+            return None, None, {"error": f"Index for '{repo_id}' could not be loaded."}, None
             
         source_root = Path(repo_res.get("source_root") or index.source_root or cwd).resolve()
         try:
@@ -169,12 +172,22 @@ def _resolve_ast_boundaries(
                 matched_symbols.append(sym)
                 
         if not matched_symbols:
-            return None, None, {"error": f"Symbol '{symbol_name}' not found in file '{rel_file_path}'."}
+            return None, None, {"error": f"Symbol '{symbol_name}' not found in file '{rel_file_path}'."}, None
             
         symbol = matched_symbols[0]
-        return symbol["line"], symbol["end_line"], None
+        sym_start, sym_end = symbol["line"], symbol["end_line"]
+
+        if symbol_scope == "body":
+            if file_content is None:
+                with open(target_path, "r", encoding="utf-8", errors="replace") as f:
+                    file_content = f.read()
+            from .body_parser import get_body_range
+            body_range = get_body_range(file_content, str(target_path), sym_start, sym_end)
+            return body_range.start_line, body_range.end_line, None, body_range
+
+        return sym_start, sym_end, None, None
     except Exception as e:
-        return None, None, {"error": f"Error resolving symbolName '{symbol_name}': {e}"}
+        return None, None, {"error": f"Error resolving symbolName '{symbol_name}': {e}"}, None
 
 
 def _read_file_and_check_filters(
@@ -248,92 +261,208 @@ def patch_file(  # noqa: C901 # NOSONAR
 
         # Handle Multiple Replacements (Multi-patch)
         if replacements is not None:
-            for r in replacements:
-                if "search_content" not in r or "replace_content" not in r:
-                    return {"error": "Error: Each entry in replacements must have search_content and replace_content."}
+            # Upfront resolution and validation of all replacements
+            resolved_items = []
+            for idx, r in enumerate(replacements):
+                scope = r.get("symbol_scope", "boundary")
+                sym_name = r.get("symbol_name")
+                r_start = r.get("start_line")
+                r_end = r.get("end_line")
+
+                body_range = None
+                resolved_start = r_start
+                resolved_end = r_end
+
+                if scope in ("full", "body"):
+                    if not sym_name or "replace_content" not in r:
+                        return {"error": f"Error: replacements[{idx}] specifies symbol_scope '{scope}' but is missing symbol_name or replace_content."}
+                else:
+                    if "search_content" not in r or "replace_content" not in r:
+                        return {"error": f"Error: replacements[{idx}] is missing search_content or replace_content."}
+
+                if sym_name:
+                    sym_start, sym_end, sym_err, b_range = _resolve_ast_boundaries(
+                        cwd, target_path, sym_name, storage_path, r_start, r_end, scope, file_content
+                    )
+                    if sym_err:
+                        return sym_err
+                    resolved_start = sym_start
+                    resolved_end = sym_end
+                    body_range = b_range
+                
+                resolved_items.append({
+                    "r": r,
+                    "scope": scope,
+                    "symbol_name": sym_name,
+                    "start_line": resolved_start or 1,
+                    "end_line": resolved_end or len(file_content.split("\n")),
+                    "body_range": body_range,
+                })
+
+            # Check overlap of resolved items
+            sorted_by_start = sorted(resolved_items, key=lambda x: x["start_line"])
+            for i in range(len(sorted_by_start) - 1):
+                curr = sorted_by_start[i]
+                nxt = sorted_by_start[i+1]
+                if curr["end_line"] >= nxt["start_line"]:
+                    return {"error": f"Error: Overlapping replacements detected between lines {curr['start_line']}-{curr['end_line']} and {nxt['start_line']}-{nxt['end_line']}."}
 
             # Sort bottom-up based on start_line (descending) to prevent line-drift
-            sorted_replacements = sorted(
-                replacements,
-                key=lambda r: r.get("start_line") or 1,
-                reverse=True
-            )
+            sorted_resolved_items = sorted(resolved_items, key=lambda x: x["start_line"], reverse=True)
 
             # Helper to run the chain of replacements
-            def run_chain(contents: str, suggest_idx: Optional[int] = None) -> tuple[str, int, list[str]]:
+            def run_chain(contents: str, suggest_idx: Optional[int] = None) -> tuple[str, int, list[str], PatchEngine]:
                 temp_content = contents
                 occurrences_sum = 0
                 last_linter_warnings = []
-                for idx, r in enumerate(sorted_replacements):
-                    r_engine = PatchEngine(temp_content, target_file, bypass_validation=bypass_validation)
-                    sym_name = r.get("symbol_name")
-                    r_start = r.get("start_line")
-                    r_end = r.get("end_line")
-                    r_symbol_boundaries = None
-                    if sym_name:
-                        sym_start, sym_end, sym_err = _resolve_ast_boundaries(
-                            cwd, target_path, sym_name, storage_path, r_start, r_end
-                        )
-                        if not sym_err:
-                            r_symbol_boundaries = (sym_start, sym_end)
+                final_engine = None
 
+                # Keep track of aggregated metadata across chain
+                any_adjusted = False
+                all_deltas = []
+                any_padded = False
+                any_large_fallback = False
+
+                for idx, item in enumerate(sorted_resolved_items):
+                    r_engine = PatchEngine(temp_content, target_file, bypass_validation=bypass_validation)
+                    r = item["r"]
+                    scope = item["scope"]
+                    sym_name = item["symbol_name"]
                     is_suggest = (suggest_idx is not None and idx == suggest_idx)
-                    temp_content, occ = r_engine.apply_classic_patch(
-                        search_content=r["search_content"],
-                        replace_content=r["replace_content"],
-                        allow_multiple=r.get("allow_multiple", allow_multiple),
-                        start_line=r_start,
-                        end_line=r_end,
-                        symbol_boundaries=r_symbol_boundaries,
-                        symbol_name=sym_name,
-                        line_filter=r.get("line_filter"),
-                        did_you_mean=is_suggest or did_you_mean,
-                        validate=(idx == len(sorted_replacements) - 1) and (suggest_idx is None)
-                    )
+
+                    # Check for large file fallback
+                    large_file = len(temp_content.split("\n")) > 50_000 or len(temp_content.encode("utf-8")) > 5_000_000
+                    if large_file and scope == "body":
+                        any_large_fallback = True
+
+                    if scope in ("full", "body"):
+                        b_range = item["body_range"]
+                        start_line = item["start_line"]
+                        end_line = item["end_line"]
+                        start_col = 0
+                        end_col = 0
+                        is_expr = False
+                        
+                        if scope == "body" and b_range is not None:
+                            start_line = b_range.start_line
+                            start_col = b_range.start_col
+                            end_line = b_range.end_line
+                            end_col = b_range.end_col
+                            is_expr = b_range.is_expression
+                        
+                        temp_content, occ = r_engine.apply_symbol_replacement(
+                            replace_content=r["replace_content"],
+                            start_line=start_line,
+                            start_col=start_col,
+                            end_line=end_line,
+                            end_col=end_col,
+                            symbol_scope=scope,
+                            is_expression=is_expr,
+                        )
+                    else:
+                        sym_boundaries = None
+                        if sym_name:
+                            sym_boundaries = (item["start_line"], item["end_line"])
+                        
+                        temp_content, occ = r_engine.apply_classic_patch(
+                            search_content=r["search_content"],
+                            replace_content=r["replace_content"],
+                            allow_multiple=r.get("allow_multiple", allow_multiple),
+                            start_line=r.get("start_line"),
+                            end_line=r.get("end_line"),
+                            symbol_boundaries=sym_boundaries,
+                            symbol_name=sym_name,
+                            line_filter=r.get("line_filter"),
+                            did_you_mean=is_suggest or did_you_mean,
+                            validate=(idx == len(sorted_resolved_items) - 1) and (suggest_idx is None)
+                        )
+
                     occurrences_sum += occ
-                    if idx == len(sorted_replacements) - 1:
+                    
+                    if getattr(r_engine, "indentation_adjusted", False):
+                        any_adjusted = True
+                        if r_engine.indent_delta:
+                            all_deltas.append(r_engine.indent_delta)
+                    if getattr(r_engine, "newline_padded", False):
+                        any_padded = True
+                    if getattr(r_engine, "large_file_fallback", False):
+                        any_large_fallback = True
+
+                    if idx == len(sorted_resolved_items) - 1:
                         last_linter_warnings = r_engine.linter_warnings
-                return temp_content, occurrences_sum, last_linter_warnings
+                        final_engine = r_engine
+
+                if final_engine:
+                    final_engine.indentation_adjusted = any_adjusted
+                    final_engine.indent_delta = ", ".join(all_deltas)
+                    final_engine.newline_padded = any_padded
+                    final_engine.large_file_fallback = any_large_fallback
+
+                return temp_content, occurrences_sum, last_linter_warnings, final_engine
 
             try:
-                patched_file, occurrences, last_warnings = run_chain(file_content)
+                patched_file, occurrences, last_warnings, engine = run_chain(file_content)
             except ValueError as e:
+                # suggestions fallback
                 if not did_you_mean:
                     try:
                         # Find which step failed, and run suggestions for it
                         temp_content = file_content
                         failed_idx = None
-                        for idx, r in enumerate(sorted_replacements):
+                        for idx, item in enumerate(sorted_resolved_items):
                             r_engine = PatchEngine(temp_content, target_file, bypass_validation=bypass_validation)
-                            sym_name = r.get("symbol_name")
-                            r_start = r.get("start_line")
-                            r_end = r.get("end_line")
-                            r_symbol_boundaries = None
-                            if sym_name:
-                                sym_start, sym_end, sym_err = _resolve_ast_boundaries(
-                                    cwd, target_path, sym_name, storage_path, r_start, r_end
-                                )
-                                if not sym_err:
-                                    r_symbol_boundaries = (sym_start, sym_end)
+                            r = item["r"]
+                            scope = item["scope"]
+                            sym_name = item["symbol_name"]
+                            
                             try:
-                                temp_content, _ = r_engine.apply_classic_patch(
-                                    search_content=r["search_content"],
-                                    replace_content=r["replace_content"],
-                                    allow_multiple=r.get("allow_multiple", allow_multiple),
-                                    start_line=r_start,
-                                    end_line=r_end,
-                                    symbol_boundaries=r_symbol_boundaries,
-                                    symbol_name=sym_name,
-                                    line_filter=r.get("line_filter"),
-                                    did_you_mean=False,
-                                    validate=False
-                                )
+                                if scope in ("full", "body"):
+                                    b_range = item["body_range"]
+                                    start_line = item["start_line"]
+                                    end_line = item["end_line"]
+                                    start_col = 0
+                                    end_col = 0
+                                    is_expr = False
+                                    
+                                    if scope == "body" and b_range is not None:
+                                        start_line = b_range.start_line
+                                        start_col = b_range.start_col
+                                        end_line = b_range.end_line
+                                        end_col = b_range.end_col
+                                        is_expr = b_range.is_expression
+                                    
+                                    temp_content, _ = r_engine.apply_symbol_replacement(
+                                        replace_content=r["replace_content"],
+                                        start_line=start_line,
+                                        start_col=start_col,
+                                        end_line=end_line,
+                                        end_col=end_col,
+                                        symbol_scope=scope,
+                                        is_expression=is_expr,
+                                    )
+                                else:
+                                    sym_boundaries = None
+                                    if sym_name:
+                                        sym_boundaries = (item["start_line"], item["end_line"])
+                                    
+                                    temp_content, _ = r_engine.apply_classic_patch(
+                                        search_content=r["search_content"],
+                                        replace_content=r["replace_content"],
+                                        allow_multiple=r.get("allow_multiple", allow_multiple),
+                                        start_line=r.get("start_line"),
+                                        end_line=r.get("end_line"),
+                                        symbol_boundaries=sym_boundaries,
+                                        symbol_name=sym_name,
+                                        line_filter=r.get("line_filter"),
+                                        did_you_mean=False,
+                                        validate=False
+                                    )
                             except ValueError:
                                 failed_idx = idx
                                 break
 
                         if failed_idx is not None:
-                            suggested_patched_file, _, _ = run_chain(file_content, suggest_idx=failed_idx)
+                            suggested_patched_file, _, _, _ = run_chain(file_content, suggest_idx=failed_idx)
                             cache = get_cache()
                             run_id = cache.store(
                                 entries=[{"target_path": target_path, "patched_content": suggested_patched_file}],
@@ -349,37 +478,76 @@ def patch_file(  # noqa: C901 # NOSONAR
                         pass
                 return {"error": str(e)}
 
-            engine = PatchEngine(patched_file, target_file, bypass_validation=bypass_validation)
             engine.linter_warnings = last_warnings
             return _apply_classic_replacement(
                 dry_run, file_content, patched_file, target_file, target_path, occurrences,
-                symbol_name, None, None, None, None, engine
+                None, None, None, None, None, engine
             )
 
-        # Otherwise fallback to classic search/replace
-        if search_content is None or replace_content is None:
-            return {"error": "Error: Either replacements, patch_content, OR both search_content and replace_content must be provided."}
+        # Otherwise fallback to classic search/replace or symbol replacement
+        symbol_scope = kwargs.get("symbol_scope", "boundary")
+        if symbol_scope in ("full", "body"):
+            if not symbol_name or replace_content is None:
+                return {"error": "Error: Both symbol_name and replace_content must be provided when symbol_scope is 'full' or 'body'."}
+        else:
+            if search_content is None or replace_content is None:
+                return {"error": "Error: Either replacements, patch_content, OR both search_content and replace_content must be provided."}
 
         # AST Boundary Resolution
-        resolved_start_line, resolved_end_line, err = _resolve_ast_boundaries(
-            cwd, target_path, symbol_name, storage_path, start_line, end_line
+        resolved_start_line, resolved_end_line, err, body_range = _resolve_ast_boundaries(
+            cwd, target_path, symbol_name, storage_path, start_line, end_line, symbol_scope, file_content
         )
         if err:
             return err
 
+        from .body_parser import MAX_LINES_FOR_TREESITTER, MAX_BYTES_FOR_TREESITTER
+        file_lines_count = len(file_content.split("\n"))
+        file_char_count = len(file_content)
+        if file_char_count > MAX_BYTES_FOR_TREESITTER:
+            large_file = True
+        else:
+            large_file = file_lines_count > MAX_LINES_FOR_TREESITTER or len(file_content.encode("utf-8")) > MAX_BYTES_FOR_TREESITTER
+
         engine = PatchEngine(file_content, target_file, bypass_validation=bypass_validation)
+        if large_file and symbol_scope == "body":
+            engine.large_file_fallback = True
+
         try:
-            patched_file, occurrences = engine.apply_classic_patch(
-                search_content=search_content,
-                replace_content=replace_content,
-                allow_multiple=allow_multiple,
-                start_line=start_line,
-                end_line=end_line,
-                symbol_boundaries=(resolved_start_line, resolved_end_line),
-                symbol_name=symbol_name,
-                line_filter=line_filter,
-                did_you_mean=did_you_mean
-            )
+            if symbol_scope in ("full", "body"):
+                start_l = resolved_start_line
+                end_l = resolved_end_line
+                start_c = 0
+                end_c = 0
+                is_expr = False
+                
+                if symbol_scope == "body" and body_range is not None:
+                    start_l = body_range.start_line
+                    start_c = body_range.start_col
+                    end_l = body_range.end_line
+                    end_c = body_range.end_col
+                    is_expr = body_range.is_expression
+                    
+                patched_file, occurrences = engine.apply_symbol_replacement(
+                    replace_content=replace_content,
+                    start_line=start_l,
+                    start_col=start_c,
+                    end_line=end_l,
+                    end_col=end_c,
+                    symbol_scope=symbol_scope,
+                    is_expression=is_expr,
+                )
+            else:
+                patched_file, occurrences = engine.apply_classic_patch(
+                    search_content=search_content,
+                    replace_content=replace_content,
+                    allow_multiple=allow_multiple,
+                    start_line=start_line,
+                    end_line=end_line,
+                    symbol_boundaries=(resolved_start_line, resolved_end_line),
+                    symbol_name=symbol_name,
+                    line_filter=line_filter,
+                    did_you_mean=did_you_mean
+                )
         except SyntaxValidationError as e:
             return {
                 "error": f"Syntax Error: {str(e)}",
@@ -388,6 +556,8 @@ def patch_file(  # noqa: C901 # NOSONAR
                 "column": e.column
             }
         except ValueError as e:
+            if symbol_scope in ("full", "body"):
+                return {"error": str(e)}
             if not did_you_mean:
                 try:
                     suggest_engine = PatchEngine(file_content, target_file, bypass_validation=bypass_validation)
@@ -637,6 +807,11 @@ def _apply_classic_replacement(  # NOSONAR
         resolved_end_line = engine.relocated_end_line
 
     linter_warnings = getattr(engine, "linter_warnings", [])
+    indentation_adjusted = getattr(engine, "indentation_adjusted", False)
+    indent_delta = getattr(engine, "indent_delta", "")
+    newline_padded = getattr(engine, "newline_padded", False)
+    large_file_fallback = getattr(engine, "large_file_fallback", False)
+
     if dry_run:
         diff_text = generate_diff(file_content, patched_file, target_file)
         output = f"```diff\n{diff_text}```\n"
@@ -668,6 +843,13 @@ def _apply_classic_replacement(  # NOSONAR
             "run_id": run_id,
             "expires_in": cache.get_ttl(),
         }
+        if indentation_adjusted:
+            res["indentation_adjusted"] = True
+            res["indent_delta"] = indent_delta
+        if newline_padded:
+            res["newline_padded"] = True
+        if large_file_fallback:
+            res["large_file_fallback"] = True
         if linter_warnings:
             res["warnings"] = linter_warnings
             res["suggestion"] = _get_linter_suggestion(target_file)
@@ -701,6 +883,13 @@ def _apply_classic_replacement(  # NOSONAR
         "message": output,
         "occurrences": occurrences,
     }
+    if indentation_adjusted:
+        res["indentation_adjusted"] = True
+        res["indent_delta"] = indent_delta
+    if newline_padded:
+        res["newline_padded"] = True
+    if large_file_fallback:
+        res["large_file_fallback"] = True
     if linter_warnings:
         res["warnings"] = linter_warnings
         res["suggestion"] = _get_linter_suggestion(target_file)
