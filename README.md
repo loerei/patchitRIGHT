@@ -67,10 +67,24 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 | `replacements` | `array` | List of replacement objects applied bottom-up to prevent line-drift. |
 | `symbol_name` | `string` | Scopes search matching to a specific class/function AST boundary using jCodeMunch. |
 | `start_line` / `end_line`| `integer` | Scopes search matching to a specific 1-indexed line range. |
+| `symbol_scope` | `string` | Scopes the mutation style of the target symbol. Supports: `"boundary"` (default: classic search-and-replace), `"full"` (replaces the entire function/class signature + body), or `"body"` (replaces *only* the inner content between `{` and `}`). |
 | `allow_multiple` | `boolean` | Replaces all occurrences of the search content within the scope. Defaults to `false`. |
 | `did_you_mean` | `boolean` | Automatically matches and replaces the closest block of code if similarity is >= 80%. |
 | `dry_run` | `boolean` | Returns a unified git-style diff preview and caches the change (`run_id` expires in 300s). |
 | `allow_overwrite` | `boolean` | Allows overwriting an existing file in `write_file`. Defaults to `false`. |
+
+---
+
+
+## 💡 AST-Scoped Replacements (No `search_content` required!)
+
+With the introduction of `symbol_scope: "body"` and `symbol_scope: "full"`, `patchitRIGHT` allows AI agents to replace entire functions or just function bodies simply by targetting their `symbol_name` (resolved via jCodeMunch).
+
+* **Eliminate Token Waste**: Agents no longer need to pass large, 100+ line original code blocks into `search_content`. They only pass the *new* body code to `replace_content`.
+* **Smart Indentation Normalization**: `patchitRIGHT` automatically detects the function's base indentation and normalizes/re-indents your `replace_content` to match perfectly.
+* **Auto Newline Padding**: Intelligently pads multiline brace blocks with line endings (`\n` or `\r\n` matching the file format) while preserving compact formatting for single-line arrow functions.
+* **Multibyte Character Safety**: Maps tree-sitter's byte-level coordinates to Python character positions, ensuring multibyte characters (like emojis `🐛` or accented letters `é`) are never corrupted during column-level splicing.
+* **Upfront Resolution**: Resolves all boundaries upfront and mutates from bottom to top, preventing offset-drift errors in multi-patch `replacements` queues.
 
 ---
 
