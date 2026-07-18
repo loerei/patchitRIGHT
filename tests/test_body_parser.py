@@ -215,7 +215,7 @@ class TestIndentation:
 
     def test_indentation_rebase(self):
         content = "const a = 1;\nreturn a;"
-        result, adjusted, delta = normalize_indent(content, "    ")
+        result, adjusted, _ = normalize_indent(content, "    ")
         assert adjusted is True
         assert result == "    const a = 1;\n    return a;"
 
@@ -278,7 +278,7 @@ class TestNewlinePadding:
         content = "x + 1"
         # pad_block_newlines is only called for brace blocks,
         # so this test just verifies the function exists and works.
-        result, padded = pad_block_newlines(content, "", is_crlf=False)
+        _, padded = pad_block_newlines(content, "", is_crlf=False)
         # Even though it pads, the caller won't call this for expressions.
         assert padded is True
 
@@ -290,7 +290,7 @@ class TestNewlinePadding:
 
     def test_already_padded(self):
         content = "\n  console.log('hello');\n"
-        result, padded = pad_block_newlines(content, "", is_crlf=False)
+        _, padded = pad_block_newlines(content, "", is_crlf=False)
         assert padded is False
 
 

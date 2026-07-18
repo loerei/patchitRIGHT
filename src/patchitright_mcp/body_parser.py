@@ -68,6 +68,36 @@ class BodyRange:
 # Public API
 # ---------------------------------------------------------------------------
 
+def _check_large_file(source: str, line_count: int) -> tuple[bool, int]:
+    """Return (is_large_file, byte_count) based on size thresholds."""
+    char_count = len(source)
+    if char_count > MAX_BYTES_FOR_TREESITTER:
+        return True, char_count
+    byte_count = len(source.encode("utf-8"))
+    large_file = line_count > MAX_LINES_FOR_TREESITTER or byte_count > MAX_BYTES_FOR_TREESITTER
+    return large_file, byte_count
+
+
+def _run_tree_sitter_safe(
+    source: str,
+    language: str,
+    symbol_start_line: int,
+    symbol_end_line: int,
+) -> Optional[BodyRange]:
+    """Execute _try_tree_sitter catching exceptions safely."""
+    try:
+        return _try_tree_sitter(source, language, symbol_start_line, symbol_end_line)
+    except ImportError:
+        logger.warning(
+            "tree-sitter-language-pack not available; falling back to bracket matching."
+        )
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tree-sitter parsing failed (%s); falling back to bracket matching.", exc)
+    return None
+
+
 def get_body_range(
     source: str,
     file_path: str,
@@ -100,27 +130,12 @@ def get_body_range(
 
     lines = source.split("\n")
     line_count = len(lines)
-    char_count = len(source)
-    if char_count > MAX_BYTES_FOR_TREESITTER:
-        large_file = True
-        byte_count = char_count
-    else:
-        byte_count = len(source.encode("utf-8"))
-        large_file = line_count > MAX_LINES_FOR_TREESITTER or byte_count > MAX_BYTES_FOR_TREESITTER
+    large_file, byte_count = _check_large_file(source, line_count)
 
     if not large_file:
-        try:
-            result = _try_tree_sitter(source, language, symbol_start_line, symbol_end_line)
-            if result is not None:
-                return result
-        except ImportError:
-            logger.warning(
-                "tree-sitter-language-pack not available; falling back to bracket matching."
-            )
-        except ValueError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("tree-sitter parsing failed (%s); falling back to bracket matching.", exc)
+        result = _run_tree_sitter_safe(source, language, symbol_start_line, symbol_end_line)
+        if result is not None:
+            return result
     else:
         logger.info(
             "File exceeds size limits (%d lines, %d bytes); skipping tree-sitter.",
@@ -318,7 +333,7 @@ def _try_tree_sitter(
             )
         return None
 
-    func_node, body_node = match
+    _, body_node = match
     is_expression = body_node.type != "statement_block"
 
     if is_expression:
@@ -514,23 +529,24 @@ def _bracket_match_fallback(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _infer_indent_unit(file_lines: list[str]) -> str:
-    """Infer the indentation unit (tab or N spaces) by sampling the file."""
-    sample = file_lines[:50]
+def _gather_indents(sample: list[str]) -> tuple[int, list[int]]:
+    """Gather tab counts and space indents from sample lines."""
     tab_count = 0
     space_deltas: list[int] = []
-
     for line in sample:
         stripped = line.lstrip()
-        if not stripped:
-            continue
-        leading = line[: len(line) - len(stripped)]
-        if leading.startswith("\t"):
-            tab_count += 1
-        elif leading.startswith(" "):
-            space_count = len(leading)
-            if space_count > 0:
-                space_deltas.append(space_count)
+        if stripped:
+            leading = line[: len(line) - len(stripped)]
+            if leading.startswith("\t"):
+                tab_count += 1
+            elif leading.startswith(" "):
+                space_deltas.append(len(leading))
+    return tab_count, space_deltas
+
+
+def _infer_indent_unit(file_lines: list[str]) -> str:
+    """Infer the indentation unit (tab or N spaces) by sampling the file."""
+    tab_count, space_deltas = _gather_indents(file_lines[:50])
 
     if tab_count > len(space_deltas):
         return "\t"

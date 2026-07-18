@@ -11,6 +11,7 @@ from .workspace import Workspace
 from .engine import PatchEngine
 from .transaction import FileTransaction
 from .run_cache import get_cache
+from .body_parser import BodyRange
 from .validators import SyntaxValidationError
 
 LINTER_WARNINGS_PREFIX = "\n*Linter Warnings:*\n"
@@ -180,7 +181,7 @@ def _resolve_ast_boundaries(
             if file_content is None:
                 with open(target_path, "r", encoding="utf-8", errors="replace") as f:
                     file_content = f.read()
-            from .body_parser import get_body_range, BodyRange
+            from .body_parser import get_body_range
             body_range = get_body_range(file_content, str(target_path), sym_start, sym_end)
             return body_range.start_line, body_range.end_line, None, body_range
 

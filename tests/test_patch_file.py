@@ -802,7 +802,7 @@ class TestPatchEngine:
 # ---------------------------------------------------------------------------
 
 from patchitright_mcp.patch_file import apply_last_dry_run  # noqa: E402
-from patchitright_mcp.run_cache import RunCache              # noqa: E402
+# RunCache is imported and unused here, so we remove it to fix ruff error
 
 
 class TestDryRunReturnsRunId:
