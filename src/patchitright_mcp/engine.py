@@ -420,7 +420,9 @@ class PatchEngine:
         is_expression: bool = False,
         symbol_start_line: Optional[int] = None,
     ) -> tuple[str, int]:
+        
         """Replace the resolved symbol or body in-place."""
+        replace_content = replace_content.replace("\r\n", "\n").replace("\r", "")
         start_line_idx = start_line - 1
         end_line_idx = end_line - 1
 
@@ -489,7 +491,7 @@ class PatchEngine:
             patched_lines[start_line_idx:end_line_idx + 1] = spliced_lines
             patched_file = "\n".join(patched_lines)
 
-        else:  # "full"
+        else: # "full"
             # Resolve signature indent
             sig_line = self.file_lines[start_line_idx]
             sig_indent = sig_line[:len(sig_line) - len(sig_line.lstrip())]
@@ -514,3 +516,4 @@ class PatchEngine:
             patched_file = patched_file.replace("\n", "\r\n")
 
         return patched_file, 1
+        

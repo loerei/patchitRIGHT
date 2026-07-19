@@ -29,6 +29,9 @@ FUNCTION_LIKE_TYPES = frozenset({
     # Group 2: Python
     "async_function_definition", # Python async def
     "class_definition",          # Python, JS, C++
+    # Group 3: CSS & HTML
+    "rule_set",                  # CSS / SCSS
+    "element",                   # HTML
 })
 
 # File extensions that are JSX/TSX — fallback bracket matcher is explicitly
@@ -66,6 +69,10 @@ EXTENSION_TO_LANGUAGE = {
     ".py": "python",
     ".pyi": "python",
     ".pyw": "python",
+    # Group 3: CSS & HTML
+    ".css": "css",
+    ".scss": "scss",
+    ".html": "html",
 }
 
 
@@ -178,16 +185,22 @@ def get_body_range(
             f"(lines {symbol_start_line}-{symbol_end_line})."
         )
 
+    if language == "html":
+        html_result = _html_tag_match_fallback(source, symbol_start_line, symbol_end_line)
+        if html_result is not None:
+            return html_result
+        raise ValueError(
+            f"Could not determine HTML element boundaries in '{file_path}' "
+            f"(lines {symbol_start_line}-{symbol_end_line})."
+        )
+
     if ext in JSX_EXTENSIONS:
         raise ValueError(
             f"Cannot use bracket-matching fallback for JSX/TSX file '{file_path}'. "
             "Install tree-sitter-language-pack or use start_line/end_line manual scoping."
         )
 
-    try:
-        result = _bracket_match_fallback(source, symbol_start_line, symbol_end_line)
-    except ValueError:
-        raise
+    result = _bracket_match_fallback(source, symbol_start_line, symbol_end_line)
     if result is None:
         raise ValueError(
             f"Could not determine function body boundaries in '{file_path}' "
@@ -292,6 +305,24 @@ def _bytes_to_char_col(line_text: str, byte_col: int) -> int:
     return len(byte_prefix.decode("utf-8"))
 
 
+def _get_node_body(node, language: str):
+    """Retrieve the logical body node of a function-like AST node."""
+    if language == "html" and node.type == "element":
+        # HTML element has a body only if it contains a closing end_tag
+        has_end_tag = any(child.type == "end_tag" for child in node.children)
+        return node if has_end_tag else None
+
+    if language in ("css", "scss") and node.type == "rule_set":
+        # CSS/SCSS block (the portion inside braces) is the body node
+        for child in node.children:
+            if child.type == "block":
+                return child
+        return None
+
+    # Default fallback for JS/TS/Go/Rust/C++/Python
+    return node.child_by_field_name("body")
+
+
 def _try_tree_sitter(
     source: str,
     language: str,
@@ -330,7 +361,7 @@ def _try_tree_sitter(
             n_start = node.start_point[0]
             n_end = node.end_point[0]
             if n_start >= target_start and n_end <= target_end:
-                body = node.child_by_field_name("body")
+                body = _get_node_body(node, language)
                 if body is not None:
                     best = (node, body)
 
@@ -366,7 +397,7 @@ def _try_tree_sitter(
                 n_start = node.start_point[0]
                 n_end = node.end_point[0]
                 if n_start >= target_start and n_end <= target_end:
-                    body = node.child_by_field_name("body")
+                    body = _get_node_body(node, language)
                     if body is None:
                         return True
                     # In C/C++, a function_definition AST node has a body but it might be missing in a prototype.
@@ -381,6 +412,20 @@ def _try_tree_sitter(
         return None
 
     _, body_node = match
+
+    if language == "html" and body_node.type == "element":
+        start_tag = next((c for c in body_node.children if c.type == "start_tag"), None)
+        end_tag = next((c for c in body_node.children if c.type == "end_tag"), None)
+        if start_tag and end_tag:
+            start_row, start_byte_col = start_tag.end_point
+            end_row, end_byte_col = end_tag.start_point
+            return BodyRange(
+                start_line=start_row + 1,
+                start_col=_bytes_to_char_col(lines[start_row], start_byte_col),
+                end_line=end_row + 1,
+                end_col=_bytes_to_char_col(lines[end_row], end_byte_col),
+                is_expression=False,
+            )
 
     if body_node.type == "arrow_expression_clause":
         expr_child = body_node.child_by_field_name("expression")
@@ -648,6 +693,114 @@ def _bracket_match_fallback(
 
             prev_char = c
             i += 1
+
+    return None
+
+
+def _html_tag_match_fallback(
+    source: str,
+    symbol_start_line: int,
+    symbol_end_line: int,
+) -> Optional[BodyRange]:
+    """Find HTML element body boundaries using a state-machine tag matcher."""
+    lines = source.split("\n")
+    start_idx = symbol_start_line - 1
+    end_idx = min(symbol_end_line, len(lines)) - 1
+
+    VOID_ELEMENTS = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr"
+    }
+
+    tag_stack: list[str] = []
+    body_start: Optional[tuple[int, int]] = None
+
+    in_comment = False
+    in_tag = False
+    tag_content: list[str] = []
+    in_quote: Optional[str] = None  # None, "'" or '"'
+    tag_start_line = 0
+    tag_start_col = 0
+
+    for line_idx in range(start_idx, end_idx + 1):
+        line = lines[line_idx]
+        col_idx = 0
+        while col_idx < len(line):
+            # Skip script/style content until we see their closing tag prefix
+            if not in_tag and tag_stack and tag_stack[-1] in ("script", "style"):
+                closing_prefix = f"</{tag_stack[-1]}"
+                if not line[col_idx:].lower().startswith(closing_prefix):
+                    col_idx += 1
+                    continue
+
+            if in_comment:
+                if line[col_idx:].startswith("-->"):
+                    in_comment = False
+                    col_idx += 3
+                else:
+                    col_idx += 1
+                continue
+
+            if in_tag:
+                char = line[col_idx]
+                if in_quote:
+                    if char == in_quote:
+                        in_quote = None
+                    col_idx += 1
+                elif char in ('"', "'"):
+                    in_quote = char
+                    col_idx += 1
+                elif char == ">":
+                    in_tag = False
+                    tag_str = "".join(tag_content).strip()
+                    is_closing = tag_str.startswith("/")
+                    
+                    # Extract the tag name (first word, case-insensitive)
+                    raw_name = tag_str[1:] if is_closing else tag_str
+                    tag_name = raw_name.split()[0].lower() if raw_name.split() else ""
+                    
+                    is_self_closing = tag_str.endswith("/") or tag_name in VOID_ELEMENTS
+                    
+                    if is_closing:
+                        if tag_stack and tag_stack[-1] == tag_name:
+                            tag_stack.pop()
+                            if not tag_stack and body_start is not None:
+                                return BodyRange(
+                                    start_line=body_start[0],
+                                    start_col=body_start[1],
+                                    end_line=tag_start_line,
+                                    end_col=tag_start_col,
+                                    is_expression=False,
+                                )
+                    elif not is_self_closing:
+                        tag_stack.append(tag_name)
+                        if len(tag_stack) == 1:
+                            # Body starts directly after '>'
+                            body_start = (line_idx + 1, col_idx + 1)
+                    else:
+                        # It is self-closing or void, and since tag_stack was empty, this is our targeted outer tag.
+                        raise ValueError(
+                            "Cannot use scope 'body' on a symbol without a body "
+                            "(e.g., abstract method, interface signature, or type declaration)."
+                        )
+                    col_idx += 1
+                else:
+                    tag_content.append(char)
+                    col_idx += 1
+                continue
+
+            # Normal markup
+            if line[col_idx:].startswith("<!--"):
+                in_comment = True
+                col_idx += 4
+            elif line[col_idx] == "<":
+                in_tag = True
+                tag_content = []
+                tag_start_line = line_idx + 1
+                tag_start_col = col_idx
+                col_idx += 1
+            else:
+                col_idx += 1
 
     return None
 
