@@ -29,6 +29,9 @@ FUNCTION_LIKE_TYPES = frozenset({
     # Group 2: Python
     "async_function_definition", # Python async def
     "class_definition",          # Python, JS, C++
+    # Group 3: CSS & HTML
+    "rule_set",                  # CSS / SCSS
+    "element",                   # HTML
 })
 
 # File extensions that are JSX/TSX — fallback bracket matcher is explicitly
@@ -66,6 +69,10 @@ EXTENSION_TO_LANGUAGE = {
     ".py": "python",
     ".pyi": "python",
     ".pyw": "python",
+    # Group 3: CSS & HTML
+    ".css": "css",
+    ".scss": "scss",
+    ".html": "html",
 }
 
 
