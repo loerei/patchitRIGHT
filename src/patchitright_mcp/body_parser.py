@@ -730,7 +730,7 @@ def _html_tag_match_fallback(
         col_idx = 0
         while col_idx < len(line):
             # Skip script/style content until we see their closing tag prefix
-            if tag_stack and tag_stack[-1] in ("script", "style"):
+            if not in_tag and tag_stack and tag_stack[-1] in ("script", "style"):
                 closing_prefix = f"</{tag_stack[-1]}"
                 if not line[col_idx:].lower().startswith(closing_prefix):
                     col_idx += 1
