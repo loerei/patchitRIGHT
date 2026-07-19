@@ -17,6 +17,7 @@ from .patch_file import patch_file, batch_patch_files, run_startup_recovery, app
 server = Server("patchitright-mcp")
 
 STORAGE_PATH_DESC = "Optional custom path to the jCodeMunch SQLite index database."
+DEFAULT_TIMEOUT = 10.0
 
 
 @server.list_tools()
@@ -249,6 +250,12 @@ async def list_tools() -> list[Tool]:
                     "default": False
                 }
 
+    for tool in tools:
+        tool.inputSchema["properties"]["set_timeout"] = {
+            "type": "number",
+            "description": "Optional timeout in seconds to override the default limit. Use -1 to disable the timeout completely."
+        }
+
     return tools
 
 
@@ -259,14 +266,50 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         raise ValueError(f"Unknown tool: {name}")
 
     try:
-        if name == "apply_last_dry_run":
-            return _execute_apply_last_dry_run(arguments)
-        elif name == "batch_patch_files":
-            return _execute_batch_patch_files(arguments)
-        elif name == "write_file":
-            return _execute_write_file(arguments)
+        set_timeout = arguments.get("set_timeout")
+        if set_timeout is not None:
+            timeout_val = float(set_timeout)
         else:
-            return _execute_patch_file(arguments)
+            timeout_val = DEFAULT_TIMEOUT
+    except (ValueError, TypeError):
+        timeout_val = DEFAULT_TIMEOUT
+
+    if timeout_val < 0:
+        timeout_val = None
+
+    if name == "apply_last_dry_run":
+        func = _execute_apply_last_dry_run
+    elif name == "batch_patch_files":
+        func = _execute_batch_patch_files
+    elif name == "write_file":
+        func = _execute_write_file
+    else:
+        func = _execute_patch_file
+
+    try:
+        if timeout_val is not None:
+            return await asyncio.wait_for(
+                asyncio.to_thread(func, arguments),
+                timeout=timeout_val
+            )
+        else:
+            return await asyncio.to_thread(func, arguments)
+    except asyncio.TimeoutError:
+        error_report = {
+            "success": False,
+            "error": f"TimeoutError: Tool execution exceeded the limit of {timeout_val} seconds.",
+            "details": {
+                "tool": name,
+                "target_file": arguments.get("target_file"),
+                "elapsed_seconds": timeout_val,
+                "suggestion": (
+                    "The operation timed out during verification. "
+                    "Consider increasing the timeout limit by adding 'set_timeout': 30 or 'set_timeout': -1 to your tool arguments. "
+                    "If this repeats consider using other patch tools or run scripts, stop and ask your user for permission if needed."
+                )
+            }
+        }
+        return [TextContent(type="text", text=json.dumps(error_report, indent=2))]
     except Exception as e:
         return [TextContent(type="text", text=f"Error executing {name}: {str(e)}")]
 
@@ -383,9 +426,21 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
 
 def main() -> None:
     """Server entry point."""
+    global DEFAULT_TIMEOUT
     parser = argparse.ArgumentParser(description="patchitRIGHT MCP Server")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.parse_args()
+    parser.add_argument("--default-timeout", type=float, default=10.0, help="Default tool execution timeout in seconds (-1 to disable)")
+    args, unknown = parser.parse_known_args()
+
+    DEFAULT_TIMEOUT = args.default_timeout
+
+    import os
+    env_timeout = os.environ.get("PATCHITRIGHT_DEFAULT_TIMEOUT")
+    if env_timeout is not None:
+        try:
+            DEFAULT_TIMEOUT = float(env_timeout)
+        except ValueError:
+            pass
 
     # Trigger transactional auto-recovery of dirty .bak files on startup
     run_startup_recovery(Path.cwd().resolve())
