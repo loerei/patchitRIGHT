@@ -149,6 +149,22 @@ Paths are normalized and checked to ensure no operations escape the active works
 
 ---
 
+## 🧪 Testing & Development
+
+Run tests in parallel using `pytest-xdist`:
+
+```bash
+uv run pytest
+```
+
+When debugging a specific failing test with breakpoints (`breakpoint()`) or verbose logging (`print`), run in single-threaded mode:
+
+```bash
+uv run pytest -n 0
+```
+
+---
+
 ## 📄 License & Terms
 
 * **patchitRIGHT** is distributed under the **MIT License**.

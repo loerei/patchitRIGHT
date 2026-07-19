@@ -303,7 +303,7 @@ class TestErrorCases:
 
     def test_unsupported_extension(self):
         with pytest.raises(ValueError, match="Unsupported file extension"):
-            get_body_range("some code", "test.py", 1, 1)
+            get_body_range("some code", "test.unknown", 1, 1)
 
     def test_abstract_method_raises(self):
         src = "abstract class C {\n  abstract m(): void;\n}"
@@ -368,3 +368,78 @@ class TestErrorCases:
         lines = src.split("\n")
         inner = lines[r.start_line - 1][r.start_col : r.end_col]
         assert inner.strip() == "=> a + b"
+
+
+# ---------------------------------------------------------------------------
+# Group 2 Languages (Python) Tests
+# ---------------------------------------------------------------------------
+
+
+class TestPythonBodyParsing:
+    """Tests for Python symbol_scope body range extraction."""
+
+    def test_python_function(self):
+        src = "def add(a, b):\n    return a + b\n"
+        r = get_body_range(src, "test.py", 1, 2)
+        assert r.is_expression is False
+        lines = src.split("\n")
+        body_slice = lines[r.start_line - 1][r.start_col : r.end_col]
+        assert body_slice.strip() == "return a + b"
+
+    def test_python_async_function(self):
+        src = "async def fetch():\n    val = await get()\n    return val\n"
+        r = get_body_range(src, "test.py", 1, 3)
+        assert r.is_expression is False
+        assert r.start_line == 2
+        assert r.end_line == 3
+
+    def test_python_class_definition(self):
+        src = "class Calc:\n    def add(self, a, b):\n        return a + b\n"
+        r = get_body_range(src, "test.py", 1, 3)
+        assert r.is_expression is False
+        assert r.start_line == 2
+
+    def test_python_decorators(self):
+        src = "@staticmethod\n@dec(a=1)\ndef target():\n    return 42\n"
+        r = get_body_range(src, "test.py", 1, 4)
+        assert r.is_expression is False
+        assert r.start_line == 4
+
+    def test_python_type_hints_with_colons(self):
+        src = 'def process(time_str: str = "12:00", mode: dict = {"a": 1}):\n    return time_str\n'
+        r = get_body_range(src, "test.py", 1, 2)
+        assert r.is_expression is False
+        lines = src.split("\n")
+        body_slice = lines[r.start_line - 1][r.start_col : r.end_col]
+        assert body_slice.strip() == "return time_str"
+
+    def test_python_multiline_docstring(self):
+        src = 'def foo():\n    """\nDocstring line 1\nLine 2\n    """\n    return 42\n'
+        r = get_body_range(src, "test.py", 1, 6)
+        assert r.is_expression is False
+        assert r.start_line == 2
+        assert r.end_line == 6
+
+    def test_python_ast_fallback(self):
+        src = "def fallback_fn():\n    x = 10\n    return x\n"
+        with patch("patchitright_mcp.body_parser._run_tree_sitter_safe", return_value=None):
+            r = get_body_range(src, "test.py", 1, 3)
+            assert r.is_expression is False
+            assert r.start_line == 2
+            assert r.end_line == 3
+
+    def test_python_one_liner(self):
+        src = "def quick(): pass\n"
+        r = get_body_range(src, "test.py", 1, 1)
+        assert r.is_expression is False
+        lines = src.split("\n")
+        body_slice = lines[r.start_line - 1][r.start_col : r.end_col]
+        assert body_slice.strip() == "pass"
+
+    def test_python_eof_without_newline(self):
+        src = "def eof_fn():\n    return 'done'"
+        r = get_body_range(src, "test.py", 1, 2)
+        assert r.is_expression is False
+        assert r.start_line == 2
+        assert r.end_line == 2
+

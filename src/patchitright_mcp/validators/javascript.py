@@ -408,9 +408,9 @@ class JsTsValidator(BaseValidator):
                 timeout=10
             )
             log_step(f"JsTsValidator.lint: check completed with code={process.returncode}")
-            if process.returncode != 0:
-                output = process.stderr or process.stdout
-                warnings = []
+            output = process.stderr or process.stdout
+            warnings = []
+            if output:
                 for line in output.splitlines():
                     # Preserve indentation spaces (which are important for alignment)
                     # but strip trailing spaces
@@ -422,8 +422,8 @@ class JsTsValidator(BaseValidator):
                     # Convert to ASCII-safe representation (preserving normal spaces)
                     line = _clean_biome_output(line)
                     warnings.append(line)
-                log_step(f"JsTsValidator.lint: returning {len(warnings)} warnings")
-                return warnings
+            log_step(f"JsTsValidator.lint: returning {len(warnings)} warnings")
+            return warnings
         except OSError as e:
             log_step(f"JsTsValidator.lint: biome execution failed: {e}")
         finally:
