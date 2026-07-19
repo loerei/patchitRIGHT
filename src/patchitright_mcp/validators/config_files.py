@@ -50,33 +50,7 @@ class JsonValidator(BaseValidator):
         # Reuse Biome command runner from JsTsValidator to lint JSON/JSONC
         from .javascript import JsTsValidator
         js_val = JsTsValidator()
-        biome_cmd = js_val._get_biome_command()
-        if not biome_cmd:
-            return []
-
-        biome_exe, base_args = biome_cmd
-        args = base_args + [f"--stdin-file-path={filename}"]
-
-        try:
-            import subprocess
-            process = subprocess.run(
-                [biome_exe] + args,
-                input=content,
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=10
-            )
-            warnings = []
-            output = process.stdout or process.stderr
-            if output:
-                for line in output.splitlines():
-                    line = line.strip()
-                    if line and ("warning" in line.lower() or "error" in line.lower() or line.startswith("  ")):
-                        warnings.append(line)
-            return warnings
-        except Exception:
-            return []
+        return js_val.lint(content, filename)
 
 
 class TomlValidator(BaseValidator):

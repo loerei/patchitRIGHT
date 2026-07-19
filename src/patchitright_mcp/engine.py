@@ -418,6 +418,7 @@ class PatchEngine:
         end_col: int,          # 0-indexed char offset
         symbol_scope: str,     # "full" or "body"
         is_expression: bool = False,
+        symbol_start_line: Optional[int] = None,
     ) -> tuple[str, int]:
         """Replace the resolved symbol or body in-place."""
         start_line_idx = start_line - 1
@@ -427,7 +428,7 @@ class PatchEngine:
         start_line_idx = max(0, min(start_line_idx, len(self.file_lines) - 1))
         end_line_idx = max(start_line_idx, min(end_line_idx, len(self.file_lines) - 1))
 
-        from .body_parser import detect_indent, normalize_indent, pad_block_newlines
+        from .body_parser import detect_indent, normalize_indent, pad_block_newlines, _infer_indent_unit
 
         if symbol_scope == "body":
             # Extract current body content for indent detection
@@ -443,7 +444,16 @@ class PatchEngine:
             sig_line = self.file_lines[start_line_idx]
             
             # 1. Detect base indent
-            target_indent = detect_indent(body_lines, sig_line, self.file_lines)
+            if self.filename.endswith(".py"):
+                if symbol_start_line and start_line_idx == symbol_start_line - 1:
+                    sig_indent = sig_line[:len(sig_line) - len(sig_line.lstrip())]
+                    indent_unit = _infer_indent_unit(self.file_lines)
+                    target_indent = sig_indent + indent_unit
+                else:
+                    first_body_line = self.file_lines[start_line_idx]
+                    target_indent = first_body_line[:len(first_body_line) - len(first_body_line.lstrip())]
+            else:
+                target_indent = detect_indent(body_lines, sig_line, self.file_lines)
             
             # 2. Re-indent replace_content in isolation
             replace_content, adjusted, delta = normalize_indent(replace_content, target_indent)
@@ -466,6 +476,11 @@ class PatchEngine:
 
             prefix = start_line_text[:start_col]
             suffix = end_line_text[end_col:]
+
+            # Prevent double indentation if replacement starts with target_indent
+            # and prefix is exactly target_indent.
+            if replace_content.startswith(target_indent) and prefix == target_indent:
+                replace_content = replace_content[len(target_indent):]
 
             spliced_str = prefix + replace_content + suffix
             spliced_lines = spliced_str.split("\n")

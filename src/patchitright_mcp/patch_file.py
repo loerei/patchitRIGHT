@@ -358,6 +358,7 @@ def patch_file(  # noqa: C901 # NOSONAR
                             end_col=end_col,
                             symbol_scope=scope,
                             is_expression=is_expr,
+                            symbol_start_line=item["start_line"],
                         )
                     else:
                         sym_boundaries = None
