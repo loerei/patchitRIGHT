@@ -200,10 +200,7 @@ def get_body_range(
             "Install tree-sitter-language-pack or use start_line/end_line manual scoping."
         )
 
-    try:
-        result = _bracket_match_fallback(source, symbol_start_line, symbol_end_line)
-    except ValueError:
-        raise
+    result = _bracket_match_fallback(source, symbol_start_line, symbol_end_line)
     if result is None:
         raise ValueError(
             f"Could not determine function body boundaries in '{file_path}' "
