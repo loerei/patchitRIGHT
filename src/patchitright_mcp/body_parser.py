@@ -299,6 +299,24 @@ def _bytes_to_char_col(line_text: str, byte_col: int) -> int:
     return len(byte_prefix.decode("utf-8"))
 
 
+def _get_node_body(node, language: str):
+    """Retrieve the logical body node of a function-like AST node."""
+    if language == "html" and node.type == "element":
+        # HTML element has a body only if it contains a closing end_tag
+        has_end_tag = any(child.type == "end_tag" for child in node.children)
+        return node if has_end_tag else None
+
+    if language in ("css", "scss") and node.type == "rule_set":
+        # CSS/SCSS block (the portion inside braces) is the body node
+        for child in node.children:
+            if child.type == "block":
+                return child
+        return None
+
+    # Default fallback for JS/TS/Go/Rust/C++/Python
+    return node.child_by_field_name("body")
+
+
 def _try_tree_sitter(
     source: str,
     language: str,
@@ -337,7 +355,7 @@ def _try_tree_sitter(
             n_start = node.start_point[0]
             n_end = node.end_point[0]
             if n_start >= target_start and n_end <= target_end:
-                body = node.child_by_field_name("body")
+                body = _get_node_body(node, language)
                 if body is not None:
                     best = (node, body)
 
@@ -373,7 +391,7 @@ def _try_tree_sitter(
                 n_start = node.start_point[0]
                 n_end = node.end_point[0]
                 if n_start >= target_start and n_end <= target_end:
-                    body = node.child_by_field_name("body")
+                    body = _get_node_body(node, language)
                     if body is None:
                         return True
                     # In C/C++, a function_definition AST node has a body but it might be missing in a prototype.
@@ -388,6 +406,20 @@ def _try_tree_sitter(
         return None
 
     _, body_node = match
+
+    if language == "html" and body_node.type == "element":
+        start_tag = next((c for c in body_node.children if c.type == "start_tag"), None)
+        end_tag = next((c for c in body_node.children if c.type == "end_tag"), None)
+        if start_tag and end_tag:
+            start_row, start_byte_col = start_tag.end_point
+            end_row, end_byte_col = end_tag.start_point
+            return BodyRange(
+                start_line=start_row + 1,
+                start_col=_bytes_to_char_col(lines[start_row], start_byte_col),
+                end_line=end_row + 1,
+                end_col=_bytes_to_char_col(lines[end_row], end_byte_col),
+                is_expression=False,
+            )
 
     if body_node.type == "arrow_expression_clause":
         expr_child = body_node.child_by_field_name("expression")
