@@ -185,6 +185,15 @@ def get_body_range(
             f"(lines {symbol_start_line}-{symbol_end_line})."
         )
 
+    if language == "html":
+        html_result = _html_tag_match_fallback(source, symbol_start_line, symbol_end_line)
+        if html_result is not None:
+            return html_result
+        raise ValueError(
+            f"Could not determine HTML element boundaries in '{file_path}' "
+            f"(lines {symbol_start_line}-{symbol_end_line})."
+        )
+
     if ext in JSX_EXTENSIONS:
         raise ValueError(
             f"Cannot use bracket-matching fallback for JSX/TSX file '{file_path}'. "
@@ -687,6 +696,114 @@ def _bracket_match_fallback(
 
             prev_char = c
             i += 1
+
+    return None
+
+
+def _html_tag_match_fallback(
+    source: str,
+    symbol_start_line: int,
+    symbol_end_line: int,
+) -> Optional[BodyRange]:
+    """Find HTML element body boundaries using a state-machine tag matcher."""
+    lines = source.split("\n")
+    start_idx = symbol_start_line - 1
+    end_idx = min(symbol_end_line, len(lines)) - 1
+
+    VOID_ELEMENTS = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr"
+    }
+
+    tag_stack: list[str] = []
+    body_start: Optional[tuple[int, int]] = None
+
+    in_comment = False
+    in_tag = False
+    tag_content: list[str] = []
+    in_quote: Optional[str] = None  # None, "'" or '"'
+    tag_start_line = 0
+    tag_start_col = 0
+
+    for line_idx in range(start_idx, end_idx + 1):
+        line = lines[line_idx]
+        col_idx = 0
+        while col_idx < len(line):
+            # Skip script/style content until we see their closing tag prefix
+            if tag_stack and tag_stack[-1] in ("script", "style"):
+                closing_prefix = f"</{tag_stack[-1]}"
+                if not line[col_idx:].lower().startswith(closing_prefix):
+                    col_idx += 1
+                    continue
+
+            if in_comment:
+                if line[col_idx:].startswith("-->"):
+                    in_comment = False
+                    col_idx += 3
+                else:
+                    col_idx += 1
+                continue
+
+            if in_tag:
+                char = line[col_idx]
+                if in_quote:
+                    if char == in_quote:
+                        in_quote = None
+                    col_idx += 1
+                elif char in ('"', "'"):
+                    in_quote = char
+                    col_idx += 1
+                elif char == ">":
+                    in_tag = False
+                    tag_str = "".join(tag_content).strip()
+                    is_closing = tag_str.startswith("/")
+                    
+                    # Extract the tag name (first word, case-insensitive)
+                    raw_name = tag_str[1:] if is_closing else tag_str
+                    tag_name = raw_name.split()[0].lower() if raw_name.split() else ""
+                    
+                    is_self_closing = tag_str.endswith("/") or tag_name in VOID_ELEMENTS
+                    
+                    if is_closing:
+                        if tag_stack and tag_stack[-1] == tag_name:
+                            tag_stack.pop()
+                            if not tag_stack and body_start is not None:
+                                return BodyRange(
+                                    start_line=body_start[0],
+                                    start_col=body_start[1],
+                                    end_line=tag_start_line,
+                                    end_col=tag_start_col,
+                                    is_expression=False,
+                                )
+                    elif not is_self_closing:
+                        tag_stack.append(tag_name)
+                        if len(tag_stack) == 1:
+                            # Body starts directly after '>'
+                            body_start = (line_idx + 1, col_idx + 1)
+                    else:
+                        # It is self-closing or void, and since tag_stack was empty, this is our targeted outer tag.
+                        raise ValueError(
+                            "Cannot use scope 'body' on a symbol without a body "
+                            "(e.g., abstract method, interface signature, or type declaration)."
+                        )
+                    col_idx += 1
+                else:
+                    tag_content.append(char)
+                    col_idx += 1
+                continue
+
+            # Normal markup
+            if line[col_idx:].startswith("<!--"):
+                in_comment = True
+                col_idx += 4
+            elif line[col_idx] == "<":
+                in_tag = True
+                tag_content = []
+                tag_start_line = line_idx + 1
+                tag_start_col = col_idx
+                col_idx += 1
+            else:
+                col_idx += 1
 
     return None
 
