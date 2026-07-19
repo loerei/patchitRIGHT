@@ -443,3 +443,118 @@ class TestPythonBodyParsing:
         assert r.start_line == 2
         assert r.end_line == 2
 
+
+# ---------------------------------------------------------------------------
+# Group 3 Languages (CSS, SCSS, HTML) Tests
+# ---------------------------------------------------------------------------
+
+class TestCssHtmlBodyParsing:
+    """Tests for CSS/SCSS and HTML symbol_scope body range extraction."""
+
+    def test_css_rule_set_tree_sitter(self):
+        src = ".btn {\n  color: red;\n  background: blue;\n}\n"
+        r = get_body_range(src, "test.css", 1, 4)
+        assert r.is_expression is False
+        assert r.start_line == 1
+        assert r.end_line == 4
+        # Slice check: after { and before }
+        lines = src.split("\n")
+        inner_first = lines[r.start_line - 1][r.start_col:]
+        inner_last = lines[r.end_line - 1][:r.end_col]
+        assert inner_first.strip() == ""
+        assert inner_last.strip() == ""
+        assert lines[1].strip() == "color: red;"
+
+    def test_css_rule_set_fallback(self):
+        src = ".btn {\n  color: red;\n  background: blue;\n}\n"
+        with patch("patchitright_mcp.body_parser._run_tree_sitter_safe", return_value=None):
+            r = get_body_range(src, "test.css", 1, 4)
+            assert r.is_expression is False
+            assert r.start_line == 1
+            assert r.end_line == 4
+            lines = src.split("\n")
+            assert lines[1].strip() == "color: red;"
+
+    def test_html_element_tree_sitter(self):
+        src = '<div class="test">\n  <p>Hello</p>\n</div>\n'
+        r = get_body_range(src, "test.html", 1, 3)
+        assert r.is_expression is False
+        # Body starts on line 1, end tag is on line 3
+        assert r.start_line == 1
+        assert r.end_line == 3
+        # Check slice of body content
+        lines = src.split("\n")
+        body_text = lines[0][r.start_col:] + "\n" + lines[1] + "\n" + lines[2][:r.end_col]
+        assert body_text.strip() == "<p>Hello</p>"
+
+    def test_html_element_fallback(self):
+        src = '<div class="test">\n  <p>Hello</p>\n</div>\n'
+        with patch("patchitright_mcp.body_parser._run_tree_sitter_safe", return_value=None):
+            r = get_body_range(src, "test.html", 1, 3)
+            assert r.is_expression is False
+            assert r.start_line == 1
+            assert r.end_line == 3
+            lines = src.split("\n")
+            body_text = lines[0][r.start_col:] + "\n" + lines[1] + "\n" + lines[2][:r.end_col]
+            assert body_text.strip() == "<p>Hello</p>"
+
+    def test_html_void_element_raises(self):
+        # Void tag has no body, should raise ValueError
+        src = '<img src="a.png" />'
+        with pytest.raises(ValueError, match="without a body"):
+            get_body_range(src, "test.html", 1, 1)
+
+        with patch("patchitright_mcp.body_parser._run_tree_sitter_safe", return_value=None):
+            with pytest.raises(ValueError, match="without a body"):
+                get_body_range(src, "test.html", 1, 1)
+
+    def test_html_self_closing_raises(self):
+        src = '<div />'
+        with pytest.raises(ValueError, match="without a body"):
+            get_body_range(src, "test.html", 1, 1)
+
+        with patch("patchitright_mcp.body_parser._run_tree_sitter_safe", return_value=None):
+            with pytest.raises(ValueError, match="without a body"):
+                get_body_range(src, "test.html", 1, 1)
+
+    def test_html_fallback_nested(self):
+        src = '<div class="outer">\n  <div class="inner">\n    <p>nested</p>\n  </div>\n</div>'
+        with patch("patchitright_mcp.body_parser._run_tree_sitter_safe", return_value=None):
+            r = get_body_range(src, "test.html", 1, 5)
+            assert r.start_line == 1
+            assert r.end_line == 5
+            lines = src.split("\n")
+            body_text = "\n".join([lines[0][r.start_col:]] + lines[1:4] + [lines[4][:r.end_col]])
+            assert "<div class=\"inner\">" in body_text
+            assert "</div>" in body_text
+
+    def test_html_fallback_quotes_in_attr(self):
+        src = '<div data-val="a > b">\n  <span>ok</span>\n</div>'
+        with patch("patchitright_mcp.body_parser._run_tree_sitter_safe", return_value=None):
+            r = get_body_range(src, "test.html", 1, 3)
+            assert r.start_line == 1
+            assert r.end_line == 3
+            lines = src.split("\n")
+            body_text = "\n".join([lines[0][r.start_col:]] + lines[1:2] + [lines[2][:r.end_col]])
+            assert body_text.strip() == "<span>ok</span>"
+
+    def test_html_fallback_comments(self):
+        src = '<div>\n  <!-- <div> nested dummy comment </div> -->\n  ok\n</div>'
+        with patch("patchitright_mcp.body_parser._run_tree_sitter_safe", return_value=None):
+            r = get_body_range(src, "test.html", 1, 4)
+            assert r.start_line == 1
+            assert r.end_line == 4
+            lines = src.split("\n")
+            body_text = "\n".join([lines[0][r.start_col:]] + lines[1:3] + [lines[3][:r.end_col]])
+            assert "ok" in body_text
+
+    def test_html_fallback_script_style(self):
+        src = '<script>\n  if (a < b && c > d) { console.log("ok"); }\n</script>'
+        with patch("patchitright_mcp.body_parser._run_tree_sitter_safe", return_value=None):
+            r = get_body_range(src, "test.html", 1, 3)
+            assert r.start_line == 1
+            assert r.end_line == 3
+            lines = src.split("\n")
+            body_text = "\n".join([lines[0][r.start_col:]] + lines[1:2] + [lines[2][:r.end_col]])
+            assert "if (a < b" in body_text
+
