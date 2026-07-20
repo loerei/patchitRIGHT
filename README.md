@@ -43,6 +43,13 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
   
   *Note:* The underlying server always accepts `bypass_validation: true` in the API arguments regardless of whether it is exposed in the schema, allowing programmatic override when needed.
 
+### Tool Call Timeout System
+* **`PATCHITRIGHT_DEFAULT_TIMEOUT`** (env variable) / **`--default-timeout`** (CLI flag):
+  Configures the default execution time limit in seconds for all tool calls (default: `10.0`). Set to `-1` to disable the timeout completely.
+* **`set_timeout`** (tool parameter):
+  Available on all tools to override the default timeout limit for a specific execution. Set to `-1` to disable the timeout.
+
+
 ---
 
 ## 🛠️ Provided Tools
@@ -72,6 +79,7 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 | `did_you_mean` | `boolean` | Automatically matches and replaces the closest block of code if similarity is >= 80%. |
 | `dry_run` | `boolean` | Returns a unified git-style diff preview and caches the change (`run_id` expires in 300s). |
 | `allow_overwrite` | `boolean` | Allows overwriting an existing file in `write_file`. Defaults to `false`. |
+| `set_timeout` | `number` | Optional timeout override in seconds. Set to `-1` to disable the timeout completely. |
 
 ---
 
