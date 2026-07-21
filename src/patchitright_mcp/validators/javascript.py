@@ -104,17 +104,17 @@ class JsTsValidator(BaseValidator):
         if pm == "pnpm":
             pnpm = shutil.which("pnpm")
             if pnpm:
-                log_step(f"JsTsValidator: Detected active pnpm project, using pnpm dlx")
+                log_step("JsTsValidator: Detected active pnpm project, using pnpm dlx")
                 return pnpm, ["dlx", "--prefer-offline", self.BIOME_PACKAGE, "check"]
         elif pm == "yarn":
             yarn = shutil.which("yarn")
             if yarn:
-                log_step(f"JsTsValidator: Detected active yarn project, using yarn dlx")
+                log_step("JsTsValidator: Detected active yarn project, using yarn dlx")
                 return yarn, ["dlx", self.BIOME_PACKAGE, "check"]
         elif pm == "npm":
             npx = shutil.which("npx")
             if npx:
-                log_step(f"JsTsValidator: Detected active npm project, using npx")
+                log_step("JsTsValidator: Detected active npm project, using npx")
                 return npx, ["--offline", self.BIOME_PACKAGE, "check"]
 
         # Fallback if no package manager detected or preferred runner not found
@@ -499,13 +499,7 @@ class JsTsValidator(BaseValidator):
                     
                     # Skip package manager/runner logs that are not actual linter warnings
                     lower_line = line.lower().strip()
-                    if (lower_line.startswith("npm error") or 
-                        lower_line.startswith("npm err!") or 
-                        lower_line.startswith("npm warn") or 
-                        lower_line.startswith("pnpm err!") or 
-                        lower_line.startswith("pnpm warn") or 
-                        lower_line.startswith("yarn error") or 
-                        lower_line.startswith("yarn warn")):
+                    if lower_line.startswith(("npm error", "npm err!", "npm warn", "pnpm err!", "pnpm warn", "yarn error", "yarn warn")):
                         continue
 
                     # Clean up the temp filename from warnings
