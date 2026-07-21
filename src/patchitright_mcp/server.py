@@ -238,6 +238,17 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["target_file", "code_content"]
             }
+        ),
+        Tool(
+            name="patchitright_guide",
+            description=(
+                "Return the version-current AGENTS.md / CLAUDE.md policy snippet for patchitright-mcp, "
+                "including best practices, tool descriptions, and size limitations."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
         )
     ]
 
@@ -262,8 +273,14 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Execute the requested tool."""
-    if name not in ("patch_file", "batch_patch_files", "apply_last_dry_run", "write_file"):
+    if name not in ("patch_file", "batch_patch_files", "apply_last_dry_run", "write_file", "patchitright_guide"):
         raise ValueError(f"Unknown tool: {name}")
+
+    if name == "patchitright_guide":
+        return [TextContent(type="text", text=json.dumps({
+            "version": __version__,
+            "content": _generate_patchitright_guide(),
+        }, indent=2))]
 
     try:
         set_timeout = arguments.get("set_timeout")
@@ -422,6 +439,40 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
     )
 
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
+
+
+def _generate_patchitright_guide() -> str:
+    """Return the markdown guide for patchitright-mcp."""
+    return f"""## patchitright-mcp (v{__version__})
+
+AST-bounded safe search-and-replace write companion MCP server.
+
+### Quick start
+1. Edit a function/class body: Call `patch_file` with `symbol_name`, `symbol_scope="body"`, and `replace_content`.
+2. Edit a specific line/block: Call `patch_file` with `search_content` and `replace_content`. Keep it under 50 lines.
+3. Preview changes safely: Always set `dry_run=true` first, then apply the returned `run_id` using `apply_last_dry_run`.
+4. Overwrite/Create files: Call `write_file` with `target_file` and `code_content`.
+
+### All tools
+* **Edits & Writing**: `patch_file`, `write_file`
+* **Transactions & Dry-Runs**: `apply_last_dry_run`, `batch_patch_files`
+* **Self-Guide**: `patchitright_guide`
+
+### Key parameters & advanced features
+* `replacements` (array): Perform multiple non-contiguous edits in a single file in one call. Applied bottom-up to avoid line-drift.
+* `symbol_scope` ("boundary" | "full" | "body"):
+  * "boundary" (default): Search for text within the symbol boundaries.
+  * "full": Replace the entire symbol including signature and decorators.
+  * "body": Replace only the body of the function/class.
+* `did_you_mean` (boolean): Set to true to allow fuzzy matching (>= 80% similarity) if whitespace or minor formatting differences cause exact match to fail.
+* `bypass_validation` (boolean): Bypasses syntax validation/lint checking if it blocks writing valid code.
+* `set_timeout` (number): Customize the execution timeout limit in seconds. Set to -1 to disable timeout.
+
+### Critical constraints & safety rules
+* **Line limits**: DO NOT pass blocks larger than 50 lines into `search_content`/`replace_content` for `patch_file`. Use `symbol_name` or `patch_content` instead.
+* **Self-Modification**: Modifying files inside `src/patchitright_mcp/` will trigger dev reloads. Always run with `dry_run=true` first.
+* **Path format**: Always use absolute paths or relative paths with forward slashes (/) to avoid JSON escaping issues.
+"""
 
 
 def main() -> None:

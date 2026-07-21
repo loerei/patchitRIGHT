@@ -41,3 +41,8 @@ This project is indexed by GitNexus as **patchitRIGHT** (1055 symbols, 1843 rela
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## Rules for Patching & Self-Modification
+
+- **MUST call `patchitright_guide` first** before making any file modifications to dynamically retrieve latest limits, formatting constraints, and safety guidelines.
+

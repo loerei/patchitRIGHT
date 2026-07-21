@@ -3,3 +3,5 @@ nukesite/
 .venv/
 __pycache__/
 .pytest_cache/
+*.log
+mcp_debug.log
