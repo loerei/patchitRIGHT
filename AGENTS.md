@@ -44,5 +44,7 @@ This project is indexed by GitNexus as **patchitRIGHT** (1055 symbols, 1843 rela
 
 ## Rules for Patching & Self-Modification
 
+- **MUST call `patchitright_guide` first** before making any file modifications to dynamically retrieve latest limits, formatting constraints, and safety guidelines.
 - **DO NOT** pass large multi-line blocks of code (over 50 lines) into `search_content`/`replace_content` for `patch_file`. Instead, always scope the edit using the `symbol_name` parameter (targeting classes or functions) to prevent indentation mismatch and token bloat.
 - **Use Caution on Self-Modification**: Sourcing edits to the MCP server's own codebase (`src/patchitright_mcp/`) will trigger dev reloads. Proactively use `dry_run` first to preview the changes.
+

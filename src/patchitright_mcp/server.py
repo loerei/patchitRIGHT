@@ -238,6 +238,17 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["target_file", "code_content"]
             }
+        ),
+        Tool(
+            name="patchitright_guide",
+            description=(
+                "Return the version-current AGENTS.md / CLAUDE.md policy snippet for patchitright-mcp "
+                "— including best practices, tool descriptions, and size limitations."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
         )
     ]
 
@@ -262,8 +273,14 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Execute the requested tool."""
-    if name not in ("patch_file", "batch_patch_files", "apply_last_dry_run", "write_file"):
+    if name not in ("patch_file", "batch_patch_files", "apply_last_dry_run", "write_file", "patchitright_guide"):
         raise ValueError(f"Unknown tool: {name}")
+
+    if name == "patchitright_guide":
+        return [TextContent(type="text", text=json.dumps({
+            "version": __version__,
+            "content": _generate_patchitright_guide(),
+        }, indent=2))]
 
     try:
         set_timeout = arguments.get("set_timeout")
@@ -422,6 +439,26 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
     )
 
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
+
+
+def _generate_patchitright_guide() -> str:
+    """Return the markdown guide for patchitright-mcp."""
+    return """## patchitright-mcp
+
+AST-bounded safe search-and-replace write companion MCP server.
+
+### Quick start
+1. `patch_file` — Edit a file by replacing an exact text block (`search_content`/`replace_content`), applying a unified diff (`patch_content`), or targeting a specific AST symbol (`symbol_name`).
+2. `batch_patch_files` — Apply unified diffs to multiple files atomically. If one fails, none are applied.
+3. `write_file` — Create a new file or fully overwrite an existing file (runs syntax validation and linting).
+4. `apply_last_dry_run` — Apply the cached patch from a previous `dry_run=true` call using the returned `run_id`.
+
+### Critical rules & constraints
+* **Strict length limits**: DO NOT pass large blocks of code (over 50 lines) into `search_content`/`replace_content` for `patch_file`.
+* **Prefer AST boundaries**: Use `symbol_name` with `symbol_scope` (`"boundary"`, `"full"`, or `"body"`) to target class/function boundaries for safer, faster edits with less token overhead and to prevent indentation mismatch.
+* **Self-Modification Warning**: Modifying files inside the MCP server's own codebase (`src/patchitright_mcp/`) will trigger dev reloads. Proactively run with `dry_run=True` to inspect changes first.
+* **Path formats**: Always use absolute paths or paths relative to the active workspace. Forward slashes (`/`) are recommended to avoid JSON escaping issues.
+"""
 
 
 def main() -> None:
