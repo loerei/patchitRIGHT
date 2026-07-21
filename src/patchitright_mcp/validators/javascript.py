@@ -105,7 +105,7 @@ class JsTsValidator(BaseValidator):
             pnpm = shutil.which("pnpm")
             if pnpm:
                 log_step("JsTsValidator: Detected active pnpm project, using pnpm dlx")
-                return pnpm, ["dlx", "--prefer-offline", self.BIOME_PACKAGE, "check"]
+                return pnpm, ["dlx", self.BIOME_PACKAGE, "check"]
         elif pm == "yarn":
             yarn = shutil.which("yarn")
             if yarn:
@@ -129,7 +129,7 @@ class JsTsValidator(BaseValidator):
         pnpm = shutil.which("pnpm")
         if pnpm:
             log_step(f"JsTsValidator: Falling back to pnpm dlx: {pnpm}")
-            return pnpm, ["dlx", "--prefer-offline", self.BIOME_PACKAGE, "check"]
+            return pnpm, ["dlx", self.BIOME_PACKAGE, "check"]
 
         log_step("JsTsValidator: No biome runner found")
         return None
