@@ -8,6 +8,10 @@ from .base import BaseValidator
 from .errors import SyntaxValidationError
 from ..utils_log import log_step
 
+class BiomeRunnerError(Exception):
+    """Exception raised when Biome fails to run due to launcher, installation, or cache errors."""
+    pass
+
 def _clean_biome_output(text: str) -> str:
     replacements = {
         "│": "|",
@@ -31,7 +35,46 @@ class JsTsValidator(BaseValidator):
 
     BIOME_PACKAGE = "@biomejs/biome"
 
-    def _get_biome_command(self) -> tuple[str, list[str]] | None:
+    def _detect_package_manager(self, filename: str) -> str | None:
+        # Find closest project root by walking up from the target file
+        target_dir = Path(filename).parent if filename else Path.cwd()
+        project_root = Path.cwd()
+        for p in [target_dir] + list(target_dir.parents):
+            if (p / "package.json").exists() or (p / "node_modules").exists():
+                project_root = p
+                break
+
+        # 1. Check active node_modules structure
+        node_modules = project_root / "node_modules"
+        if node_modules.exists():
+            if (node_modules / ".pnpm").exists():
+                return "pnpm"
+            if (project_root / "package-lock.json").exists():
+                return "npm"
+            if (project_root / "yarn.lock").exists():
+                return "yarn"
+
+        # 2. Check lockfile modification times (mtime) if node_modules is missing/empty
+        pnpm_lock = project_root / "pnpm-lock.yaml"
+        npm_lock = project_root / "package-lock.json"
+        yarn_lock = project_root / "yarn.lock"
+
+        lockfiles = []
+        if pnpm_lock.exists():
+            lockfiles.append(("pnpm", pnpm_lock.stat().st_mtime))
+        if npm_lock.exists():
+            lockfiles.append(("npm", npm_lock.stat().st_mtime))
+        if yarn_lock.exists():
+            lockfiles.append(("yarn", yarn_lock.stat().st_mtime))
+
+        if lockfiles:
+            # Sort by modification time descending (newest first)
+            lockfiles.sort(key=lambda x: x[1], reverse=True)
+            return lockfiles[0][0]
+
+        return None
+
+    def _get_biome_command(self, filename: str = "") -> tuple[str, list[str]] | None:
         log_step("JsTsValidator: Checking for biome...")
         # Check standard PATH
         exe = shutil.which("biome")
@@ -39,17 +82,42 @@ class JsTsValidator(BaseValidator):
             log_step(f"JsTsValidator: Found biome globally: {exe}")
             return exe, ["check"]
         
-        # Check local node_modules
+        # Check local node_modules relative to the project root
+        target_dir = Path(filename).parent if filename else Path.cwd()
+        project_root = Path.cwd()
+        for p in [target_dir] + list(target_dir.parents):
+            if (p / "package.json").exists() or (p / "node_modules").exists():
+                project_root = p
+                break
+
         local_paths = [
-            Path.cwd() / "node_modules" / ".bin" / "biome",
-            Path.cwd() / "node_modules" / ".bin" / "biome.cmd"
+            project_root / "node_modules" / ".bin" / "biome",
+            project_root / "node_modules" / ".bin" / "biome.cmd"
         ]
         for p in local_paths:
             if p.exists():
                 log_step(f"JsTsValidator: Found biome locally: {p}")
                 return str(p), ["check"]
 
-        # Check package runners globally/locally without requiring package.json
+        # Check package runners globally/locally using smart detection
+        pm = self._detect_package_manager(filename)
+        if pm == "pnpm":
+            pnpm = shutil.which("pnpm")
+            if pnpm:
+                log_step(f"JsTsValidator: Detected active pnpm project, using pnpm dlx")
+                return pnpm, ["dlx", "--prefer-offline", self.BIOME_PACKAGE, "check"]
+        elif pm == "yarn":
+            yarn = shutil.which("yarn")
+            if yarn:
+                log_step(f"JsTsValidator: Detected active yarn project, using yarn dlx")
+                return yarn, ["dlx", self.BIOME_PACKAGE, "check"]
+        elif pm == "npm":
+            npx = shutil.which("npx")
+            if npx:
+                log_step(f"JsTsValidator: Detected active npm project, using npx")
+                return npx, ["--offline", self.BIOME_PACKAGE, "check"]
+
+        # Fallback if no package manager detected or preferred runner not found
         npx = shutil.which("npx")
         if npx:
             log_step(f"JsTsValidator: Falling back to npx: {npx}")
@@ -61,7 +129,7 @@ class JsTsValidator(BaseValidator):
         pnpm = shutil.which("pnpm")
         if pnpm:
             log_step(f"JsTsValidator: Falling back to pnpm dlx: {pnpm}")
-            return pnpm, ["dlx", self.BIOME_PACKAGE, "check"]
+            return pnpm, ["dlx", "--prefer-offline", self.BIOME_PACKAGE, "check"]
 
         log_step("JsTsValidator: No biome runner found")
         return None
@@ -277,10 +345,14 @@ class JsTsValidator(BaseValidator):
                 if err:
                     log_step(f"JsTsValidator.validate: raising SyntaxValidationError for line={err.line} col={err.column}")
                     raise err
+                else:
+                    # Non-zero exit code but no syntax error parsed -> launcher / package runner error
+                    raise BiomeRunnerError("Biome failed to run (non-zero exit code, no syntax errors parsed)")
         except SyntaxValidationError:
             raise
         except OSError as e:
             log_step(f"JsTsValidator.validate: biome execution failed: {e}")
+            raise BiomeRunnerError(f"Biome execution failed: {e}") from e
         finally:
             self._cleanup_temp_path(temp_path)
         log_step("JsTsValidator.validate: Biome check finished successfully")
@@ -299,6 +371,7 @@ class JsTsValidator(BaseValidator):
                 [node_exe, "--check"],
                 input=original_content,
                 text=True,
+                encoding="utf-8",
                 capture_output=True,
                 check=False,
                 timeout=10
@@ -311,6 +384,7 @@ class JsTsValidator(BaseValidator):
                 [node_exe, "--check"],
                 input=content,
                 text=True,
+                encoding="utf-8",
                 capture_output=True,
                 check=False,
                 timeout=10
@@ -373,18 +447,23 @@ class JsTsValidator(BaseValidator):
 
     def validate(self, content: str, filename: str, original_content: str = "") -> None:
         log_step(f"JsTsValidator.validate: starting for {filename}...")
-        biome_cmd = self._get_biome_command()
+        biome_cmd = self._get_biome_command(filename)
         if biome_cmd:
-            self._validate_with_biome(biome_cmd, content, filename, original_content)
+            try:
+                self._validate_with_biome(biome_cmd, content, filename, original_content)
+                return
+            except BiomeRunnerError as e:
+                log_step(f"JsTsValidator.validate: Biome runner failed: {e}. Falling back to node/tsc check...")
+        
+        # Fallback to node or tsc
+        if filename.endswith((".ts", ".tsx")):
+            self._validate_with_tsc(content, filename, original_content)
         else:
-            if filename.endswith((".ts", ".tsx")):
-                self._validate_with_tsc(content, filename, original_content)
-            else:
-                self._validate_with_node(content, filename, original_content)
+            self._validate_with_node(content, filename, original_content)
 
     def lint(self, content: str, filename: str) -> list[str]:
         log_step(f"JsTsValidator.lint: starting for {filename}...")
-        biome_cmd = self._get_biome_command()
+        biome_cmd = self._get_biome_command(filename)
         if not biome_cmd:
             log_step("JsTsValidator.lint: biome not found, skipping lint")
             return []
@@ -417,6 +496,18 @@ class JsTsValidator(BaseValidator):
                     line = line.rstrip()
                     if not line.strip() or "\u2501\u2501" in line or "Found" in line or "Checked" in line or "emitted" in line:
                         continue
+                    
+                    # Skip package manager/runner logs that are not actual linter warnings
+                    lower_line = line.lower().strip()
+                    if (lower_line.startswith("npm error") or 
+                        lower_line.startswith("npm err!") or 
+                        lower_line.startswith("npm warn") or 
+                        lower_line.startswith("pnpm err!") or 
+                        lower_line.startswith("pnpm warn") or 
+                        lower_line.startswith("yarn error") or 
+                        lower_line.startswith("yarn warn")):
+                        continue
+
                     # Clean up the temp filename from warnings
                     line = line.replace(temp_path.name, Path(filename).name)
                     # Convert to ASCII-safe representation (preserving normal spaces)

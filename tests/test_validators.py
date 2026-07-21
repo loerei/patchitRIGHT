@@ -217,3 +217,61 @@ def test_js_ts_validator_real(tmp_path, monkeypatch):
         assert res["column"] in (7, 9)
         assert f.read_text() == "const x: number = 1;\n"
 
+
+def test_js_ts_validator_detect_package_manager(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    val = JsTsValidator()
+
+    # Case 1: node_modules/.pnpm exists
+    (tmp_path / "node_modules" / ".pnpm").mkdir(parents=True, exist_ok=True)
+    assert val._detect_package_manager(str(tmp_path / "app.js")) == "pnpm"
+
+    # Clean up node_modules
+    import shutil as local_shutil
+    local_shutil.rmtree(tmp_path / "node_modules")
+
+    # Case 2: node_modules exists, package-lock.json exists
+    (tmp_path / "node_modules").mkdir(exist_ok=True)
+    (tmp_path / "package-lock.json").write_text("")
+    assert val._detect_package_manager(str(tmp_path / "app.js")) == "npm"
+
+    # Case 3: node_modules exists, yarn.lock exists
+    (tmp_path / "package-lock.json").unlink()
+    (tmp_path / "yarn.lock").write_text("")
+    assert val._detect_package_manager(str(tmp_path / "app.js")) == "yarn"
+
+    # Case 4: No node_modules, multiple lockfiles, mtime comparison
+    local_shutil.rmtree(tmp_path / "node_modules")
+    (tmp_path / "pnpm-lock.yaml").write_text("")
+    # Set mtimes: pnpm-lock.yaml is newest
+    import os
+    os.utime(tmp_path / "pnpm-lock.yaml", (1000, 2000))
+    os.utime(tmp_path / "yarn.lock", (1000, 1000))
+    assert val._detect_package_manager(str(tmp_path / "app.js")) == "pnpm"
+
+    # Set yarn.lock to be newest
+    os.utime(tmp_path / "yarn.lock", (1000, 3000))
+    assert val._detect_package_manager(str(tmp_path / "app.js")) == "yarn"
+
+
+def test_js_ts_validator_lint_warning_filtering():
+    val = JsTsValidator()
+    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
+        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/biome" if cmd == "biome" else None
+        
+        # Simulating stderr containing package manager errors mixed with a biome warning
+        npm_output = (
+            "npm error code ENOTCACHED\n"
+            "npm error request failed\n"
+            "app.js:1:1 lint/suspicious/noDebugger  ═════════════════════════════════════════════════\n"
+            "  × Don't use debugger.\n"
+        )
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr=npm_output)
+        
+        warnings = val.lint("debugger;", "app.js")
+        
+        # Verify that npm error logs are filtered out, and only linter warnings remain
+        assert len(warnings) > 0
+        assert not any("npm error" in w for w in warnings)
+        assert any("noDebugger" in w for w in warnings) or any("Don't use debugger" in w for w in warnings)
+
