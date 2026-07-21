@@ -242,8 +242,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="patchitright_guide",
             description=(
-                "Return the version-current AGENTS.md / CLAUDE.md policy snippet for patchitright-mcp "
-                "— including best practices, tool descriptions, and size limitations."
+                "Return the version-current AGENTS.md / CLAUDE.md policy snippet for patchitright-mcp, "
+                "including best practices, tool descriptions, and size limitations."
             ),
             inputSchema={
                 "type": "object",
@@ -443,21 +443,35 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
 
 def _generate_patchitright_guide() -> str:
     """Return the markdown guide for patchitright-mcp."""
-    return """## patchitright-mcp
+    return f"""## patchitright-mcp (v{__version__})
 
 AST-bounded safe search-and-replace write companion MCP server.
 
 ### Quick start
-1. `patch_file` — Edit a file by replacing an exact text block (`search_content`/`replace_content`), applying a unified diff (`patch_content`), or targeting a specific AST symbol (`symbol_name`).
-2. `batch_patch_files` — Apply unified diffs to multiple files atomically. If one fails, none are applied.
-3. `write_file` — Create a new file or fully overwrite an existing file (runs syntax validation and linting).
-4. `apply_last_dry_run` — Apply the cached patch from a previous `dry_run=true` call using the returned `run_id`.
+1. Edit a function/class body: Call `patch_file` with `symbol_name`, `symbol_scope="body"`, and `replace_content`.
+2. Edit a specific line/block: Call `patch_file` with `search_content` and `replace_content`. Keep it under 50 lines.
+3. Preview changes safely: Always set `dry_run=true` first, then apply the returned `run_id` using `apply_last_dry_run`.
+4. Overwrite/Create files: Call `write_file` with `target_file` and `code_content`.
 
-### Critical rules & constraints
-* **Strict length limits**: DO NOT pass large blocks of code (over 50 lines) into `search_content`/`replace_content` for `patch_file`.
-* **Prefer AST boundaries**: Use `symbol_name` with `symbol_scope` (`"boundary"`, `"full"`, or `"body"`) to target class/function boundaries for safer, faster edits with less token overhead and to prevent indentation mismatch.
-* **Self-Modification Warning**: Modifying files inside the MCP server's own codebase (`src/patchitright_mcp/`) will trigger dev reloads. Proactively run with `dry_run=True` to inspect changes first.
-* **Path formats**: Always use absolute paths or paths relative to the active workspace. Forward slashes (`/`) are recommended to avoid JSON escaping issues.
+### All tools
+* **Edits & Writing**: `patch_file`, `write_file`
+* **Transactions & Dry-Runs**: `apply_last_dry_run`, `batch_patch_files`
+* **Self-Guide**: `patchitright_guide`
+
+### Key parameters & advanced features
+* `replacements` (array): Perform multiple non-contiguous edits in a single file in one call. Applied bottom-up to avoid line-drift.
+* `symbol_scope` ("boundary" | "full" | "body"):
+  * "boundary" (default): Search for text within the symbol boundaries.
+  * "full": Replace the entire symbol including signature and decorators.
+  * "body": Replace only the body of the function/class.
+* `did_you_mean` (boolean): Set to true to allow fuzzy matching (>= 80% similarity) if whitespace or minor formatting differences cause exact match to fail.
+* `bypass_validation` (boolean): Bypasses syntax validation/lint checking if it blocks writing valid code.
+* `set_timeout` (number): Customize the execution timeout limit in seconds. Set to -1 to disable timeout.
+
+### Critical constraints & safety rules
+* **Line limits**: DO NOT pass blocks larger than 50 lines into `search_content`/`replace_content` for `patch_file`. Use `symbol_name` or `patch_content` instead.
+* **Self-Modification**: Modifying files inside `src/patchitright_mcp/` will trigger dev reloads. Always run with `dry_run=true` first.
+* **Path format**: Always use absolute paths or relative paths with forward slashes (/) to avoid JSON escaping issues.
 """
 
 
