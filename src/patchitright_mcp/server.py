@@ -243,11 +243,22 @@ async def list_tools() -> list[Tool]:
             name="patchitright_guide",
             description=(
                 "Return the version-current AGENTS.md / CLAUDE.md policy snippet for patchitright-mcp, "
-                "including best practices, tool descriptions, and size limitations."
+                "including best practices, tool descriptions, and size limitations. "
+                "Specify file_type list to get target language clean-code style rules."
             ),
             inputSchema={
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "file_type": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["general", "js_ts", "html_css", "python"]
+                        },
+                        "description": "Optional list of file/language types to retrieve clean-code style rules.",
+                        "default": ["general"]
+                    }
+                }
             }
         )
     ]
@@ -277,9 +288,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         raise ValueError(f"Unknown tool: {name}")
 
     if name == "patchitright_guide":
+        file_type = arguments.get("file_type")
+        if not isinstance(file_type, list):
+            file_type = [file_type] if file_type else ["general"]
         return [TextContent(type="text", text=json.dumps({
             "version": __version__,
-            "content": _generate_patchitright_guide(),
+            "content": _generate_patchitright_guide(file_type),
         }, indent=2))]
 
     try:
@@ -441,9 +455,9 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
 
 
-def _generate_patchitright_guide() -> str:
+def _generate_patchitright_guide(file_type: str | list[str] = "general") -> str:
     """Return the markdown guide for patchitright-mcp."""
-    return f"""## patchitright-mcp (v{__version__})
+    base_guide = f"""## patchitright-mcp (v{__version__})
 
 AST-bounded safe search-and-replace write companion MCP server.
 
@@ -473,6 +487,39 @@ AST-bounded safe search-and-replace write companion MCP server.
 * **Self-Modification**: Modifying files inside `src/patchitright_mcp/` will trigger dev reloads. Always run with `dry_run=true` first.
 * **Path format**: Always use absolute paths or relative paths with forward slashes (/) to avoid JSON escaping issues.
 """
+
+    file_types = file_type if isinstance(file_type, list) else [file_type]
+
+    for ft in file_types:
+        if ft == "js_ts":
+            base_guide += """
+### JavaScript / TypeScript Clean-Code Guidelines
+- **Native Imports**: MUST prefix built-in Node modules with `node:` (e.g., `node:fs`).
+- **Null Safety**: MUST USE optional chaining (`item?.id`) over logical AND (`item && item.id`).
+- **Equality**: MUST USE strict equality (`===` / `!==`). NEVER use loose equality (`==` / `!=`).
+- **Lookups**: MUST USE `Set.has()` over `Array.includes()` for searching large collections.
+- **Types**: NEVER use `any` in TypeScript unless explicitly migrating legacy code. MUST define interfaces/types.
+- **Dead Code**: NEVER delete unused functions/methods without running impact analysis (`gitnexus_impact` or `find_references`). Dynamic callers (e.g., IPC events) may break.
+"""
+        elif ft == "html_css":
+            base_guide += """
+### HTML / CSS Accessibility & Standards Guidelines
+- **A11y Labels**: MUST link every `<label>` to its input via matching `for` and `id` attributes.
+- **A11y Media**: MUST include meaningful `alt` attributes on all `<img>` tags.
+- **Semantic Tags**: NEVER use empty heading tags (e.g., `<h2></h2>`) for spacing.
+- **Buttons**: MUST explicitly define `type="button"`, `type="submit"`, or `type="reset"` on `<button>` elements.
+- **Word Break**: NEVER use deprecated `word-break: break-word`. MUST USE `overflow-wrap: break-word`.
+"""
+        elif ft == "python":
+            base_guide += """
+### Python Security Guidelines
+- **File Handling**: MUST USE context managers (`with open(...) as f:`) for file operations. NEVER leave files manually unclosed.
+- **Default Args**: NEVER use mutable default arguments (e.g., `def func(items=[])`). MUST USE `None` and initialize inside the function (`items = items or []`).
+- **None Checks**: MUST USE `is` / `is not` when checking against `None` (e.g., `if x is None:`). NEVER use `== None`.
+- **Path Security**: MUST validate user-controlled paths against the expected working directory before opening/writing to prevent directory traversal.
+"""
+
+    return base_guide
 
 
 def main() -> None:
