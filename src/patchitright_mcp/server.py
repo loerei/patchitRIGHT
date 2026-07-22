@@ -464,7 +464,7 @@ AST-bounded safe search-and-replace write companion MCP server.
 ### Quick start
 1. Edit a function/class body: Call `patch_file` with `symbol_name`, `symbol_scope="body"`, and `replace_content`.
 2. Edit a specific line/block: Call `patch_file` with `search_content` and `replace_content`. Keep it under 50 lines.
-3. Preview changes safely: Always set `dry_run=true` first, then apply the returned `run_id` using `apply_last_dry_run`.
+3. Direct patch (Default): Omit `dry_run` to apply patches directly. Use `dry_run=true` ONLY when modifying MCP server internal code (`src/patchitright_mcp/`), live-reloading apps, or when explicitly requested by the user.
 4. Overwrite/Create files: Call `write_file` with `target_file` and `code_content`.
 
 ### All tools
