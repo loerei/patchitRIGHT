@@ -56,10 +56,10 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 
 | Tool | Core Functionality | Key Inputs |
 | :--- | :--- | :--- |
-| `patch_file` | Performs surgical code replacement on a single target file. | `target_file`, `search_content`/`replace_content` OR `patch_content` OR `replacements` |
+| `patch_file` | Performs surgical code replacement on a single target file (direct patch by default). | `target_file`, `search_content`/`replace_content` OR `patch_content` OR `replacements` |
 | `batch_patch_files` | Performs an atomic, transactional refactoring operation across multiple target files. | `patches` (array of patch objects containing target_file and patch_content) |
 | `write_file` | Create a new file or fully overwrite an existing file with syntax validation. | `target_file`, `code_content`, `allow_overwrite` |
-| `apply_last_dry_run` | Applies a previously cached dry-run patch. | `run_id` (a cached run ID valid for 300 seconds) |
+| `apply_last_dry_run` | *(Optional / Advanced)* Applies a previously cached dry-run patch. | `run_id` (a cached run ID valid for 300 seconds) |
 
 ---
 
@@ -77,7 +77,7 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 | `symbol_scope` | `string` | Scopes the mutation style of the target symbol. Supports: `"boundary"` (default: classic search-and-replace), `"full"` (replaces the entire function/class signature + body), or `"body"` (replaces *only* the inner content between `{` and `}`). |
 | `allow_multiple` | `boolean` | Replaces all occurrences of the search content within the scope. Defaults to `false`. |
 | `did_you_mean` | `boolean` | Automatically matches and replaces the closest block of code if similarity is >= 80%. |
-| `dry_run` | `boolean` | Returns a unified git-style diff preview and caches the change (`run_id` expires in 300s). |
+| `dry_run` | `boolean` | Optional preview flag (Default: `false` for direct patches). Set to `true` to preview diffs without writing to disk or during self-modification. |
 | `allow_overwrite` | `boolean` | Allows overwriting an existing file in `write_file`. Defaults to `false`. |
 | `set_timeout` | `number` | Optional timeout override in seconds. Set to `-1` to disable the timeout completely. |
 
