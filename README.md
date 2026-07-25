@@ -68,8 +68,8 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `target_file` | `string` | Path to the target file to modify. Contains path traversal guards. |
-| `search_content` | `string` | Exact code block to find. Block sizes > 50 lines are discouraged (use `symbol_name` instead). |
-| `replace_content` | `string` | The replacement code block. |
+- `search_content` *(string)*: Exact string block to find. Keep blocks focused on minimal unique surrounding context.
+- `replace_content` *(string)*: Replacement text.
 | `patch_content` | `string` | Strict Unified Diff string to apply (`Fuzz = 0`). |
 | `replacements` | `array` | List of replacement objects applied bottom-up to prevent line-drift. |
 | `symbol_name` | `string` | Scopes search matching to a specific class/function AST boundary using jCodeMunch. |

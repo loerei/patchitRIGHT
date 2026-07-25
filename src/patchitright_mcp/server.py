@@ -32,8 +32,8 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Edit a file by replacing an exact text block (search_content/replace_content) "
                 "or applying a unified diff (patch_content). Optionally scope to a line range or AST symbol. "
-                "CRITICAL: Do not pass large blocks of code (over 50 lines) into search_content/replace_content. "
-                "Instead, use 'symbol_name' to target class/function boundaries for safer, faster edits with less token overhead."
+                "Keep search_content focused on the minimal unique surrounding context required for matching. "
+                "For editing multiple non-contiguous blocks in a single file, use the 'replacements' array in one call."
             ),
             inputSchema={
                 "type": "object",
@@ -44,11 +44,11 @@ async def list_tools() -> list[Tool]:
                     },
                     "search_content": {
                         "type": "string",
-                        "description": "The exact string block to search for. Must match uniquely within the scope unless allow_multiple is True. Avoid passing blocks larger than 50 lines; use 'symbol_name' instead."
+                        "description": "The exact string block to search for. Must match uniquely within the scope unless allow_multiple is True. Keep snippets focused on minimal unique context."
                     },
                     "replace_content": {
                         "type": "string",
-                        "description": "The string block to replace the search content with. Avoid passing blocks larger than 50 lines; use 'symbol_name' instead."
+                        "description": "The string block to replace the search content with."
                     },
                     "patch_content": {
                         "type": "string",
@@ -463,7 +463,7 @@ AST-bounded safe search-and-replace write companion MCP server.
 
 ### Quick start
 1. Edit a function/class body: Call `patch_file` with `symbol_name`, `symbol_scope="body"`, and `replace_content`.
-2. Edit a specific line/block: Call `patch_file` with `search_content` and `replace_content`. Keep it under 50 lines.
+2. Edit a specific line/block: Call `patch_file` with focused `search_content` and `replace_content`. For multiple non-contiguous edits in a single file, pass a list of chunks into `replacements` in a single call.
 3. Direct patch (Default): Omit `dry_run` to apply patches directly. Use `dry_run=true` ONLY when modifying MCP server internal code (`src/patchitright_mcp/`), live-reloading apps, or when explicitly requested by the user.
 4. Overwrite/Create files: Call `write_file` with `target_file` and `code_content`.
 
@@ -483,7 +483,7 @@ AST-bounded safe search-and-replace write companion MCP server.
 * `set_timeout` (number): Customize the execution timeout limit in seconds. Set to -1 to disable timeout.
 
 ### Critical constraints & safety rules
-* **Line limits**: DO NOT pass blocks larger than 50 lines into `search_content`/`replace_content` for `patch_file`. Use `symbol_name` or `patch_content` instead.
+* **Surgical precision**: Keep `search_content` snippets focused on the minimum necessary surrounding code for a unique match. PREFER using `replacements` for editing multiple separate blocks in a single file in one call.
 * **Self-Modification**: Modifying files inside `src/patchitright_mcp/` will trigger dev reloads. Always run with `dry_run=true` first.
 * **Path format**: Always use absolute paths or relative paths with forward slashes (/) to avoid JSON escaping issues.
 """
