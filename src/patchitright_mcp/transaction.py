@@ -8,6 +8,7 @@ class FileTransaction:
     """Manages transactional backup, rollback, and startup recovery of files."""
 
     BACKUP_DIR = ".patchitRIGHT"
+    MISSING_MARKER_SUFFIX = ".missing"
 
     def __init__(self, workspace_root: Path):
         self.workspace_root = workspace_root.resolve()
@@ -61,7 +62,7 @@ class FileTransaction:
         os.makedirs(self.backup_root, exist_ok=True)
         for _, original_bytes, _, backup_path in self._backups:
             if original_bytes is None:
-                marker_path = Path(str(backup_path) + ".missing")
+                marker_path = Path(str(backup_path) + self.MISSING_MARKER_SUFFIX)
                 os.makedirs(marker_path.parent, exist_ok=True)
                 marker_path.write_bytes(b"")
             else:
@@ -165,9 +166,9 @@ class FileTransaction:
         for root, _, files in os.walk(rel_root):
             for file in files:
                 bak_path = Path(root) / file
-                if file.endswith(".missing"):
+                if file.endswith(cls.MISSING_MARKER_SUFFIX):
                     rel_file_path = bak_path.relative_to(rel_root)
-                    str_rel = str(rel_file_path)[:-8]
+                    str_rel = str(rel_file_path)[:-len(cls.MISSING_MARKER_SUFFIX)]
                     target_path = workspace_root / Path(str_rel)
                     try:
                         target_path.unlink(missing_ok=True)
@@ -185,9 +186,9 @@ class FileTransaction:
         for root, _, files in os.walk(abs_root):
             for file in files:
                 bak_path = Path(root) / file
-                if file.endswith(".missing"):
+                if file.endswith(cls.MISSING_MARKER_SUFFIX):
                     rel_file_path = bak_path.relative_to(abs_root)
-                    str_rel = str(rel_file_path)[:-8]
+                    str_rel = str(rel_file_path)[:-len(cls.MISSING_MARKER_SUFFIX)]
                     parts = list(Path(str_rel).parts)
                     if not parts:
                         continue

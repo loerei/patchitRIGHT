@@ -365,7 +365,7 @@ class JsTsValidator(BaseValidator):
             return
         def _strip_ts_types(text: str) -> str:
             import re
-            return re.sub(r':\s*(?:number|string|boolean|any|void|unknown|never|object|Record<[^>]+>|Array<[^>]+>|[A-Z][A-Za-z0-9_]*)', '', text)
+            return re.sub(r':\s*(?:number|string|boolean|any|void|unknown|never|object|Record<[^>]+>|Array<[^>]+>|[A-Z]\w*)', '', text)
 
         orig_check_text = _strip_ts_types(original_content) if filename.endswith((".ts", ".tsx")) else original_content
         new_check_text = _strip_ts_types(content) if filename.endswith((".ts", ".tsx")) else content

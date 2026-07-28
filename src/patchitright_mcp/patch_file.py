@@ -576,9 +576,8 @@ def patch_file(  # noqa: C901 # NOSONAR
         item_patch_content = item.get("patch_content")
         is_creation_diff = item_patch_content is not None and ("old_start=0" in item_patch_content or "@@ -0,0" in item_patch_content or "@@ -0 " in item_patch_content)
 
-        if not file_exists:
-            if not is_creation_diff:
-                return {"error": f"Target file not found at {target_path}. Use write_file to create new files or supply a valid patch_content creation diff."}
+        if not file_exists and not is_creation_diff:
+            return {"error": f"Target file not found at {target_path}. Use write_file to create new files or supply a valid patch_content creation diff."}
 
         transaction.register_file(target_path)
         original_contents[str(target_path)] = file_content
@@ -642,22 +641,7 @@ def patch_file(  # noqa: C901 # NOSONAR
                 "run_id": run_id,
                 "expires_in": cache.get_ttl(),
             }
-            if pf["warnings"]:
-                res["warnings"] = pf["warnings"]
-                res["suggestion"] = pf["suggestion"]
-            if eng:
-                if getattr(eng, "indentation_adjusted", False):
-                    res["indentation_adjusted"] = True
-                    res["indent_delta"] = getattr(eng, "indent_delta", "")
-                if getattr(eng, "newline_padded", False):
-                    res["newline_padded"] = True
-                if getattr(eng, "large_file_fallback", False):
-                    res["large_file_fallback"] = True
-                if getattr(eng, "is_relocated", False):
-                    res["is_relocated"] = True
-                if getattr(eng, "is_did_you_mean_applied", False):
-                    res["is_did_you_mean_applied"] = True
-            return res
+            return _attach_engine_flags(res, pf)
 
         msg = f"Dry-run preview for **{len(processed_files)}** file(s):\n"
         structured_warnings = []
@@ -681,23 +665,9 @@ def patch_file(  # noqa: C901 # NOSONAR
             res["suggestions"] = structured_suggestions
         return res
 
-    is_self_mod = False
-    try:
-        self_dir = Path(__file__).parent.resolve()
-        is_self_mod = any(p.resolve().is_relative_to(self_dir) for p in modifications.keys())
-    except Exception:
-        is_self_mod = False
-
-    if is_self_mod:
-        _commit_transaction_with_delay(transaction, modifications, delay=0.5)
-    else:
-        try:
-            transaction.commit(modifications)
-            transaction.cleanup()
-            for p in modifications.keys():
-                trigger_jcodemunch_sync(p)
-        except Exception as e:
-            return {"error": f"Failed to commit transaction: {e}"}
+    commit_err = _commit_or_defer_transaction(transaction, modifications)
+    if commit_err:
+        return commit_err
 
     if not multi_file_mode:
         pf = processed_files[0]
@@ -722,22 +692,7 @@ def patch_file(  # noqa: C901 # NOSONAR
             "message": msg,
             "occurrences": pf["occurrences"],
         }
-        if pf["warnings"]:
-            res["warnings"] = pf["warnings"]
-            res["suggestion"] = pf["suggestion"]
-        if eng:
-            if getattr(eng, "indentation_adjusted", False):
-                res["indentation_adjusted"] = True
-                res["indent_delta"] = getattr(eng, "indent_delta", "")
-            if getattr(eng, "newline_padded", False):
-                res["newline_padded"] = True
-            if getattr(eng, "large_file_fallback", False):
-                res["large_file_fallback"] = True
-            if getattr(eng, "is_relocated", False):
-                res["is_relocated"] = True
-            if getattr(eng, "is_did_you_mean_applied", False):
-                res["is_did_you_mean_applied"] = True
-        return res
+        return _attach_engine_flags(res, pf)
 
     msg = f"Successfully patched **{len(processed_files)}** file(s):\n"
     structured_warnings = []
@@ -1052,6 +1007,49 @@ def _apply_classic_replacement(  # NOSONAR
     return res
 
 
+def _attach_engine_flags(res: dict, pf: dict) -> dict:
+    """Attach linter warnings, suggestions, and engine execution flags to response dictionary."""
+    if pf.get("warnings"):
+        res["warnings"] = pf["warnings"]
+        res["suggestion"] = pf["suggestion"]
+    eng = pf.get("engine")
+    if eng:
+        if getattr(eng, "indentation_adjusted", False):
+            res["indentation_adjusted"] = True
+            res["indent_delta"] = getattr(eng, "indent_delta", "")
+        if getattr(eng, "newline_padded", False):
+            res["newline_padded"] = True
+        if getattr(eng, "large_file_fallback", False):
+            res["large_file_fallback"] = True
+        if getattr(eng, "is_relocated", False):
+            res["is_relocated"] = True
+        if getattr(eng, "is_did_you_mean_applied", False):
+            res["is_did_you_mean_applied"] = True
+    return res
+
+
+def _commit_or_defer_transaction(transaction: FileTransaction, modifications: dict[Path, str]) -> Optional[dict]:
+    """Commit transaction atomically or schedule deferred commit for self-modifications."""
+    is_self_mod = False
+    try:
+        self_dir = Path(__file__).parent.resolve()
+        is_self_mod = any(p.resolve().is_relative_to(self_dir) for p in modifications.keys())
+    except Exception:
+        is_self_mod = False
+
+    if is_self_mod:
+        _commit_transaction_with_delay(transaction, modifications, delay=0.5)
+    else:
+        try:
+            transaction.commit(modifications)
+            transaction.cleanup()
+            for p in modifications.keys():
+                trigger_jcodemunch_sync(p)
+        except Exception as e:
+            return {"error": f"Failed to commit transaction: {e}"}
+    return None
+
+
 def _handle_patch_file_value_error(e: ValueError, target_file: str) -> dict:
     if str(e) == "fatal_context_mismatch":
         cwd = Path.cwd().resolve()
@@ -1151,23 +1149,9 @@ def apply_last_dry_run(run_id: str) -> dict:
         transaction.rollback()
         return {"error": f"Optimistic locking failed for '{fail_path.name if fail_path else 'file'}'. File was modified on disk."}
 
-    is_self_mod = False
-    try:
-        self_dir = Path(__file__).parent.resolve()
-        is_self_mod = any(p.resolve().is_relative_to(self_dir) for p in modifications.keys())
-    except Exception:
-        is_self_mod = False
-
-    if is_self_mod:
-        _commit_transaction_with_delay(transaction, modifications, delay=0.5)
-    else:
-        try:
-            transaction.commit(modifications)
-            transaction.cleanup()
-            for p in modifications.keys():
-                trigger_jcodemunch_sync(p)
-        except Exception as e:
-            return {"error": f"Failed to commit transaction: {e}"}
+    commit_err = _commit_or_defer_transaction(transaction, modifications)
+    if commit_err:
+        return commit_err
 
     applied = [str(p) for p in modifications.keys()]
     output = f"Applied cached patch (run_id={run_id}). Wrote **{len(applied)}** file(s).\n"
