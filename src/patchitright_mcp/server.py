@@ -25,6 +25,7 @@ async def list_tools() -> list[Tool]:
     """List all available tools."""
     import os
     expose_bypass = os.environ.get("PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION", "").lower() in ("true", "1", "yes")
+    show_legacy = os.environ.get("PATCHITRIGHT_SHOW_LEGACY", os.environ.get("SHOW_LEGACY", "")).lower() in ("true", "1", "yes")
 
     tools = [
         Tool(
@@ -172,46 +173,6 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="batch_patch_files",
-            description=(
-                "Apply unified diffs to multiple files in one call. "
-                "All patches are validated before any file is written; if one fails, none are applied."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "patches": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "target_file": {
-                                    "type": "string",
-                                    "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended to avoid JSON escaping and save tokens."
-                                },
-                                "patch_content": {
-                                    "type": "string",
-                                    "description": "The exact Git-style Unified Diff hunk(s) to apply to this file."
-                                }
-                            },
-                            "required": ["target_file", "patch_content"]
-                        },
-                        "description": "List of target files and their corresponding Unified Diffs."
-                    },
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "If True, returns a unified diff preview of the changes without modifying the files. Defaults to False.",
-                        "default": False
-                    },
-                    "storage_path": {
-                        "type": "string",
-                        "description": STORAGE_PATH_DESC
-                    }
-                },
-                "required": ["patches"]
-            }
-        ),
-        Tool(
             name="apply_last_dry_run",
             description=(
                 "Apply the patch cached by a previous dry_run=true call. "
@@ -287,6 +248,50 @@ async def list_tools() -> list[Tool]:
             }
         )
     ]
+
+    if show_legacy:
+        tools.append(
+            Tool(
+                name="batch_patch_files",
+                description=(
+                    "Apply unified diffs to multiple files in one call. "
+                    "All patches are validated before any file is written; if one fails, none are applied."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "patches": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "target_file": {
+                                        "type": "string",
+                                        "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended to avoid JSON escaping and save tokens."
+                                    },
+                                    "patch_content": {
+                                        "type": "string",
+                                        "description": "The exact Git-style Unified Diff hunk(s) to apply to this file."
+                                    }
+                                },
+                                "required": ["target_file", "patch_content"]
+                            },
+                            "description": "List of target files and their corresponding Unified Diffs."
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "If True, returns a unified diff preview of the changes without modifying the files. Defaults to False.",
+                            "default": False
+                        },
+                        "storage_path": {
+                            "type": "string",
+                            "description": STORAGE_PATH_DESC
+                        }
+                    },
+                    "required": ["patches"]
+                }
+            )
+        )
 
     if expose_bypass:
         for tool in tools:
