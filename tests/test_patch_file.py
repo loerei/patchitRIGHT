@@ -1638,3 +1638,95 @@ class TestSymbolScope:
         assert res.get("success") is True
         expected = "def foo(a, b):\n    return a * b\n"
         assert app_file.read_text() == expected
+
+    def test_multi_file_batch_patch_file(self, tmp_path, monkeypatch):
+        """patch_file with files array must atomically patch multiple files."""
+        monkeypatch.chdir(tmp_path)
+        f1 = tmp_path / "file1.py"
+        f2 = tmp_path / "file2.py"
+        f1.write_text("hello 1\n")
+        f2.write_text("hello 2\n")
+
+        res = patch_file(
+            files=[
+                {"target_file": "file1.py", "search_content": "hello 1", "replace_content": "world 1"},
+                {"target_file": "file2.py", "search_content": "hello 2", "replace_content": "world 2"},
+            ],
+            dry_run=False
+        )
+
+        assert res.get("success") is True
+        assert f1.read_text() == "world 1\n"
+        assert f2.read_text() == "world 2\n"
+
+    def test_multi_file_duplicate_target_rejection(self, tmp_path, monkeypatch):
+        """patch_file must reject duplicate target_file paths in files array."""
+        monkeypatch.chdir(tmp_path)
+        f1 = tmp_path / "file1.py"
+        f1.write_text("hello\n")
+
+        res = patch_file(
+            files=[
+                {"target_file": "file1.py", "search_content": "hello", "replace_content": "world 1"},
+                {"target_file": "./file1.py", "search_content": "world 1", "replace_content": "world 2"},
+            ]
+        )
+
+        assert "error" in res
+        assert "Duplicate resolved target_file paths" in res["error"]
+
+    def test_multi_file_conflicting_args_rejection(self, tmp_path, monkeypatch):
+        """patch_file must reject calls providing both files array and top-level single-file args."""
+        monkeypatch.chdir(tmp_path)
+        f1 = tmp_path / "file1.py"
+        f1.write_text("hello\n")
+
+        res = patch_file(
+            target_file="file1.py",
+            files=[{"target_file": "file1.py", "search_content": "hello", "replace_content": "world"}]
+        )
+
+        assert "error" in res
+        assert "Cannot provide both 'files' array and top-level single-file edit parameters" in res["error"]
+
+    def test_missing_marker_startup_recovery(self, tmp_path, monkeypatch):
+        """run_startup_recovery must unlink target paths associated with .missing backup markers."""
+        monkeypatch.chdir(tmp_path)
+        backup_dir = tmp_path / ".patchitRIGHT" / "backups"
+        backup_dir.mkdir(parents=True)
+
+        new_file = tmp_path / "new_created.txt"
+        new_file.write_text("should be deleted on recovery\n")
+
+        # Create matching .missing backup marker with recent timestamp
+        marker = backup_dir / "new_created.txt.missing"
+        marker.write_text("")
+
+        run_startup_recovery(workspace_root=tmp_path)
+
+        assert not new_file.exists()
+        assert not marker.exists()
+
+    def test_creation_diff_old_start_zero(self, tmp_path, monkeypatch):
+        """patch_file must allow creating a new file via unified diff patch_content with old_start=0."""
+        monkeypatch.chdir(tmp_path)
+        new_file = tmp_path / "new_doc.py"
+
+        patch_content = (
+            "--- /dev/null\n"
+            "+++ b/new_doc.py\n"
+            "@@ -0,0 +1,2 @@\n"
+            "+def new_func():\n"
+            "+    return True\n"
+        )
+
+        res = patch_file(
+            target_file="new_doc.py",
+            patch_content=patch_content,
+            dry_run=False
+        )
+
+        assert res.get("success") is True
+        assert new_file.exists()
+        assert new_file.read_text() == "def new_func():\n    return True\n"
+
