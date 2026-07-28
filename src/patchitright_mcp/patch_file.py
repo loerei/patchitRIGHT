@@ -611,6 +611,7 @@ def patch_file(  # noqa: C901 # NOSONAR
             "target_path": target_path,
             "patched_content": patched_content,
             "file_content": file_content,
+            "file_exists": file_exists,
             "occurrences": occurrences,
             "warnings": warnings,
             "suggestion": suggestion,

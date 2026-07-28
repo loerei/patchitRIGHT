@@ -7,6 +7,8 @@ class Workspace:
 
     def __init__(self, cwd: Path, storage_path: Optional[str] = None):
         self.cwd = cwd.resolve()
+        self.storage_path = storage_path
+
     @property
     def base_dir(self) -> Path:
         return Path(self.storage_path).resolve() if self.storage_path else self.cwd
@@ -59,7 +61,7 @@ class Workspace:
         anchors = {".git", ".gitignore", "pyproject.toml", "package.json", "go.mod", "cargo.toml", ".patchitRIGHT"}
         search_parents = [current]
         for p in current.parents:
-            if p == self.base_dir or p == p.parent:
+            if p == self.cwd or p == p.parent:
                 search_parents.append(p)
                 break
             if p.name.lower() in ("temp", "tmp", "users") or p == Path.home():
