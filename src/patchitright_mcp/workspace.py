@@ -7,7 +7,9 @@ class Workspace:
 
     def __init__(self, cwd: Path, storage_path: Optional[str] = None):
         self.cwd = cwd.resolve()
-        self.storage_path = storage_path
+    @property
+    def base_dir(self) -> Path:
+        return Path(self.storage_path).resolve() if self.storage_path else self.cwd
 
     def resolve_allowed_base_dir(self, target_file: str) -> Path:
         """Resolve the allowed base directory, using indexed repo source_root if available."""

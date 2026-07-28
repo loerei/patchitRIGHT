@@ -505,7 +505,8 @@ def patch_file(  # noqa: C901 # NOSONAR
 ) -> dict:
     """Perform a robust search-and-replace or apply a strict unified diff (Fuzz = 0) across single or multiple files."""
     files_param = files or patches
-    single_file_args = [target_file, search_content, replace_content, patch_content, replacements]
+    symbol_name_arg = kwargs.get("symbol_name")
+    single_file_args = [target_file, search_content, replace_content, patch_content, replacements, symbol_name_arg]
     has_single_file_args = any(arg is not None for arg in single_file_args)
 
     if files_param is not None and has_single_file_args:
@@ -556,7 +557,8 @@ def patch_file(  # noqa: C901 # NOSONAR
         except Exception as e:
             return _handle_patch_file_value_error(e, tf)
 
-    if len(resolved_paths) != len(set(resolved_paths)):
+    norm_resolved = [os.path.normcase(str(rp)) for rp in resolved_paths]
+    if len(norm_resolved) != len(set(norm_resolved)):
         return {"error": "Error: Duplicate resolved target_file paths found in 'files' batch. For multiple edits in the same file, use 'replacements' within a single item."}
 
     transaction = FileTransaction(workspace_root)
@@ -620,12 +622,13 @@ def patch_file(  # noqa: C901 # NOSONAR
     ok, fail_path = transaction.check_optimistic_locking()
     if not ok:
         transaction.rollback()
+        transaction.cleanup()
         raw_name = fail_path.name if fail_path else "file"
         return {"error": f"Transaction Aborted (Optimistic Locking Conflict): File '{raw_name}' was modified on disk."}
 
     if dry_run:
         cache = get_cache()
-        entries = [{"target_path": pf["target_path"], "patched_content": pf["patched_content"]} for pf in processed_files]
+        entries = [{"target_path": pf["target_path"], "patched_content": pf["patched_content"], "exists": pf.get("file_exists", True)} for pf in processed_files]
         run_id = cache.store(entries=entries, original_contents=original_contents)
         transaction.cleanup()
 
@@ -1084,11 +1087,14 @@ def _verify_dry_run_hashes(files: list[dict]) -> Optional[dict]:
     for f in files:
         target_path: Path = f["target_path"]
         original_hash: str = f["original_hash"]
+        expected_exists: Optional[bool] = f.get("exists")
         if not target_path.exists():
-            if original_hash == empty_hash:
+            if expected_exists is False or (expected_exists is None and original_hash == empty_hash):
                 # File did not exist and still does not exist, which is expected for new file creation
                 continue
             return {"error": f"File '{target_path.name}' does not exist but was expected to exist based on dry-run."}
+        if expected_exists is False:
+            return {"error": f"File '{target_path.name}' was created after dry-run (was expected to not exist)."}
         try:
             with open(target_path, "r", encoding="utf-8", newline="", errors="replace") as file_handle:
                 current_text = file_handle.read()
@@ -1148,6 +1154,7 @@ def apply_last_dry_run(run_id: str) -> dict:
     ok, fail_path = transaction.check_optimistic_locking()
     if not ok:
         transaction.rollback()
+        transaction.cleanup()
         return {"error": f"Optimistic locking failed for '{fail_path.name if fail_path else 'file'}'. File was modified on disk."}
 
     commit_err = _commit_or_defer_transaction(transaction, modifications)

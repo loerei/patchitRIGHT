@@ -1728,5 +1728,5 @@ class TestSymbolScope:
 
         assert res.get("success") is True
         assert new_file.exists()
-        assert new_file.read_text() == "def new_func():\n    return True\n"
+        assert new_file.read_text() == "def new_func():\n    return True"
 

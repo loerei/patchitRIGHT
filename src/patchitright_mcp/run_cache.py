@@ -89,6 +89,7 @@ class RunCache:
                 "target_path": target_path,
                 "patched_content": patched_content,
                 "original_hash": original_hash,
+                "exists": bool(e.get("exists", target_path.exists())),
             })
 
         with self._lock:

@@ -11,7 +11,7 @@ class PatchEngine:
         self.filename = filename
         self.is_crlf = "\r\n" in file_content
         self.norm_content = file_content.replace("\r\n", "\n").replace("\r", "")
-        self.file_lines = self.norm_content.split("\n")
+        self.file_lines = self.norm_content.split("\n") if self.norm_content else []
         self.is_did_you_mean_applied = False
         self.s_ratio = 0.0
         self.did_you_mean_start_line = None

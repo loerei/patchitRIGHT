@@ -151,7 +151,14 @@ async def list_tools() -> list[Tool]:
                                 "search_content": {"type": "string", "description": "Exact text to search for."},
                                 "replace_content": {"type": "string", "description": "Replacement text."},
                                 "patch_content": {"type": "string", "description": "Unified diff patch content."},
-                                "replacements": {"type": "array", "description": "List of non-contiguous replacements."}
+                                "replacements": {"type": "array", "description": "List of non-contiguous replacements."},
+                                "symbol_name": {"type": "string", "description": "AST symbol name for scoped replacement."},
+                                "symbol_scope": {"type": "string", "enum": ["boundary", "body", "full"], "description": "Scope mode for symbol replacement."},
+                                "start_line": {"type": "integer", "description": "Optional 1-based start line range."},
+                                "end_line": {"type": "integer", "description": "Optional 1-based end line range."},
+                                "allow_multiple": {"type": "boolean", "description": "If true, replace all occurrences in scope."},
+                                "did_you_mean": {"type": "boolean", "description": "If true, apply closest fuzzy match fallback."},
+                                "line_filter": {"type": "string", "description": "Optional line filter pattern."}
                             },
                             "required": ["target_file"]
                         },
