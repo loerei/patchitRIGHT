@@ -495,16 +495,18 @@ AST-bounded safe search-and-replace write companion MCP server.
 
 ### Quick start
 1. Edit a function/class body: Call `patch_file` with `symbol_name`, `symbol_scope="body"`, and `replace_content`.
-2. Edit a specific line/block: Call `patch_file` with focused `search_content` and `replace_content`. For multiple non-contiguous edits in a single file, pass a list of chunks into `replacements` in a single call.
-3. Direct patch (Default): Omit `dry_run` to apply patches directly. Use `dry_run=true` ONLY when modifying MCP server internal code (`src/patchitright_mcp/`), live-reloading apps, or when explicitly requested by the user.
-4. Overwrite/Create files: Call `write_file` with `target_file` and `code_content`.
+2. Edit a single file: Call `patch_file` with focused `search_content` and `replace_content` (or `replacements` for non-contiguous edits).
+3. Edit multiple files in batch: Call `patch_file` with `files=[{{"target_file": ..., ...}}, ...]` in a single atomic transaction.
+4. Direct patch (Default): Omit `dry_run` to apply patches directly. Use `dry_run=true` ONLY when modifying MCP server internal code (`src/patchitright_mcp/`), live-reloading apps, or when explicitly requested by the user.
+5. Overwrite/Create files: Call `write_file` with `target_file` and `code_content`.
 
 ### All tools
 * **Edits & Writing**: `patch_file`, `write_file`
-* **Transactions & Dry-Runs**: `apply_last_dry_run`, `batch_patch_files`
+* **Transactions & Dry-Runs**: `apply_last_dry_run`
 * **Self-Guide**: `patchitright_guide`
 
 ### Key parameters & advanced features
+* `files` (array): Perform multi-file batch patching in a single atomic transaction. All target files are validated before writing.
 * `replacements` (array): Perform multiple non-contiguous edits in a single file in one call. Applied bottom-up to avoid line-drift.
 * `symbol_scope` ("boundary" | "full" | "body"):
   * "boundary" (default): Search for text within the symbol boundaries.
