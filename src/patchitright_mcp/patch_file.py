@@ -138,8 +138,9 @@ def _commit_transaction_with_delay(transaction: FileTransaction, modifications: 
                 with open(target_path, "w", encoding="utf-8", newline="") as f:
                     f.write(content)
                 trigger_jcodemunch_sync(target_path)
-        except Exception:
-            pass
+        except Exception as e:
+            from .logger import log_step
+            log_step(f"_commit_transaction_with_delay: background commit failed for {list(modifications.keys())}: {e}")
 
     try:
         threading.Thread(target=worker, daemon=True).start()
@@ -262,8 +263,8 @@ def _process_single_file_in_memory(
     patch_content: Optional[str] = None,
     replacements: Optional[list[dict]] = None,
     **kwargs,
-) -> tuple[str, int, list[str], str, Optional[dict]]:
-    """Process single file patch in memory, returning (patched_content, occurrences, warnings, suggestion, error_dict)."""
+) -> tuple[str, int, list[str], str, Optional[dict], Optional[PatchEngine]]:
+    """Process single file patch in memory, returning (patched_content, occurrences, warnings, suggestion, error_dict, engine)."""
     did_you_mean = bool(kwargs.get("did_you_mean", False))
     symbol_name = kwargs.get("symbol_name")
     allow_multiple = bool(kwargs.get("allow_multiple", False))
