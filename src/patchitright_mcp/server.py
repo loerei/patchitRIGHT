@@ -141,9 +141,27 @@ async def list_tools() -> list[Tool]:
                             }
                         },
                         "description": "Optional list of replacements to apply in a single call to the same file. Applied bottom-up to avoid line-drift."
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "target_file": {"type": "string", "description": "Target file path."},
+                                "search_content": {"type": "string", "description": "Exact text to search for."},
+                                "replace_content": {"type": "string", "description": "Replacement text."},
+                                "patch_content": {"type": "string", "description": "Unified diff patch content."},
+                                "replacements": {"type": "array", "description": "List of non-contiguous replacements."}
+                            },
+                            "required": ["target_file"]
+                        },
+                        "description": "Optional array of file edit objects for multi-file batch patching in a single atomic transaction."
                     }
                 },
-                "required": ["target_file"]
+                "anyOf": [
+                    {"required": ["target_file"]},
+                    {"required": ["files"]}
+                ]
             }
         ),
         Tool(
@@ -395,24 +413,25 @@ def _execute_batch_patch_files(arguments: dict) -> list[TextContent]:
 
 
 def _execute_patch_file(arguments: dict) -> list[TextContent]:
+    files = arguments.get("files")
     target_file = arguments.get("target_file")
     search_content = arguments.get("search_content")
     replace_content = arguments.get("replace_content")
     patch_content = arguments.get("patch_content")
     symbol_scope = arguments.get("symbol_scope", "boundary")
     symbol_name = arguments.get("symbol_name")
-    
-    if not target_file:
-        return [TextContent(type="text", text="Error: target_file is required.")]
-
     replacements = arguments.get("replacements")
 
-    if symbol_scope in ("full", "body"):
-        if not symbol_name or replace_content is None:
-            return [TextContent(type="text", text="Error: Both symbol_name and replace_content are required when symbol_scope is 'full' or 'body'.")]
-    else:
-        if patch_content is None and replacements is None and (search_content is None or replace_content is None):
-            return [TextContent(type="text", text="Error: Either replacements, patch_content, OR both search_content and replace_content are required.")]
+    if files is None and not target_file:
+        return [TextContent(type="text", text="Error: Either 'target_file' or 'files' is required.")]
+
+    if files is None:
+        if symbol_scope in ("full", "body"):
+            if not symbol_name or replace_content is None:
+                return [TextContent(type="text", text="Error: Both symbol_name and replace_content are required when symbol_scope is 'full' or 'body'.")]
+        else:
+            if patch_content is None and replacements is None and (search_content is None or replace_content is None):
+                return [TextContent(type="text", text="Error: Either replacements, patch_content, OR both search_content and replace_content are required.")]
 
     folder_filter = arguments.get("folder_filter")
     file_filter = arguments.get("file_filter")
@@ -450,6 +469,7 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
         replacements=replacements,
         bypass_validation=bypass_validation,
         symbol_scope=symbol_scope,
+        files=files,
     )
 
     return [TextContent(type="text", text=json.dumps(res, indent=2))]

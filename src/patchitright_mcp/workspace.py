@@ -52,10 +52,18 @@ class Workspace:
     def find_workspace_root(self, path: Path) -> Path:
         """Walk up to locate a project root using common anchor files."""
         current = path.resolve()
-        if current.is_file():
+        if current.is_file() or not current.exists():
             current = current.parent
         anchors = {".git", ".gitignore", "pyproject.toml", "package.json", "go.mod", "cargo.toml", ".patchitRIGHT"}
-        for parent in [current] + list(current.parents):
+        search_parents = [current]
+        for p in current.parents:
+            if p == self.base_dir or p == p.parent:
+                search_parents.append(p)
+                break
+            if p.name.lower() in ("temp", "tmp", "users") or p == Path.home():
+                break
+            search_parents.append(p)
+        for parent in search_parents:
             if any((parent / anchor).exists() for anchor in anchors):
                 return parent
         return current
