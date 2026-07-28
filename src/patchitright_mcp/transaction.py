@@ -8,6 +8,7 @@ class FileTransaction:
     """Manages transactional backup, rollback, and startup recovery of files."""
 
     BACKUP_DIR = ".patchitRIGHT"
+    MISSING_MARKER_SUFFIX = ".missing"
 
     def __init__(self, workspace_root: Path):
         self.workspace_root = workspace_root.resolve()
@@ -17,9 +18,14 @@ class FileTransaction:
     def register_file(self, target_path: Path) -> str:
         """Reads target file, records its state, and returns original content as string."""
         target_abs = target_path.resolve()
-        original_bytes = target_abs.read_bytes()
-        original_hash = hashlib.sha256(original_bytes).hexdigest()
-        original_content = original_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n")
+        if not target_abs.exists():
+            original_bytes = None
+            original_hash = hashlib.sha256(b"").hexdigest()
+            original_content = ""
+        else:
+            original_bytes = target_abs.read_bytes()
+            original_hash = hashlib.sha256(original_bytes).hexdigest()
+            original_content = original_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n")
 
         backup_path = self._get_backup_path(target_abs)
         self._backups.append((target_abs, original_bytes, original_hash, backup_path))
@@ -47,17 +53,36 @@ class FileTransaction:
 
     def write_backups(self) -> None:
         """Writes backup files to disk (prepared phase)."""
+        backup_dir = self.workspace_root / self.BACKUP_DIR
+        if backup_dir.is_file():
+            try:
+                backup_dir.unlink()
+            except Exception:
+                pass
+        os.makedirs(self.backup_root, exist_ok=True)
         for _, original_bytes, _, backup_path in self._backups:
-            backup_path.parent.mkdir(parents=True, exist_ok=True)
-            backup_path.write_bytes(original_bytes)
+            if original_bytes is None:
+                marker_path = Path(str(backup_path) + self.MISSING_MARKER_SUFFIX)
+                os.makedirs(marker_path.parent, exist_ok=True)
+                marker_path.write_bytes(b"")
+            else:
+                os.makedirs(backup_path.parent, exist_ok=True)
+                backup_path.write_bytes(original_bytes)
 
     def check_optimistic_locking(self) -> tuple[bool, Optional[Path]]:
         """Verifies that none of the registered files have changed since they were read."""
-        for target_path, _, original_hash, _ in self._backups:
-            current_bytes = target_path.read_bytes()
-            current_hash = hashlib.sha256(current_bytes).hexdigest()
-            if current_hash != original_hash:
-                return False, target_path
+        for target_path, original_bytes, original_hash, _ in self._backups:
+            if original_bytes is None:
+                if target_path.exists():
+                    return False, target_path
+            else:
+                try:
+                    current_bytes = target_path.read_bytes()
+                    current_hash = hashlib.sha256(current_bytes).hexdigest()
+                    if current_hash != original_hash:
+                        return False, target_path
+                except Exception:
+                    return False, target_path
         return True, None
 
     def commit(self, modifications: dict[Path, str]) -> None:
@@ -65,6 +90,7 @@ class FileTransaction:
         written = []
         try:
             for target_path, content in modifications.items():
+                target_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(target_path, "w", encoding="utf-8", newline="") as f:
                     f.write(content)
                 written.append(target_path)
@@ -80,11 +106,17 @@ class FileTransaction:
         for target_path, original_bytes, _, backup_path in self._backups:
             if targets is not None and target_path not in targets:
                 continue
-            try:
-                target_path.write_bytes(original_bytes)
-            except Exception:
-                # Fallback to backup files if memory write fails
-                self._restore_from_backup_file(backup_path, target_path)
+            if original_bytes is None:
+                try:
+                    target_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            else:
+                try:
+                    target_path.write_bytes(original_bytes)
+                except Exception:
+                    # Fallback to backup files if memory write fails
+                    self._restore_from_backup_file(backup_path, target_path)
 
     def _restore_from_backup_file(self, backup_path: Path, target_path: Path) -> None:
         """Helper to restore a backup file under safety check."""
@@ -112,9 +144,11 @@ class FileTransaction:
             return
 
         try:
-            # 1. Recover relative backups
+            # 1. Recover relative backups & top-level backups
+            cls._recover_root_backups(backup_root, workspace_root)
             rel_root = backup_root / "relative"
-            cls._recover_root_backups(rel_root, workspace_root)
+            if rel_root.exists():
+                cls._recover_root_backups(rel_root, workspace_root)
 
             # 2. Recover absolute backups
             abs_root = backup_root / "absolute"
@@ -132,9 +166,18 @@ class FileTransaction:
         for root, _, files in os.walk(rel_root):
             for file in files:
                 bak_path = Path(root) / file
-                rel_file_path = bak_path.relative_to(rel_root)
-                target_path = workspace_root / rel_file_path
-                cls._restore_single_backup(bak_path, target_path, rel_root)
+                if file.endswith(cls.MISSING_MARKER_SUFFIX):
+                    rel_file_path = bak_path.relative_to(rel_root)
+                    str_rel = str(rel_file_path)[:-len(cls.MISSING_MARKER_SUFFIX)]
+                    target_path = workspace_root / Path(str_rel)
+                    try:
+                        target_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                else:
+                    rel_file_path = bak_path.relative_to(rel_root)
+                    target_path = workspace_root / rel_file_path
+                    cls._restore_single_backup(bak_path, target_path, rel_root)
 
     @classmethod
     def _recover_absolute_backups(cls, abs_root: Path) -> None:
@@ -143,16 +186,32 @@ class FileTransaction:
         for root, _, files in os.walk(abs_root):
             for file in files:
                 bak_path = Path(root) / file
-                rel_file_path = bak_path.relative_to(abs_root)
-                parts = list(rel_file_path.parts)
-                if not parts:
-                    continue
-                if len(parts[0]) == 1 and parts[0].isalpha():
-                    drive = parts[0] + ":\\"
-                    target_path = Path(drive) / Path(*parts[1:])
+                if file.endswith(cls.MISSING_MARKER_SUFFIX):
+                    rel_file_path = bak_path.relative_to(abs_root)
+                    str_rel = str(rel_file_path)[:-len(cls.MISSING_MARKER_SUFFIX)]
+                    parts = list(Path(str_rel).parts)
+                    if not parts:
+                        continue
+                    if len(parts[0]) == 1 and parts[0].isalpha():
+                        drive = parts[0] + ":\\"
+                        target_path = Path(drive) / Path(*parts[1:])
+                    else:
+                        target_path = Path("/") / Path(*parts)
+                    try:
+                        target_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                 else:
-                    target_path = Path("/") / Path(*parts)
-                cls._restore_single_backup(bak_path, target_path, abs_root)
+                    rel_file_path = bak_path.relative_to(abs_root)
+                    parts = list(rel_file_path.parts)
+                    if not parts:
+                        continue
+                    if len(parts[0]) == 1 and parts[0].isalpha():
+                        drive = parts[0] + ":\\"
+                        target_path = Path(drive) / Path(*parts[1:])
+                    else:
+                        target_path = Path("/") / Path(*parts)
+                    cls._restore_single_backup(bak_path, target_path, abs_root)
 
     @staticmethod
     def _restore_single_backup(bak_path: Path, target_path: Path, allowed_root: Path) -> None:

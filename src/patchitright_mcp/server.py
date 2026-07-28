@@ -25,6 +25,7 @@ async def list_tools() -> list[Tool]:
     """List all available tools."""
     import os
     expose_bypass = os.environ.get("PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION", "").lower() in ("true", "1", "yes")
+    show_legacy = os.environ.get("PATCHITRIGHT_SHOW_LEGACY", os.environ.get("SHOW_LEGACY", "")).lower() in ("true", "1", "yes")
 
     tools = [
         Tool(
@@ -141,49 +142,34 @@ async def list_tools() -> list[Tool]:
                             }
                         },
                         "description": "Optional list of replacements to apply in a single call to the same file. Applied bottom-up to avoid line-drift."
-                    }
-                },
-                "required": ["target_file"]
-            }
-        ),
-        Tool(
-            name="batch_patch_files",
-            description=(
-                "Apply unified diffs to multiple files in one call. "
-                "All patches are validated before any file is written; if one fails, none are applied."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "patches": {
+                    },
+                    "files": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "target_file": {
-                                    "type": "string",
-                                    "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended to avoid JSON escaping and save tokens."
-                                },
-                                "patch_content": {
-                                    "type": "string",
-                                    "description": "The exact Git-style Unified Diff hunk(s) to apply to this file."
-                                }
+                                "target_file": {"type": "string", "description": "Target file path."},
+                                "search_content": {"type": "string", "description": "Exact text to search for."},
+                                "replace_content": {"type": "string", "description": "Replacement text."},
+                                "patch_content": {"type": "string", "description": "Unified diff patch content."},
+                                "replacements": {"type": "array", "description": "List of non-contiguous replacements."},
+                                "symbol_name": {"type": "string", "description": "AST symbol name for scoped replacement."},
+                                "symbol_scope": {"type": "string", "enum": ["boundary", "body", "full"], "description": "Scope mode for symbol replacement."},
+                                "start_line": {"type": "integer", "description": "Optional 1-based start line range."},
+                                "end_line": {"type": "integer", "description": "Optional 1-based end line range."},
+                                "allow_multiple": {"type": "boolean", "description": "If true, replace all occurrences in scope."},
+                                "did_you_mean": {"type": "boolean", "description": "If true, apply closest fuzzy match fallback."},
+                                "line_filter": {"type": "string", "description": "Optional line filter pattern."}
                             },
-                            "required": ["target_file", "patch_content"]
+                            "required": ["target_file"]
                         },
-                        "description": "List of target files and their corresponding Unified Diffs."
-                    },
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "If True, returns a unified diff preview of the changes without modifying the files. Defaults to False.",
-                        "default": False
-                    },
-                    "storage_path": {
-                        "type": "string",
-                        "description": STORAGE_PATH_DESC
+                        "description": "Optional array of file edit objects for multi-file batch patching in a single atomic transaction."
                     }
                 },
-                "required": ["patches"]
+                "anyOf": [
+                    {"required": ["target_file"]},
+                    {"required": ["files"]}
+                ]
             }
         ),
         Tool(
@@ -262,6 +248,50 @@ async def list_tools() -> list[Tool]:
             }
         )
     ]
+
+    if show_legacy:
+        tools.append(
+            Tool(
+                name="batch_patch_files",
+                description=(
+                    "Apply unified diffs to multiple files in one call. "
+                    "All patches are validated before any file is written; if one fails, none are applied."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "patches": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "target_file": {
+                                        "type": "string",
+                                        "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended to avoid JSON escaping and save tokens."
+                                    },
+                                    "patch_content": {
+                                        "type": "string",
+                                        "description": "The exact Git-style Unified Diff hunk(s) to apply to this file."
+                                    }
+                                },
+                                "required": ["target_file", "patch_content"]
+                            },
+                            "description": "List of target files and their corresponding Unified Diffs."
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "If True, returns a unified diff preview of the changes without modifying the files. Defaults to False.",
+                            "default": False
+                        },
+                        "storage_path": {
+                            "type": "string",
+                            "description": STORAGE_PATH_DESC
+                        }
+                    },
+                    "required": ["patches"]
+                }
+            )
+        )
 
     if expose_bypass:
         for tool in tools:
@@ -395,24 +425,25 @@ def _execute_batch_patch_files(arguments: dict) -> list[TextContent]:
 
 
 def _execute_patch_file(arguments: dict) -> list[TextContent]:
+    files = arguments.get("files")
     target_file = arguments.get("target_file")
     search_content = arguments.get("search_content")
     replace_content = arguments.get("replace_content")
     patch_content = arguments.get("patch_content")
     symbol_scope = arguments.get("symbol_scope", "boundary")
     symbol_name = arguments.get("symbol_name")
-    
-    if not target_file:
-        return [TextContent(type="text", text="Error: target_file is required.")]
-
     replacements = arguments.get("replacements")
 
-    if symbol_scope in ("full", "body"):
-        if not symbol_name or replace_content is None:
-            return [TextContent(type="text", text="Error: Both symbol_name and replace_content are required when symbol_scope is 'full' or 'body'.")]
-    else:
-        if patch_content is None and replacements is None and (search_content is None or replace_content is None):
-            return [TextContent(type="text", text="Error: Either replacements, patch_content, OR both search_content and replace_content are required.")]
+    if files is None and not target_file:
+        return [TextContent(type="text", text="Error: Either 'target_file' or 'files' is required.")]
+
+    if files is None:
+        if symbol_scope in ("full", "body"):
+            if not symbol_name or replace_content is None:
+                return [TextContent(type="text", text="Error: Both symbol_name and replace_content are required when symbol_scope is 'full' or 'body'.")]
+        else:
+            if patch_content is None and replacements is None and (search_content is None or replace_content is None):
+                return [TextContent(type="text", text="Error: Either replacements, patch_content, OR both search_content and replace_content are required.")]
 
     folder_filter = arguments.get("folder_filter")
     file_filter = arguments.get("file_filter")
@@ -450,6 +481,7 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
         replacements=replacements,
         bypass_validation=bypass_validation,
         symbol_scope=symbol_scope,
+        files=files,
     )
 
     return [TextContent(type="text", text=json.dumps(res, indent=2))]

@@ -9,6 +9,10 @@ class Workspace:
         self.cwd = cwd.resolve()
         self.storage_path = storage_path
 
+    @property
+    def base_dir(self) -> Path:
+        return Path(self.storage_path).resolve() if self.storage_path else self.cwd
+
     def resolve_allowed_base_dir(self, target_file: str) -> Path:
         """Resolve the allowed base directory, using indexed repo source_root if available."""
         base_dir = self.cwd
@@ -52,10 +56,18 @@ class Workspace:
     def find_workspace_root(self, path: Path) -> Path:
         """Walk up to locate a project root using common anchor files."""
         current = path.resolve()
-        if current.is_file():
+        if current.is_file() or not current.exists():
             current = current.parent
         anchors = {".git", ".gitignore", "pyproject.toml", "package.json", "go.mod", "cargo.toml", ".patchitRIGHT"}
-        for parent in [current] + list(current.parents):
+        search_parents = [current]
+        for p in current.parents:
+            if p == self.cwd or p == p.parent:
+                search_parents.append(p)
+                break
+            if p.name.lower() in ("temp", "tmp", "users") or p == Path.home():
+                break
+            search_parents.append(p)
+        for parent in search_parents:
             if any((parent / anchor).exists() for anchor in anchors):
                 return parent
         return current

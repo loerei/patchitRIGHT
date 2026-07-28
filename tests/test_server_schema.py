@@ -17,7 +17,7 @@ async def test_list_tools_schema_without_bypass():
 
 @pytest.mark.asyncio
 async def test_list_tools_schema_with_bypass():
-    with patch.dict(os.environ, {"PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION": "true"}):
+    with patch.dict(os.environ, {"PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION": "true", "PATCHITRIGHT_SHOW_LEGACY": "true"}):
         tools = await list_tools()
         for tool in tools:
             properties = tool.inputSchema.get("properties", {})
@@ -26,6 +26,27 @@ async def test_list_tools_schema_with_bypass():
                 assert properties["bypass_validation"]["type"] == "boolean"
             else:
                 assert "bypass_validation" not in properties
+
+
+@pytest.mark.asyncio
+async def test_list_tools_show_legacy_default_off():
+    with patch.dict(os.environ, {"PATCHITRIGHT_SHOW_LEGACY": "false", "SHOW_LEGACY": "false"}):
+        tools = await list_tools()
+        tool_names = [t.name for t in tools]
+        assert "batch_patch_files" not in tool_names
+        assert "patch_file" in tool_names
+        assert "apply_last_dry_run" in tool_names
+        assert "write_file" in tool_names
+        assert "patchitright_guide" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_list_tools_show_legacy_enabled():
+    with patch.dict(os.environ, {"PATCHITRIGHT_SHOW_LEGACY": "true"}):
+        tools = await list_tools()
+        tool_names = [t.name for t in tools]
+        assert "batch_patch_files" in tool_names
+
 
 
 @pytest.mark.asyncio

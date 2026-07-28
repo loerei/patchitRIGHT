@@ -191,7 +191,7 @@ class JsTsValidator(BaseValidator):
             return [tsc_exe]
         npx = shutil.which("npx")
         if npx:
-            return [npx, "tsc"]
+            return [npx, "--no-install", "tsc"]
         return None
 
     def _run_tsc_check(self, tsc_cmd: list[str], temp_path: Path, content: str) -> subprocess.CompletedProcess:
@@ -358,18 +358,23 @@ class JsTsValidator(BaseValidator):
         log_step("JsTsValidator.validate: Biome check finished successfully")
 
     def _validate_with_node(self, content: str, filename: str, original_content: str) -> None:
-        # Fallback to node --check if node is available (JS/CJS/MJS only)
-        if not filename.endswith((".js", ".jsx", ".cjs", ".mjs")):
-            return
+        # Fallback to node --check if node is available
         node_exe = shutil.which("node")
         log_step(f"JsTsValidator.validate: fallback node check path: {node_exe}")
         if not node_exe:
             return
+        def _strip_ts_types(text: str) -> str:
+            import re
+            return re.sub(r':\s*(?:number|string|boolean|any|void|unknown|never|object|Record<[^>]+>|Array<[^>]+>|[A-Z]\w*)', '', text)
+
+        orig_check_text = _strip_ts_types(original_content) if filename.endswith((".ts", ".tsx")) else original_content
+        new_check_text = _strip_ts_types(content) if filename.endswith((".ts", ".tsx")) else content
+
         try:
             # Check if original was valid
             orig_process = subprocess.run(
-                [node_exe, "--check"],
-                input=original_content,
+                [node_exe, "--check", "-"],
+                input=orig_check_text,
                 text=True,
                 encoding="utf-8",
                 capture_output=True,
@@ -381,8 +386,8 @@ class JsTsValidator(BaseValidator):
                 return
 
             process = subprocess.run(
-                [node_exe, "--check"],
-                input=content,
+                [node_exe, "--check", "-"],
+                input=new_check_text,
                 text=True,
                 encoding="utf-8",
                 capture_output=True,
@@ -400,6 +405,9 @@ class JsTsValidator(BaseValidator):
                     line = int(match.group(1))
                     if match.group(2):
                         column = int(match.group(2))
+                caret_match = re.search(r"\n( *)\^\n", err_msg)
+                if caret_match:
+                    column = len(caret_match.group(1)) + 1
                 log_step(f"JsTsValidator.validate: raising node SyntaxValidationError for line={line}")
                 raise SyntaxValidationError(
                     message=f"Node JS Syntax Error: {err_msg}",
@@ -417,6 +425,7 @@ class JsTsValidator(BaseValidator):
             return
         tsc_cmd = self._get_tsc_command()
         if not tsc_cmd:
+            self._validate_with_node(content, filename, original_content)
             return
 
         suffix = f".patchitright_temp{Path(filename).suffix}"
@@ -425,6 +434,11 @@ class JsTsValidator(BaseValidator):
             # Check original first
             orig_process = self._run_tsc_check(tsc_cmd, temp_path, original_content)
             if orig_process.returncode != 0:
+                err_output = ((orig_process.stderr or "") + (orig_process.stdout or "")).lower()
+                missing_markers = ("not found", "error code", "could not determine executable", "cannot find", "this is not the tsc command", "npm install typescript")
+                if any(m in err_output for m in missing_markers):
+                    self._validate_with_node(content, filename, original_content)
+                    return
                 log_step("JsTsValidator.validate: original failed tsc check, skipping validation")
                 return
 
