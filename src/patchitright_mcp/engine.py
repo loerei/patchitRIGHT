@@ -45,6 +45,7 @@ class PatchEngine:
     def _handle_zero_occurrences(
         self,
         norm_search: str,
+        norm_replace: str,
         start_idx: int,
         end_idx: int,
         symbol_name: Optional[str],
@@ -81,7 +82,8 @@ class PatchEngine:
                     self.did_you_mean_end_line = s_end
                     return s_start - 1, s_end - 1, s_text, 1
 
-        self._handle_missing_match(start_idx, end_idx, norm_search, symbol_name)
+        target_slice = "\n".join(self.file_lines[start_idx:end_idx + 1])
+        self._handle_missing_match(start_idx, end_idx, norm_search, norm_replace, target_slice, symbol_name)
 
     def _expand_alignment_start(self, target_slice: str, src_start: int, match_char: str) -> int:
         while src_start > 0 and target_slice[src_start - 1] in "'\"([{":
@@ -140,7 +142,7 @@ class PatchEngine:
 
         if occurrences == 0:
             start_idx, end_idx, target_slice, occurrences = self._handle_zero_occurrences(
-                norm_search, start_idx, end_idx, symbol_name, allow_multiple, did_you_mean
+                norm_search, norm_replace, start_idx, end_idx, symbol_name, allow_multiple, did_you_mean
             )
 
         if not allow_multiple and occurrences > 1:
@@ -205,7 +207,7 @@ class PatchEngine:
         return reasons
 
     def _handle_missing_match(
-        self, start_idx: int, end_idx: int, norm_search: str, symbol_name: Optional[str]
+        self, start_idx: int, end_idx: int, norm_search: str, norm_replace: str, target_slice: str, symbol_name: Optional[str]
     ) -> None:
         first_lines = "\n".join(norm_search.split("\n")[:3])
         err_msg = f"Error: Search content not found inside the specified scope (lines {start_idx + 1} to {end_idx + 1})!\nFirst 3 lines of search block:\n{first_lines}"
@@ -220,6 +222,32 @@ class PatchEngine:
             reasons = self._detect_mismatch_reason(s_text, norm_search)
             for r in reasons:
                 err_msg += f"\n*Note:* {r}."
+
+            try:
+                s_indent = s_text[:len(s_text) - len(s_text.lstrip())]
+                s_replace = s_indent + norm_replace if s_indent and not norm_replace.startswith(s_indent) else norm_replace
+                suggested_patched_slice = self._apply_replacement_logic(target_slice, s_text, s_replace)
+                before_part = "\n".join(self.file_lines[:start_idx]) + "\n" if start_idx > 0 else ""
+                after_part = "\n" + "\n".join(self.file_lines[end_idx + 1:]) if end_idx < len(self.file_lines) - 1 else ""
+                suggested_patched = before_part + suggested_patched_slice + after_part
+                if self.is_crlf:
+                    suggested_patched = suggested_patched.replace("\n", "\r\n")
+
+                from .run_cache import get_cache
+                from pathlib import Path
+                cache = get_cache()
+                run_id = cache.store(
+                    entries=[{"target_path": Path(self.filename), "patched_content": suggested_patched}],
+                    original_contents={self.filename: self.file_content}
+                )
+                err_msg += f"\n\nTo apply this suggestion, run apply_last_dry_run with run_id '{run_id}'."
+                ve = ValueError(err_msg)
+                setattr(ve, "run_id", run_id)
+                raise ve
+            except ValueError:
+                raise
+            except Exception:
+                pass
         raise ValueError(err_msg)
 
     def _assert_line_filter(
@@ -261,7 +289,10 @@ class PatchEngine:
         for hunk in hunks:
             hunk_index += 1
             expected_old_lines = [l_content for l_type, l_content in hunk['lines'] if l_type in (' ', '-')]
-            expected_pos = hunk['old_start'] - 1 + offset
+            if hunk['old_start'] == 0:
+                expected_pos = 0
+            else:
+                expected_pos = hunk['old_start'] - 1 + offset
 
             if not self._verify_hunk_match(expected_pos, expected_old_lines, file_lines):
                 self._handle_mismatched_hunk(hunk, hunk_index, expected_pos, offset, expected_old_lines, file_lines)
@@ -284,6 +315,8 @@ class PatchEngine:
         return patched_file
 
     def _verify_hunk_match(self, expected_pos: int, expected_old_lines: list[str], file_lines: list[str]) -> bool:
+        if expected_pos == 0 and not expected_old_lines:
+            return True
         if expected_pos < 0 or expected_pos + len(expected_old_lines) > len(file_lines):
             return False
         for idx, expected_line in enumerate(expected_old_lines):
