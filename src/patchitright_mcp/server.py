@@ -491,7 +491,10 @@ def _generate_patchitright_guide(file_type: str | list[str] = "general") -> str:
     """Return the markdown guide for patchitright-mcp."""
     base_guide = f"""## patchitright-mcp (v{__version__})
 
-AST-bounded safe search-and-replace write companion MCP server.
+## Code Editing Policy
+
+Always use patchitright-mcp for modifying or writing code files in the repository. Never fall back to native edit/write tools (such as replace_file_content or write_to_file) for repository files.
+**Exception:** Native file creation/editing tools may only be used for non-repository scratch files (e.g., inside temporary diagnostic folders like `brain/scratch/`).
 
 ### Quick start
 1. Edit a function/class body: Call `patch_file` with `symbol_name`, `symbol_scope="body"`, and `replace_content`.
