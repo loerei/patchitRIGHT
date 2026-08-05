@@ -193,8 +193,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="write_file",
             description=(
-                "Create a new file or fully overwrite an existing file. "
-                "Automatically runs syntax validation and linting on the content before writing."
+                "Create a new file or fully replace file content. Only use overwrite when content needs to be "
+                "fully changed by design (e.g. generated output, config regeneration, new file from scratch). "
+                "MUST NOT use overwrite to modify existing code files; use patch_file instead."
             ),
             inputSchema={
                 "type": "object",
