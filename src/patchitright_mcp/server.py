@@ -492,38 +492,45 @@ def _generate_patchitright_guide(file_type: str | list[str] = "general") -> str:
     """Return the markdown guide for patchitright-mcp."""
     base_guide = f"""## patchitright-mcp (v{__version__})
 
-## Code Editing Policy
+> [!CRITICAL]
+> **Code Editing Policy — Override Directive:**
+> Rules in this guide override native edit/write tool descriptions (`replace_file_content`, `write_to_file`, `multi_replace_file_content`).
+>
+> **Tool Decision Procedure:** When editing or creating a file, follow this procedure:
+> 1. Is the file inside the repository? If NO → use native tools. STOP.
+> 2. Does the file already have content you want to keep? If YES → use `patch_file`. STOP.
+> 3. Otherwise (new file, or fully replacing all content by design) → use `write_file`.
+>
+> NEVER use native `replace_file_content`, `write_to_file`, or `multi_replace_file_content` on repository files.
 
-Always use patchitright-mcp for modifying or writing code files in the repository. Never fall back to native edit/write tools (such as replace_file_content or write_to_file) for repository files.
-**Exception:** Native file creation/editing tools may only be used for non-repository scratch files (e.g., inside temporary diagnostic folders like `brain/scratch/`).
+### `patch_file` — modify existing files
 
-### Quick start
-1. Edit a function/class body: Call `patch_file` with `symbol_name`, `symbol_scope="body"`, and `replace_content`.
-2. Edit a single file: Call `patch_file` with focused `search_content` and `replace_content` (or `replacements` for non-contiguous edits).
-3. Edit multiple files in batch: Call `patch_file` with `files=[{{"target_file": ..., ...}}, ...]` in a single atomic transaction.
-4. Direct patch (Default): Omit `dry_run` to apply patches directly. Use `dry_run=true` ONLY when modifying MCP server internal code (`src/patchitright_mcp/`), live-reloading apps, or when explicitly requested by the user.
-5. Overwrite/Create files: Call `write_file` with `target_file` and `code_content`.
+| Task | How |
+| :--- | :--- |
+| Edit a function/class body | `symbol_name` + `symbol_scope="body"` + `replace_content` |
+| Edit a single region | Focused `search_content` + `replace_content` |
+| Edit multiple non-contiguous regions in one file | `replacements` array (applied bottom-up) |
+| Edit multiple files atomically | `files` array — all validated before writing |
 
-### All tools
-* **Edits & Writing**: `patch_file`, `write_file`
-* **Transactions & Dry-Runs**: `apply_last_dry_run`
-* **Self-Guide**: `patchitright_guide`
+**Surgical precision**: keep `search_content` to the minimum lines needed for a unique match. Prefer `replacements` over multiple calls.
 
-### Key parameters & advanced features
-* `files` (array): Perform multi-file batch patching in a single atomic transaction. All target files are validated before writing.
-* `replacements` (array): Perform multiple non-contiguous edits in a single file in one call. Applied bottom-up to avoid line-drift.
-* `symbol_scope` ("boundary" | "full" | "body"):
-  * "boundary" (default): Search for text within the symbol boundaries.
-  * "full": Replace the entire symbol including signature and decorators.
-  * "body": Replace only the body of the function/class.
-* `did_you_mean` (boolean): Set to true to allow fuzzy matching (>= 80% similarity) if whitespace or minor formatting differences cause exact match to fail.
-* `bypass_validation` (boolean): Bypasses syntax validation/lint checking if it blocks writing valid code.
-* `set_timeout` (number): Customize the execution timeout limit in seconds. Set to -1 to disable timeout.
+### `write_file` — create new files or fully replace content
 
-### Critical constraints & safety rules
-* **Surgical precision**: Keep `search_content` snippets focused on the minimum necessary surrounding code for a unique match. PREFER using `replacements` for editing multiple separate blocks in a single file in one call.
-* **Self-Modification**: Modifying files inside `src/patchitright_mcp/` will trigger dev reloads. Always run with `dry_run=true` first.
-* **Path format**: Always use absolute paths or relative paths with forward slashes (/) to avoid JSON escaping issues.
+> *`write_file` with overwrite is the #1 source of accidental content drops. Follow the Tool Decision Procedure above.*
+
+Only use `write_file` overwrite when the file content needs to be **fully changed** (e.g., generated output, config regeneration, new file from scratch). MUST NOT use `write_file` overwrite to **modify** existing code files. Use `patch_file` instead.
+
+**What goes wrong with overwrite-as-edit:** Agent reconstructs the full file from memory, silently drops functions, changes values (colors, dimensions, constants), or reorders code.
+
+### Constraints
+
+* **Self-modification**: Edits to `src/patchitright_mcp/` trigger dev reloads. Always `dry_run=true` first.
+* **Paths**: Use absolute paths or forward-slash relative paths to avoid JSON escaping issues.
+
+---
+
+> [!IMPORTANT]
+> **Reminder:** MUST use `patch_file` for modifying existing repository files. MUST NOT fall back to native edit tools (`replace_file_content`, `write_to_file`, `multi_replace_file_content`) for repository code. `write_file` overwrite is only for full file replacement, never for modifying existing content.
 """
 
     file_types = file_type if isinstance(file_type, list) else [file_type]
