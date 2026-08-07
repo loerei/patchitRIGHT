@@ -523,8 +523,7 @@ class PatchEngine:
             for _, region_i in top_coarse:
                 local_start = max(start_idx, region_i - stride)
                 local_end = min(max_range, region_i + stride + 1)
-                for i in range(local_start, local_end):
-                    fine_indices.add(i)
+                fine_indices.update(range(local_start, local_end))
 
             fine_scores = []
             for i in fine_indices:

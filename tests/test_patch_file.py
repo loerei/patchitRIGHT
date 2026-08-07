@@ -823,9 +823,11 @@ class TestDryRunReturnsRunId:
         assert res["success"] is True
         assert res["dryRun"] is True
         assert "run_id" in res
-        assert isinstance(res["run_id"], str) and len(res["run_id"]) > 0
+        assert isinstance(res["run_id"], str)
+        assert len(res["run_id"]) > 0
         assert "expires_in" in res
-        assert isinstance(res["expires_in"], int) and res["expires_in"] > 0
+        assert isinstance(res["expires_in"], int)
+        assert res["expires_in"] > 0
 
     def test_batch_patch_files_dry_run_returns_run_id(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

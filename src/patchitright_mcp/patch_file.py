@@ -667,6 +667,36 @@ def _process_single_file_in_memory(
         return "", 0, [], "", _handle_patch_file_value_error(e, target_file), None
 
 
+def _build_modified_file_entry(pf: dict, diff_text: Optional[str] = None) -> dict:
+    eng = pf.get("engine")
+    relocated_range = None
+    if eng and getattr(eng, "is_relocated", False):
+        relocated_range = {
+            "start_line": getattr(eng, "relocated_start_line", 1),
+            "end_line": getattr(eng, "relocated_end_line", 1),
+        }
+
+    did_you_mean_info = None
+    if eng and getattr(eng, "is_did_you_mean_applied", False):
+        did_you_mean_info = {
+            "applied": True,
+            "similarity": getattr(eng, "s_ratio", 0.0),
+            "start_line": getattr(eng, "did_you_mean_start_line", None),
+            "end_line": getattr(eng, "did_you_mean_end_line", None),
+        }
+
+    pf["relocated_range"] = relocated_range
+    pf["did_you_mean_info"] = did_you_mean_info
+
+    return {
+        "target_file": pf["target_file"],
+        "occurrences": pf["occurrences"],
+        "diff_content": diff_text,
+        "relocated_range": relocated_range,
+        "did_you_mean_info": did_you_mean_info,
+    }
+
+
 def patch_file(  # noqa: C901 # NOSONAR
     target_file: Optional[str] = None,
     search_content: Optional[str] = None,
@@ -848,34 +878,8 @@ def patch_file(  # noqa: C901 # NOSONAR
                 structured_warnings.append({"file": pf["target_file"], "warnings": pf["warnings"]})
                 structured_suggestions.append({"file": pf["target_file"], "suggestion": pf["suggestion"]})
 
-            eng = pf.get("engine")
-            relocated_range = None
-            if eng and getattr(eng, "is_relocated", False):
-                relocated_range = {
-                    "start_line": getattr(eng, "relocated_start_line", 1),
-                    "end_line": getattr(eng, "relocated_end_line", 1),
-                }
-
-            did_you_mean_info = None
-            if eng and getattr(eng, "is_did_you_mean_applied", False):
-                did_you_mean_info = {
-                    "applied": True,
-                    "similarity": getattr(eng, "s_ratio", 0.0),
-                    "start_line": getattr(eng, "did_you_mean_start_line", None),
-                    "end_line": getattr(eng, "did_you_mean_end_line", None),
-                }
-
-            modified_files.append({
-                "target_file": pf["target_file"],
-                "occurrences": pf["occurrences"],
-                "diff_content": diff_text,
-                "relocated_range": relocated_range,
-                "did_you_mean_info": did_you_mean_info,
-            })
+            modified_files.append(_build_modified_file_entry(pf, diff_text))
             total_occurrences += pf["occurrences"]
-
-            pf["relocated_range"] = relocated_range
-            pf["did_you_mean_info"] = did_you_mean_info
 
         res = {
             "success": True,
@@ -938,30 +942,7 @@ def patch_file(  # noqa: C901 # NOSONAR
             structured_warnings.append({"file": pf["target_file"], "warnings": pf["warnings"]})
             structured_suggestions.append({"file": pf["target_file"], "suggestion": pf["suggestion"]})
 
-        eng = pf.get("engine")
-        relocated_range = None
-        if eng and getattr(eng, "is_relocated", False):
-            relocated_range = {
-                "start_line": getattr(eng, "relocated_start_line", 1),
-                "end_line": getattr(eng, "relocated_end_line", 1),
-            }
-
-        did_you_mean_info = None
-        if eng and getattr(eng, "is_did_you_mean_applied", False):
-            did_you_mean_info = {
-                "applied": True,
-                "similarity": getattr(eng, "s_ratio", 0.0),
-                "start_line": getattr(eng, "did_you_mean_start_line", None),
-                "end_line": getattr(eng, "did_you_mean_end_line", None),
-            }
-
-        modified_files.append({
-            "target_file": pf["target_file"],
-            "occurrences": pf["occurrences"],
-            "diff_content": None,
-            "relocated_range": relocated_range,
-            "did_you_mean_info": did_you_mean_info,
-        })
+        modified_files.append(_build_modified_file_entry(pf))
         total_occurrences += pf["occurrences"]
 
     res = {
