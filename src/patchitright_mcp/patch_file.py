@@ -420,20 +420,20 @@ def _process_single_file_in_memory(
             if curr["end_line"] >= nxt["start_line"]:
                 return "", 0, [], "", {"error": f"Error: Overlapping replacements detected between lines {curr['start_line']}-{curr['end_line']} and {nxt['start_line']}-{nxt['end_line']}."}, None
 
-        # Check overlap of insertions with active replacements
+        # Check overlap of insertions strictly inside active replacement bodies
         ins_items = [x for x in resolved_items if x.get("is_insertion")]
         for ins in ins_items:
             ins_l = ins["insert_line"]
             for repl in repl_items:
-                if repl["start_line"] <= ins_l <= repl["end_line"]:
+                if repl["start_line"] < ins_l < repl["end_line"]:
                     return "", 0, [], "", {"error": f"Error: Cannot insert code inside an active replacement range (lines {repl['start_line']}-{repl['end_line']})."}, None
 
-        # Sort descending by target line; tie-breaking: replacements before insertions
-        sorted_resolved_items = sorted(
-            resolved_items,
-            key=lambda x: (x["start_line"], 0 if not x.get("is_insertion") else 1),
-            reverse=True
-        )
+            # Sort descending by target line; tie-breaking: replacements before insertions (weight 1 > weight 0 with reverse=True)
+            sorted_resolved_items = sorted(
+                resolved_items,
+                key=lambda x: (x["start_line"], 1 if not x.get("is_insertion") else 0),
+                reverse=True
+            )
 
         def run_chain(contents: str, suggest_idx: Optional[int] = None) -> tuple[str, int, list[str], PatchEngine]:
             temp_content = contents

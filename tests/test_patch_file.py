@@ -2102,4 +2102,22 @@ class TestLineBasedInsertion:
         assert "error" in res2
         assert "Cannot combine 'insert_content'" in res2["error"]
 
+    def test_same_target_line_tie_breaking(self, tmp_path, monkeypatch):
+        """Tie-breaking test: when replacement and insertion share target line, replacement executes first."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "sample.py"
+        f.write_text("line 1\nline 2\nline 3\n")
+
+        res = patch_file(
+            target_file="sample.py",
+            replacements=[
+                {"insert_line": 2, "insert_content": "# inserted at line 2"},
+                {"search_content": "line 2", "replace_content": "modified line 2"},
+            ],
+            dry_run=False
+        )
+        assert res["success"] is True
+        content = f.read_text()
+        assert "# inserted at line 2\nmodified line 2" in content or "line 1\n# inserted at line 2\nmodified line 2" in content
+
 
