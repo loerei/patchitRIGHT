@@ -214,6 +214,10 @@ class PatchEngine:
 
         total_lines = len(self.file_lines)
 
+        self.clamped_warning = None
+        if insert_line > total_lines:
+            self.clamped_warning = f"Warning: Specified insert_line ({insert_line}) exceeds total file lines ({total_lines}). Clamped insertion to end-of-file."
+
         is_eof = (insert_line == -1 or insert_line > total_lines)
         if is_eof:
             target_idx = total_lines

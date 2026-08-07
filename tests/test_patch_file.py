@@ -2102,6 +2102,23 @@ class TestLineBasedInsertion:
         assert "error" in res2
         assert "Cannot combine 'insert_content'" in res2["error"]
 
+    def test_insert_line_out_of_bounds_clamping_warning(self, tmp_path, monkeypatch):
+        """Verify insert_line > total_lines emits a clamping warning in the response."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "sample.py"
+        f.write_text("line 1\nline 2\n")
+
+        res = patch_file(
+            target_file="sample.py",
+            insert_line=100,
+            insert_content="# Clamped footer",
+            auto_indent=True,
+            dry_run=False
+        )
+        assert res["success"] is True
+        assert "warnings" in res
+        assert any("exceeds total file lines" in w for w in res["warnings"])
+
     def test_insert_line_eof_indentation_default_root_scope(self, tmp_path, monkeypatch):
         """Verify appending to EOF via insert_line=-1 defaults to root scope (0 spaces) even if last line is indented."""
         monkeypatch.chdir(tmp_path)
