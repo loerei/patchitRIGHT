@@ -31,6 +31,9 @@ packages = ["src/patchitright_mcp"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-n auto"
+filterwarnings = [
+    "ignore::pytest.PytestCacheWarning",
+]
 
 [dependency-groups]
 dev = [

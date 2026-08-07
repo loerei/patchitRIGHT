@@ -12,6 +12,8 @@ class ValidationService:
         self._registry: Dict[str, Type[BaseValidator]] = {
             ".py": PythonValidator,
             ".js": JsTsValidator,
+            ".mjs": JsTsValidator,
+            ".cjs": JsTsValidator,
             ".ts": JsTsValidator,
             ".jsx": JsTsValidator,
             ".tsx": JsTsValidator,

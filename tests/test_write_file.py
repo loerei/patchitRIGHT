@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from patchitright_mcp.patch_file import write_file, apply_last_dry_run
-from patchitright_mcp.run_cache import get_cache
 
 
 @pytest.fixture
@@ -34,7 +33,7 @@ def test_write_file_new(temp_workspace):
     
     assert res.get("success") is True
     assert res.get("dryRun") is False
-    assert "created successfully" in res.get("message")
+    assert "Successfully created" in res.get("message")
     
     # Verify file was written
     target_path = temp_workspace / target
@@ -62,7 +61,7 @@ def test_write_file_existing_overwrite(temp_workspace):
     # Try writing with allow_overwrite
     res = write_file(target_file=target, code_content="new_content", allow_overwrite=True)
     assert res.get("success") is True
-    assert "overwritten successfully" in res.get("message")
+    assert "Successfully overwritten" in res.get("message")
     assert target_path.read_text(encoding="utf-8") == "new_content"
 
 
@@ -117,3 +116,57 @@ def test_write_file_dry_run_and_apply(temp_workspace):
     assert apply_res.get("success") is True
     assert target_path.exists()
     assert target_path.read_text(encoding="utf-8") == code
+
+
+def test_write_file_es_module_js_node_fallback(temp_workspace, monkeypatch):
+    """Test writing ES Module .js file when package.json contains 'type': 'module'."""
+    # Force Biome check to fail to trigger node check fallback
+    from patchitright_mcp.validators.javascript import JsTsValidator
+    monkeypatch.setattr(JsTsValidator, "_get_biome_command", lambda self, filename="": None)
+
+    # Set up package.json with "type": "module"
+    pkg_json = temp_workspace / "package.json"
+    pkg_json.write_text('{"type": "module"}', encoding="utf-8")
+
+    target = "bin/agents.js"
+    code = "#!/usr/bin/env node\nimport fs from 'node:fs';\nimport path from 'node:path';\nexport function run() { return fs; }\n"
+
+    res = write_file(target_file=target, code_content=code, allow_overwrite=False)
+    assert res.get("success") is True
+    assert res.get("target_file") == os.path.normpath(target)
+    assert res.get("diff_content") is None
+    assert res.get("occurrences") == 1
+    assert res.get("modified_files") is None
+    target_path = temp_workspace / target
+    assert target_path.exists()
+    assert target_path.read_text(encoding="utf-8") == code
+
+
+def test_write_file_mjs_and_cjs_syntax(temp_workspace, monkeypatch):
+    """Test syntax validation for .mjs and .cjs extensions under node check fallback."""
+    from patchitright_mcp.validators.javascript import JsTsValidator
+    monkeypatch.setattr(JsTsValidator, "_get_biome_command", lambda self, filename="": None)
+
+    # Valid .mjs file
+    mjs_target = "module.mjs"
+    mjs_code = "import fs from 'node:fs';\nexport default fs;\n"
+    res_mjs = write_file(target_file=mjs_target, code_content=mjs_code, allow_overwrite=False)
+    assert res_mjs.get("success") is True
+
+    # Valid .cjs file
+    cjs_target = "script.cjs"
+    cjs_code = "const fs = require('node:fs');\nmodule.exports = fs;\n"
+    res_cjs = write_file(target_file=cjs_target, code_content=cjs_code, allow_overwrite=False)
+    assert res_cjs.get("success") is True
+
+    # Invalid .mjs file (syntax error)
+    bad_mjs_target = "bad.mjs"
+    bad_mjs_code = "import { from 'node:fs';\n"
+    res_bad = write_file(target_file=bad_mjs_target, code_content=bad_mjs_code, allow_overwrite=False)
+    assert "error" in res_bad
+    assert "Syntax Error" in res_bad["error"]
+    assert res_bad.get("target_file") == os.path.normpath(bad_mjs_target)
+    assert res_bad.get("diff_content") is None
+    assert res_bad.get("occurrences") is None
+    assert res_bad.get("modified_files") is None
+

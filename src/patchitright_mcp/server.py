@@ -71,6 +71,25 @@ async def list_tools() -> list[Tool]:
                         "type": "integer",
                         "description": "Optional ending line number (1-indexed, inclusive) of the scope to search."
                     },
+                    "insert_line": {
+                        "type": "integer",
+                        "description": "Optional 1-indexed target line number to insert content at. Use 1 for top of file, or -1 to append at end-of-file."
+                    },
+                    "insert_content": {
+                        "type": "string",
+                        "description": "Text content to insert at insert_line or relative to symbol_name."
+                    },
+                    "insert_position": {
+                        "type": "string",
+                        "enum": ["before", "after", "start", "end"],
+                        "default": "before",
+                        "description": "Insertion position relative to insert_line or symbol_name ('before', 'after', 'start', 'end'). Defaults to 'before'."
+                    },
+                    "auto_indent": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "If True, automatically matches leading indentation of the target line. Defaults to True."
+                    },
                     "symbol_name": {
                         "type": "string",
                         "description": "Optional AST symbol name (e.g. function or class name) to scope the search to. Resolves boundaries via jCodeMunch index."
@@ -138,7 +157,11 @@ async def list_tools() -> list[Tool]:
                                         {"type": "integer"}
                                     ],
                                     "description": "Optional assertion (line number or substring check)."
-                                }
+                                },
+                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert at (-1 for EOF)."},
+                                "insert_content": {"type": "string", "description": "Text content to insert."},
+                                "insert_position": {"type": "string", "enum": ["before", "after", "start", "end"], "default": "before", "description": "Insertion position."},
+                                "auto_indent": {"type": "boolean", "default": True, "description": "Auto-indent matching target line."}
                             }
                         },
                         "description": "Optional list of replacements to apply in a single call to the same file. Applied bottom-up to avoid line-drift."
@@ -159,7 +182,11 @@ async def list_tools() -> list[Tool]:
                                 "end_line": {"type": "integer", "description": "Optional 1-based end line range."},
                                 "allow_multiple": {"type": "boolean", "description": "If true, replace all occurrences in scope."},
                                 "did_you_mean": {"type": "boolean", "description": "If true, apply closest fuzzy match fallback."},
-                                "line_filter": {"type": "string", "description": "Optional line filter pattern."}
+                                "line_filter": {"type": "string", "description": "Optional line filter pattern."},
+                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert at (-1 for EOF)."},
+                                "insert_content": {"type": "string", "description": "Text content to insert."},
+                                "insert_position": {"type": "string", "enum": ["before", "after", "start", "end"], "default": "before", "description": "Insertion position."},
+                                "auto_indent": {"type": "boolean", "default": True, "description": "Auto-indent matching target line."}
                             },
                             "required": ["target_file"]
                         },
@@ -193,8 +220,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="write_file",
             description=(
-                "Create a new file or fully overwrite an existing file. "
-                "Automatically runs syntax validation and linting on the content before writing."
+                "Create a new file or fully replace file content. Only use overwrite when content needs to be "
+                "fully changed by design (e.g. generated output, config regeneration, new file from scratch). "
+                "MUST NOT use overwrite to modify existing code files; use patch_file instead."
             ),
             inputSchema={
                 "type": "object",
@@ -433,6 +461,10 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
     symbol_scope = arguments.get("symbol_scope", "boundary")
     symbol_name = arguments.get("symbol_name")
     replacements = arguments.get("replacements")
+    insert_line = arguments.get("insert_line")
+    insert_content = arguments.get("insert_content")
+    insert_position = arguments.get("insert_position", "before")
+    auto_indent = bool(arguments.get("auto_indent", True)) if arguments.get("auto_indent") is not None else True
 
     if files is None and not target_file:
         return [TextContent(type="text", text="Error: Either 'target_file' or 'files' is required.")]
@@ -442,8 +474,8 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
             if not symbol_name or replace_content is None:
                 return [TextContent(type="text", text="Error: Both symbol_name and replace_content are required when symbol_scope is 'full' or 'body'.")]
         else:
-            if patch_content is None and replacements is None and (search_content is None or replace_content is None):
-                return [TextContent(type="text", text="Error: Either replacements, patch_content, OR both search_content and replace_content are required.")]
+            if patch_content is None and replacements is None and insert_content is None and (search_content is None or replace_content is None):
+                return [TextContent(type="text", text="Error: Either replacements, patch_content, insert_content, OR both search_content and replace_content are required.")]
 
     folder_filter = arguments.get("folder_filter")
     file_filter = arguments.get("file_filter")
@@ -482,6 +514,10 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
         bypass_validation=bypass_validation,
         symbol_scope=symbol_scope,
         files=files,
+        insert_line=insert_line,
+        insert_content=insert_content,
+        insert_position=insert_position,
+        auto_indent=auto_indent,
     )
 
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
@@ -491,35 +527,46 @@ def _generate_patchitright_guide(file_type: str | list[str] = "general") -> str:
     """Return the markdown guide for patchitright-mcp."""
     base_guide = f"""## patchitright-mcp (v{__version__})
 
-AST-bounded safe search-and-replace write companion MCP server.
+> [!CRITICAL]
+> **Code Editing Policy — Override Directive:**
+> Rules in this guide override native edit/write tool descriptions (`replace_file_content`, `write_to_file`, `multi_replace_file_content`).
+>
+> **Tool Decision Procedure:** When editing or creating a file, follow this procedure:
+> 1. Is the file inside the repository? If NO → use native tools. STOP.
+> 2. Does the file already have content you want to keep? If YES → use `patch_file`. STOP.
+> 3. Otherwise (new file, or fully replacing all content by design) → use `write_file`.
+>
+> NEVER use native `replace_file_content`, `write_to_file`, or `multi_replace_file_content` on repository files.
 
-### Quick start
-1. Edit a function/class body: Call `patch_file` with `symbol_name`, `symbol_scope="body"`, and `replace_content`.
-2. Edit a single file: Call `patch_file` with focused `search_content` and `replace_content` (or `replacements` for non-contiguous edits).
-3. Edit multiple files in batch: Call `patch_file` with `files=[{{"target_file": ..., ...}}, ...]` in a single atomic transaction.
-4. Direct patch (Default): Omit `dry_run` to apply patches directly. Use `dry_run=true` ONLY when modifying MCP server internal code (`src/patchitright_mcp/`), live-reloading apps, or when explicitly requested by the user.
-5. Overwrite/Create files: Call `write_file` with `target_file` and `code_content`.
+### `patch_file` — modify existing files
 
-### All tools
-* **Edits & Writing**: `patch_file`, `write_file`
-* **Transactions & Dry-Runs**: `apply_last_dry_run`
-* **Self-Guide**: `patchitright_guide`
+| Task | How |
+| :--- | :--- |
+| Edit a function/class body | `symbol_name` + `symbol_scope="body"` + `replace_content` |
+| Edit a single region | Focused `search_content` + `replace_content` |
+| Insert code at line or symbol | `insert_line` (1 for top, -1 for EOF) or `symbol_name` + `insert_content` + `insert_position` ("before"|"after"|"start"|"end") + `auto_indent` |
+| Edit multiple non-contiguous regions in one file | `replacements` array (applied bottom-up) |
+| Edit multiple files atomically | `files` array — all validated before writing |
 
-### Key parameters & advanced features
-* `files` (array): Perform multi-file batch patching in a single atomic transaction. All target files are validated before writing.
-* `replacements` (array): Perform multiple non-contiguous edits in a single file in one call. Applied bottom-up to avoid line-drift.
-* `symbol_scope` ("boundary" | "full" | "body"):
-  * "boundary" (default): Search for text within the symbol boundaries.
-  * "full": Replace the entire symbol including signature and decorators.
-  * "body": Replace only the body of the function/class.
-* `did_you_mean` (boolean): Set to true to allow fuzzy matching (>= 80% similarity) if whitespace or minor formatting differences cause exact match to fail.
-* `bypass_validation` (boolean): Bypasses syntax validation/lint checking if it blocks writing valid code.
-* `set_timeout` (number): Customize the execution timeout limit in seconds. Set to -1 to disable timeout.
+**Surgical precision**: keep `search_content` to the minimum lines needed for a unique match. Prefer `replacements` over multiple calls.
 
-### Critical constraints & safety rules
-* **Surgical precision**: Keep `search_content` snippets focused on the minimum necessary surrounding code for a unique match. PREFER using `replacements` for editing multiple separate blocks in a single file in one call.
-* **Self-Modification**: Modifying files inside `src/patchitright_mcp/` will trigger dev reloads. Always run with `dry_run=true` first.
-* **Path format**: Always use absolute paths or relative paths with forward slashes (/) to avoid JSON escaping issues.
+### `write_file` — create new files or fully replace content
+
+> *`write_file` with overwrite is the #1 source of accidental content drops. Follow the Tool Decision Procedure above.*
+
+Only use `write_file` overwrite when the file content needs to be **fully changed** (e.g., generated output, config regeneration, new file from scratch). MUST NOT use `write_file` overwrite to **modify** existing code files. Use `patch_file` instead.
+
+**What goes wrong with overwrite-as-edit:** Agent reconstructs the full file from memory, silently drops functions, changes values (colors, dimensions, constants), or reorders code.
+
+### Constraints
+
+* **Self-modification**: Edits to `src/patchitright_mcp/` trigger dev reloads. Always `dry_run=true` first.
+* **Paths**: Use absolute paths or forward-slash relative paths to avoid JSON escaping issues.
+
+---
+
+> [!IMPORTANT]
+> **Reminder:** MUST use `patch_file` for modifying existing repository files. MUST NOT fall back to native edit tools (`replace_file_content`, `write_to_file`, `multi_replace_file_content`) for repository code. `write_file` overwrite is only for full file replacement, never for modifying existing content.
 """
 
     file_types = file_type if isinstance(file_type, list) else [file_type]
