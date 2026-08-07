@@ -73,17 +73,11 @@ async def list_tools() -> list[Tool]:
                     },
                     "insert_line": {
                         "type": "integer",
-                        "description": "Optional 1-indexed target line number to insert content at. Use 1 for top of file, or -1 to append at end-of-file."
+                        "description": "Optional 1-indexed target line number to insert content above. Use 1 for top of file, or -1 to append at end-of-file."
                     },
                     "insert_content": {
                         "type": "string",
-                        "description": "Text content to insert at insert_line or relative to symbol_name."
-                    },
-                    "insert_position": {
-                        "type": "string",
-                        "enum": ["before", "after", "start", "end"],
-                        "default": "before",
-                        "description": "Insertion position relative to insert_line or symbol_name ('before', 'after', 'start', 'end'). Defaults to 'before'."
+                        "description": "Text content to insert directly above insert_line."
                     },
                     "auto_indent": {
                         "type": "boolean",
@@ -158,9 +152,8 @@ async def list_tools() -> list[Tool]:
                                     ],
                                     "description": "Optional assertion (line number or substring check)."
                                 },
-                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert at (-1 for EOF)."},
+                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert content above (-1 for EOF)."},
                                 "insert_content": {"type": "string", "description": "Text content to insert."},
-                                "insert_position": {"type": "string", "enum": ["before", "after", "start", "end"], "default": "before", "description": "Insertion position."},
                                 "auto_indent": {"type": "boolean", "default": True, "description": "Auto-indent matching target line."}
                             }
                         },
@@ -183,9 +176,8 @@ async def list_tools() -> list[Tool]:
                                 "allow_multiple": {"type": "boolean", "description": "If true, replace all occurrences in scope."},
                                 "did_you_mean": {"type": "boolean", "description": "If true, apply closest fuzzy match fallback."},
                                 "line_filter": {"type": "string", "description": "Optional line filter pattern."},
-                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert at (-1 for EOF)."},
+                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert content above (-1 for EOF)."},
                                 "insert_content": {"type": "string", "description": "Text content to insert."},
-                                "insert_position": {"type": "string", "enum": ["before", "after", "start", "end"], "default": "before", "description": "Insertion position."},
                                 "auto_indent": {"type": "boolean", "default": True, "description": "Auto-indent matching target line."}
                             },
                             "required": ["target_file"]
@@ -463,7 +455,6 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
     replacements = arguments.get("replacements")
     insert_line = arguments.get("insert_line")
     insert_content = arguments.get("insert_content")
-    insert_position = arguments.get("insert_position", "before")
     auto_indent = bool(arguments.get("auto_indent", True)) if arguments.get("auto_indent") is not None else True
 
     if files is None and not target_file:
@@ -516,7 +507,6 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
         files=files,
         insert_line=insert_line,
         insert_content=insert_content,
-        insert_position=insert_position,
         auto_indent=auto_indent,
     )
 
@@ -544,15 +534,14 @@ def _generate_patchitright_guide(file_type: str | list[str] = "general") -> str:
 | :--- | :--- |
 | Edit a function/class body | `symbol_name` + `symbol_scope="body"` + `replace_content` |
 | Edit a single region | Focused `search_content` + `replace_content` |
-| Insert code at line or symbol | `insert_line` (1 for top, -1 for EOF) or `symbol_name` + `insert_content` + `insert_position` ("before"|"after"|"start"|"end") + `auto_indent` |
+| Insert code at line | `insert_line` (line N, 1 for top, -1 for EOF) + `insert_content` (inserts directly above line N) |
 | Edit multiple non-contiguous regions in one file | `replacements` array (applied bottom-up) |
 | Edit multiple files atomically | `files` array — all validated before writing |
 
 > [!NOTE]
-> **Line Insertion Behavior:** Insert operations NEVER overwrite existing code — they push existing lines **DOWN**.
-> - `insert_position="before"` on line N: Inserts code ABOVE line N (line N shifts down).
-> - `insert_position="after"` on line N: Inserts code BELOW line N (line N+1 shifts down).
-> - `symbol_name` with `"start"` / `"end"`: Inserts at top or bottom inside symbol body (shifting inner lines down).
+> **Line Insertion Behavior:** Insert operations NEVER overwrite existing code — they insert code directly **ABOVE** `insert_line` N (pushing line N down).
+> - `insert_line=1`: Inserts at top of file.
+> - `insert_line=-1`: Appends at end of file (EOF).
 
 **Surgical precision**: keep `search_content` to the minimum lines needed for a unique match. Prefer `replacements` over multiple calls.
 
