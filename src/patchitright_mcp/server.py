@@ -71,6 +71,25 @@ async def list_tools() -> list[Tool]:
                         "type": "integer",
                         "description": "Optional ending line number (1-indexed, inclusive) of the scope to search."
                     },
+                    "insert_line": {
+                        "type": "integer",
+                        "description": "Optional 1-indexed target line number to insert content at. Use 1 for top of file, or -1 to append at end-of-file."
+                    },
+                    "insert_content": {
+                        "type": "string",
+                        "description": "Text content to insert at insert_line or relative to symbol_name."
+                    },
+                    "insert_position": {
+                        "type": "string",
+                        "enum": ["before", "after", "start", "end"],
+                        "default": "before",
+                        "description": "Insertion position relative to insert_line or symbol_name ('before', 'after', 'start', 'end'). Defaults to 'before'."
+                    },
+                    "auto_indent": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "If True, automatically matches leading indentation of the target line. Defaults to True."
+                    },
                     "symbol_name": {
                         "type": "string",
                         "description": "Optional AST symbol name (e.g. function or class name) to scope the search to. Resolves boundaries via jCodeMunch index."
@@ -138,7 +157,11 @@ async def list_tools() -> list[Tool]:
                                         {"type": "integer"}
                                     ],
                                     "description": "Optional assertion (line number or substring check)."
-                                }
+                                },
+                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert at (-1 for EOF)."},
+                                "insert_content": {"type": "string", "description": "Text content to insert."},
+                                "insert_position": {"type": "string", "enum": ["before", "after", "start", "end"], "default": "before", "description": "Insertion position."},
+                                "auto_indent": {"type": "boolean", "default": True, "description": "Auto-indent matching target line."}
                             }
                         },
                         "description": "Optional list of replacements to apply in a single call to the same file. Applied bottom-up to avoid line-drift."
@@ -159,7 +182,11 @@ async def list_tools() -> list[Tool]:
                                 "end_line": {"type": "integer", "description": "Optional 1-based end line range."},
                                 "allow_multiple": {"type": "boolean", "description": "If true, replace all occurrences in scope."},
                                 "did_you_mean": {"type": "boolean", "description": "If true, apply closest fuzzy match fallback."},
-                                "line_filter": {"type": "string", "description": "Optional line filter pattern."}
+                                "line_filter": {"type": "string", "description": "Optional line filter pattern."},
+                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert at (-1 for EOF)."},
+                                "insert_content": {"type": "string", "description": "Text content to insert."},
+                                "insert_position": {"type": "string", "enum": ["before", "after", "start", "end"], "default": "before", "description": "Insertion position."},
+                                "auto_indent": {"type": "boolean", "default": True, "description": "Auto-indent matching target line."}
                             },
                             "required": ["target_file"]
                         },
@@ -434,6 +461,10 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
     symbol_scope = arguments.get("symbol_scope", "boundary")
     symbol_name = arguments.get("symbol_name")
     replacements = arguments.get("replacements")
+    insert_line = arguments.get("insert_line")
+    insert_content = arguments.get("insert_content")
+    insert_position = arguments.get("insert_position", "before")
+    auto_indent = bool(arguments.get("auto_indent", True)) if arguments.get("auto_indent") is not None else True
 
     if files is None and not target_file:
         return [TextContent(type="text", text="Error: Either 'target_file' or 'files' is required.")]
@@ -443,8 +474,8 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
             if not symbol_name or replace_content is None:
                 return [TextContent(type="text", text="Error: Both symbol_name and replace_content are required when symbol_scope is 'full' or 'body'.")]
         else:
-            if patch_content is None and replacements is None and (search_content is None or replace_content is None):
-                return [TextContent(type="text", text="Error: Either replacements, patch_content, OR both search_content and replace_content are required.")]
+            if patch_content is None and replacements is None and insert_content is None and (search_content is None or replace_content is None):
+                return [TextContent(type="text", text="Error: Either replacements, patch_content, insert_content, OR both search_content and replace_content are required.")]
 
     folder_filter = arguments.get("folder_filter")
     file_filter = arguments.get("file_filter")
@@ -483,6 +514,10 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
         bypass_validation=bypass_validation,
         symbol_scope=symbol_scope,
         files=files,
+        insert_line=insert_line,
+        insert_content=insert_content,
+        insert_position=insert_position,
+        auto_indent=auto_indent,
     )
 
     return [TextContent(type="text", text=json.dumps(res, indent=2))]

@@ -173,6 +173,115 @@ class PatchEngine:
 
         return patched_file, occurrences
 
+    def apply_line_insertion(
+        self,
+        insert_line: Optional[int],
+        insert_content: str,
+        insert_position: str = "before",
+        auto_indent: bool = True,
+        validate: bool = True,
+    ) -> tuple[str, int]:
+        """Applies a line-based insertion to file_lines.
+
+        insert_line: 1-indexed line number (1 for top of file, -1 for EOF).
+        insert_content: string content to insert.
+        insert_position: 'before' or 'after'.
+        auto_indent: if True, matches target reference line leading whitespace.
+
+        Returns: (patched_file, 1)
+        """
+        if not insert_content:
+            raise ValueError("Error: 'insert_content' cannot be empty.")
+
+        if insert_line is None:
+            raise ValueError("Error: 'insert_line' or location parameter is required.")
+
+        if insert_line == 0 or insert_line < -1:
+            raise ValueError("Error: Line index must be >= 1 or -1 for end-of-file.")
+
+        # Empty file handling
+        if not self.file_lines:
+            content = insert_content[:-1] if insert_content.endswith("\n") else insert_content
+            if content.endswith("\r"):
+                content = content[:-1]
+            patched_file = content
+            if validate and not self.bypass_validation:
+                self.validator.validate_file(self.filename, patched_file, self.file_content)
+                self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
+            if self.is_crlf:
+                patched_file = patched_file.replace("\n", "\r\n")
+            return patched_file, 1
+
+        total_lines = len(self.file_lines)
+
+        if insert_line == -1 or insert_line > total_lines:
+            target_idx = total_lines
+            ref_idx = total_lines - 1
+        else:
+            line_idx = insert_line - 1
+            if insert_position == "after":
+                target_idx = line_idx + 1
+                ref_idx = line_idx
+            else:
+                target_idx = line_idx
+                ref_idx = line_idx
+
+        indent = ""
+        if auto_indent:
+            ref_line_idx = max(0, min(ref_idx, total_lines - 1))
+            ref_line = self.file_lines[ref_line_idx]
+            if not ref_line.strip():
+                found = False
+                # 1. Scan succeeding non-blank lines first (captures block body indent)
+                for s_idx in range(ref_line_idx + 1, total_lines):
+                    if self.file_lines[s_idx].strip():
+                        ref_line = self.file_lines[s_idx]
+                        found = True
+                        break
+                # 2. If no succeeding non-blank line, scan preceding non-blank lines
+                if not found:
+                    for p_idx in range(ref_line_idx - 1, -1, -1):
+                        p_line = self.file_lines[p_idx]
+                        if p_line.strip():
+                            ref_line = p_line
+                            found = True
+                            # If preceding header ends with ':', append 4 spaces / 1 tab
+                            if p_line.rstrip().endswith(":"):
+                                p_indent = p_line[:len(p_line) - len(p_line.lstrip())]
+                                unit = "\t" if "\t" in p_line else "    "
+                                indent = p_indent + unit
+                            break
+            if not indent and ref_line.strip():
+                indent = ref_line[:len(ref_line) - len(ref_line.lstrip())]
+
+        norm_insert = insert_content[:-1] if insert_content.endswith("\n") else insert_content
+        if norm_insert.endswith("\r"):
+            norm_insert = norm_insert[:-1]
+        norm_insert = norm_insert.replace("\r\n", "\n").replace("\r", "")
+
+        insert_lines = norm_insert.split("\n")
+        if indent:
+            indented_lines = [
+                (indent + line) if line.strip() else line
+                for line in insert_lines
+            ]
+        else:
+            indented_lines = insert_lines
+
+        new_file_lines = list(self.file_lines)
+        new_file_lines[target_idx:target_idx] = indented_lines
+        patched_file = "\n".join(new_file_lines)
+
+        if validate and not self.bypass_validation:
+            self.validator.validate_file(self.filename, patched_file, self.file_content)
+            self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
+
+        if self.is_crlf:
+            patched_file = patched_file.replace("\n", "\r\n")
+
+        return patched_file, 1
+
+
     def _resolve_classic_boundaries(
         self,
         start_line: Optional[int],
@@ -351,14 +460,82 @@ class PatchEngine:
         best_slice = None
         best_range = None
 
-        for window_size in (n, max(1, n - 1), n + 1):
-            for i in range(start_idx, min(end_idx - window_size + 2, len(self.file_lines))):
-                candidate_slice = "\n".join(self.file_lines[i : i + window_size])
-                ratio = fuzz.ratio(candidate_slice, norm_search) / 100.0
-                if ratio > best_ratio:
-                    best_ratio = ratio
-                    best_slice = candidate_slice
-                    best_range = (i + 1, i + window_size)
+        if n >= 6:
+            sample_offsets = [0, n // 2, n - 1]
+            samples = []
+            for off in sample_offsets:
+                if off < n:
+                    line = search_lines[off].strip()
+                    if line:
+                        samples.append((off, line))
+
+            file_stripped = [line.strip() for line in self.file_lines]
+            max_range = min(end_idx - n + 2, len(self.file_lines) - n + 1)
+
+            def eval_sample_score(i: int) -> float:
+                score_sum = 0.0
+                cnt = 0
+                for off, s_line in samples:
+                    c_idx = i + off
+                    if c_idx < len(file_stripped) and file_stripped[c_idx]:
+                        score_sum += fuzz.ratio(file_stripped[c_idx], s_line, score_cutoff=30.0)
+                        cnt += 1
+                return (score_sum / cnt) if cnt > 0 else 0.0
+
+            # 1. Coarse strided scan across the file
+            stride = max(1, n // 10)
+            coarse_scores = []
+            for i in range(start_idx, max_range, stride):
+                score = eval_sample_score(i)
+                coarse_scores.append((score, i))
+
+            coarse_scores.sort(key=lambda x: x[0], reverse=True)
+
+            # 2. Fine local scan around top coarse candidate regions
+            top_coarse = coarse_scores[:5]
+            fine_indices = set()
+            for _, region_i in top_coarse:
+                local_start = max(start_idx, region_i - stride)
+                local_end = min(max_range, region_i + stride + 1)
+                for i in range(local_start, local_end):
+                    fine_indices.add(i)
+
+            fine_scores = []
+            for i in fine_indices:
+                score = eval_sample_score(i)
+                fine_scores.append((score, i))
+
+            fine_scores.sort(key=lambda x: x[0], reverse=True)
+
+            # 3. Evaluate full fuzz.ratio on top candidate windows
+            for sample_score, i in fine_scores:
+                if best_ratio >= 0.5 and (sample_score / 100.0) < (best_ratio - 0.08):
+                    break
+
+                for window_size in (n, max(1, n - 1), n + 1):
+                    if (i + window_size - 1) >= len(self.file_lines):
+                        continue
+                    candidate_slice = "\n".join(self.file_lines[i : i + window_size])
+                    score_cutoff = max(50.0, best_ratio * 100.0)
+                    ratio = fuzz.ratio(candidate_slice, norm_search, score_cutoff=score_cutoff) / 100.0
+                    if ratio > best_ratio:
+                        best_ratio = ratio
+                        best_slice = candidate_slice
+                        best_range = (i + 1, i + window_size)
+                        if best_ratio >= 0.99:
+                            return best_range[0], best_range[1], best_slice, best_ratio
+        else:
+            for window_size in (n, max(1, n - 1), n + 1):
+                for i in range(start_idx, min(end_idx - window_size + 2, len(self.file_lines))):
+                    candidate_slice = "\n".join(self.file_lines[i : i + window_size])
+                    score_cutoff = max(50.0, best_ratio * 100.0)
+                    ratio = fuzz.ratio(candidate_slice, norm_search, score_cutoff=score_cutoff) / 100.0
+                    if ratio > best_ratio:
+                        best_ratio = ratio
+                        best_slice = candidate_slice
+                        best_range = (i + 1, i + window_size)
+                        if best_ratio >= 0.99:
+                            return best_range[0], best_range[1], best_slice, best_ratio
 
         if best_ratio >= 0.5 and best_range and best_slice:
             return best_range[0], best_range[1], best_slice, best_ratio
@@ -378,18 +555,24 @@ class PatchEngine:
 
         for i in search_range:
             candidate = "\n".join(file_lines[i : i + n])
-            ratio = fuzz.ratio(candidate, search_str) / 100.0
+            score_cutoff = max(30.0, best_ratio * 100.0)
+            ratio = fuzz.ratio(candidate, search_str, score_cutoff=score_cutoff) / 100.0
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_line = i + 1
+                if best_ratio >= 0.99:
+                    return best_line, best_ratio
 
         if best_ratio < 0.5:
             for i in range(len(file_lines) - n + 1):
                 candidate = "\n".join(file_lines[i : i + n])
-                ratio = fuzz.ratio(candidate, search_str) / 100.0
+                score_cutoff = max(30.0, best_ratio * 100.0)
+                ratio = fuzz.ratio(candidate, search_str, score_cutoff=score_cutoff) / 100.0
                 if ratio > best_ratio:
                     best_ratio = ratio
                     best_line = i + 1
+                    if best_ratio >= 0.99:
+                        return best_line, best_ratio
 
         if best_ratio >= 0.3 and best_line is not None:
             return best_line, best_ratio

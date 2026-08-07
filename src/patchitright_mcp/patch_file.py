@@ -176,19 +176,48 @@ def _resolve_ast_boundaries(
     if not symbol_name:
         return start_line, end_line, None, None
 
+    import re
+
     try:
         from jcodemunch_mcp.tools.resolve_repo import resolve_repo as resolve_repo_fn
+        from jcodemunch_mcp.storage import IndexStore
         repo_res = resolve_repo_fn(str(target_path), storage_path)
         if not repo_res.get("found"):
             return None, None, {"error": f"Workspace at '{cwd}' is not indexed. Call index_folder first to resolve symbols."}, None
         
-        repo_id = repo_res["repo"]
-        owner, name = repo_id.split("/", 1)
-        
+        repo_id = repo_res.get("repo")
         store = IndexStore(base_path=storage_path)
-        index = store.load_index(owner, name)
-        if not index:
-            return None, None, {"error": f"Index for '{repo_id}' could not be loaded."}, None
+        index = store.load_index(*repo_id.split("/", 1)) if repo_id and "/" in repo_id else None
+        if not repo_res.get("found") or not index:
+            if file_content is None and target_path.exists():
+                with open(target_path, "r", encoding="utf-8", errors="replace") as f:
+                    file_content = f.read()
+            if file_content:
+                lines = file_content.split("\n")
+                pattern = re.compile(rf"^\s*(?:async\s+)?(?:def|class)\s+{re.escape(symbol_name)}\b")
+                found_line = None
+                for idx, line in enumerate(lines, 1):
+                    if pattern.search(line):
+                        found_line = idx
+                        break
+                if found_line:
+                    indent = len(lines[found_line - 1]) - len(lines[found_line - 1].lstrip())
+                    end_l = len(lines)
+                    for idx in range(found_line, len(lines)):
+                        l = lines[idx]
+                        if l.strip() and not l.strip().startswith("#"):
+                            curr_indent = len(l) - len(l.lstrip())
+                            if curr_indent <= indent and idx + 1 > found_line:
+                                end_l = idx
+                                break
+                    body_range = None
+                    try:
+                        from .body_parser import get_body_range
+                        body_range = get_body_range(file_content, str(target_path), found_line, end_l)
+                    except Exception:
+                        pass
+                    return found_line, end_l, None, body_range
+            return None, None, {"error": f"Workspace at '{cwd}' is not indexed and symbol '{symbol_name}' could not be matched."}, None
             
         source_root = Path(repo_res.get("source_root") or index.source_root or cwd).resolve()
         try:
@@ -292,49 +321,119 @@ def _process_single_file_in_memory(
     if replacements is not None:
         resolved_items = []
         for idx, r in enumerate(replacements):
-            scope = r.get("symbol_scope", "boundary")
-            sym_name = r.get("symbol_name")
-            r_start = r.get("start_line")
-            r_end = r.get("end_line")
+            is_ins = "insert_content" in r or "insert_line" in r
+            if is_ins:
+                ins_content = r.get("insert_content")
+                if ins_content == "":
+                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] specifies an empty insert_content."}, None
+                if ins_content is None:
+                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] specifies insert_line but is missing insert_content."}, None
+                if "search_content" in r or "replace_content" in r:
+                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] cannot combine insert_content with search_content or replace_content."}, None
+                ins_line = r.get("insert_line")
+                sym_name = r.get("symbol_name")
+                ins_pos = r.get("insert_position", "before")
+                if ins_line is not None and sym_name is not None:
+                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] cannot specify both insert_line and symbol_name."}, None
+                if ins_line is None and sym_name is None:
+                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] must specify either insert_line or symbol_name."}, None
 
-            body_range = None
-            resolved_start = r_start
-            resolved_end = r_end
+                target_line = ins_line
+                if sym_name:
+                    sym_start, sym_end, sym_err, b_range = _resolve_ast_boundaries(
+                        cwd, target_path, sym_name, storage_path, None, None, "boundary", file_content
+                    )
+                    if sym_err:
+                        return "", 0, [], "", sym_err, None
+                    if ins_pos == "before":
+                        file_lines = file_content.split("\n")
+                        actual_line = sym_start or 1
+                        while actual_line > 1 and file_lines[actual_line - 2].strip().startswith("@"):
+                            actual_line -= 1
+                        target_line = actual_line
+                    elif ins_pos == "after":
+                        target_line = sym_end
+                    elif ins_pos in ("start", "end"):
+                        if b_range is None:
+                            return "", 0, [], "", {"error": f"Error: Cannot resolve body range for symbol '{sym_name}'."}, None
+                        target_line = b_range.start_line if ins_pos == "start" else b_range.end_line
 
-            if scope in ("full", "body"):
-                if not sym_name or "replace_content" not in r:
-                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] specifies symbol_scope '{scope}' but is missing symbol_name or replace_content."}, None
+                resolved_items.append({
+                    "r": r,
+                    "is_insertion": True,
+                    "insert_line": target_line,
+                    "insert_content": ins_content,
+                    "insert_position": ins_pos,
+                    "auto_indent": r.get("auto_indent", True),
+                    "start_line": target_line or 1,
+                    "end_line": target_line or 1,
+                })
             else:
-                if "search_content" not in r or "replace_content" not in r:
-                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] is missing search_content or replace_content."}, None
+                scope = r.get("symbol_scope", "boundary")
+                sym_name = r.get("symbol_name")
+                r_start = r.get("start_line")
+                r_end = r.get("end_line")
 
-            if sym_name:
-                sym_start, sym_end, sym_err, b_range = _resolve_ast_boundaries(
-                    cwd, target_path, sym_name, storage_path, r_start, r_end, scope, file_content
-                )
-                if sym_err:
-                    return "", 0, [], "", sym_err, None
-                resolved_start = sym_start
-                resolved_end = sym_end
-                body_range = b_range
+                body_range = None
+                resolved_start = r_start
+                resolved_end = r_end
 
-            resolved_items.append({
-                "r": r,
-                "scope": scope,
-                "symbol_name": sym_name,
-                "start_line": resolved_start or 1,
-                "end_line": resolved_end or len(file_content.split("\n")),
-                "body_range": body_range,
-            })
+                if scope in ("full", "body"):
+                    if not sym_name or "replace_content" not in r:
+                        return "", 0, [], "", {"error": f"Error: replacements[{idx}] specifies symbol_scope '{scope}' but is missing symbol_name or replace_content."}, None
+                else:
+                    if "search_content" not in r or "replace_content" not in r:
+                        return "", 0, [], "", {"error": f"Error: replacements[{idx}] is missing search_content or replace_content."}, None
 
-        sorted_by_start = sorted(resolved_items, key=lambda x: x["start_line"])
-        for i in range(len(sorted_by_start) - 1):
-            curr = sorted_by_start[i]
-            nxt = sorted_by_start[i+1]
+                if sym_name:
+                    sym_start, sym_end, sym_err, b_range = _resolve_ast_boundaries(
+                        cwd, target_path, sym_name, storage_path, r_start, r_end, scope, file_content
+                    )
+                    if sym_err:
+                        return "", 0, [], "", sym_err, None
+                    resolved_start = sym_start
+                    resolved_end = sym_end
+                    body_range = b_range
+                elif "search_content" in r and r["search_content"] in file_content:
+                    s_text = r["search_content"]
+                    s_char_idx = file_content.find(s_text)
+                    match_start_l = file_content[:s_char_idx].count("\n") + 1
+                    match_end_l = match_start_l + s_text.count("\n")
+                    resolved_start = match_start_l
+                    resolved_end = match_end_l
+
+                resolved_items.append({
+                    "r": r,
+                    "is_insertion": False,
+                    "scope": scope,
+                    "symbol_name": sym_name,
+                    "start_line": resolved_start or 1,
+                    "end_line": resolved_end or len(file_content.split("\n")),
+                    "body_range": body_range,
+                })
+
+        repl_items = [x for x in resolved_items if not x.get("is_insertion")]
+        sorted_repl = sorted(repl_items, key=lambda x: x["start_line"])
+        for i in range(len(sorted_repl) - 1):
+            curr = sorted_repl[i]
+            nxt = sorted_repl[i+1]
             if curr["end_line"] >= nxt["start_line"]:
                 return "", 0, [], "", {"error": f"Error: Overlapping replacements detected between lines {curr['start_line']}-{curr['end_line']} and {nxt['start_line']}-{nxt['end_line']}."}, None
 
-        sorted_resolved_items = sorted(resolved_items, key=lambda x: x["start_line"], reverse=True)
+        # Check overlap of insertions with active replacements
+        ins_items = [x for x in resolved_items if x.get("is_insertion")]
+        for ins in ins_items:
+            ins_l = ins["insert_line"]
+            for repl in repl_items:
+                if repl["start_line"] <= ins_l <= repl["end_line"]:
+                    return "", 0, [], "", {"error": f"Error: Cannot insert code inside an active replacement range (lines {repl['start_line']}-{repl['end_line']})."}, None
+
+        # Sort descending by target line; tie-breaking: replacements before insertions
+        sorted_resolved_items = sorted(
+            resolved_items,
+            key=lambda x: (x["start_line"], 0 if not x.get("is_insertion") else 1),
+            reverse=True
+        )
 
         def run_chain(contents: str, suggest_idx: Optional[int] = None) -> tuple[str, int, list[str], PatchEngine]:
             temp_content = contents
@@ -345,11 +444,19 @@ def _process_single_file_in_memory(
             for idx, item in enumerate(sorted_resolved_items):
                 r_engine = PatchEngine(temp_content, target_file, bypass_validation=bypass_validation)
                 r = item["r"]
-                scope = item["scope"]
-                sym_name = item["symbol_name"]
+                scope = item.get("scope", "boundary")
+                sym_name = item.get("symbol_name")
                 is_suggest = (suggest_idx is not None and idx == suggest_idx)
 
-                if scope in ("full", "body"):
+                if item.get("is_insertion"):
+                    temp_content, occurrences_cnt = r_engine.apply_line_insertion(
+                        insert_line=item["insert_line"],
+                        insert_content=item["insert_content"],
+                        insert_position=item["insert_position"],
+                        auto_indent=item["auto_indent"],
+                        validate=(idx == len(sorted_resolved_items) - 1)
+                    )
+                elif scope in ("full", "body"):
                     b_range = item["body_range"]
                     start_line_val = item["start_line"]
                     end_line_val = item["end_line"]
@@ -413,6 +520,73 @@ def _process_single_file_in_memory(
 
     # Classic search/replace or AST symbol replacement
     symbol_scope = kwargs.get("symbol_scope", "boundary")
+
+    # Handle Line-Based Insertion mode
+    insert_line = kwargs.get("insert_line")
+    insert_content = kwargs.get("insert_content")
+    insert_position = kwargs.get("insert_position", "before")
+    auto_indent = bool(kwargs.get("auto_indent", True)) if kwargs.get("auto_indent") is not None else True
+
+    if insert_content is not None or insert_line is not None:
+        if insert_content == "":
+            return "", 0, [], "", {"error": "Error: 'insert_content' cannot be empty."}, None
+        if insert_content is None:
+            return "", 0, [], "", {"error": "Error: 'insert_content' is required when specifying an insertion operation."}, None
+        if search_content is not None or replace_content is not None or patch_content is not None or start_line is not None or end_line is not None:
+            return "", 0, [], "", {"error": "Error: Cannot combine 'insert_content' with 'search_content', 'replace_content', 'patch_content', 'start_line', or 'end_line' in a single item."}, None
+        if insert_line is not None and symbol_name is not None:
+            return "", 0, [], "", {"error": "Error: Cannot specify both 'insert_line' and 'symbol_name' in a single insertion operation."}, None
+        if insert_line is None and symbol_name is None:
+            return "", 0, [], "", {"error": "Error: Either 'insert_line' or 'symbol_name' must be provided for insertion."}, None
+        if insert_line is not None and insert_position in ("start", "end"):
+            return "", 0, [], "", {"error": "Error: Positions 'start' and 'end' require a symbol_name."}, None
+
+        target_insert_line = insert_line
+        if symbol_name:
+            sym_start, sym_end, sym_err, b_range = _resolve_ast_boundaries(
+                cwd, target_path, symbol_name, storage_path, None, None, symbol_scope, file_content
+            )
+            if sym_err:
+                return "", 0, [], "", sym_err, None
+            if insert_position == "before":
+                # Decorator detection
+                file_lines = file_content.split("\n")
+                actual_line = sym_start or 1
+                while actual_line > 1 and file_lines[actual_line - 2].strip().startswith("@"):
+                    actual_line -= 1
+                target_insert_line = actual_line
+            elif insert_position == "after":
+                target_insert_line = sym_end
+            elif insert_position in ("start", "end"):
+                if b_range is None:
+                    return "", 0, [], "", {"error": f"Error: Cannot resolve body range for symbol '{symbol_name}' to insert at '{insert_position}'."}, None
+                if insert_position == "start":
+                    target_insert_line = b_range.start_line
+                else:
+                    target_insert_line = b_range.end_line
+
+        engine = PatchEngine(file_content, target_file, bypass_validation=bypass_validation)
+        try:
+            patched_file, occurrences = engine.apply_line_insertion(
+                insert_line=target_insert_line,
+                insert_content=insert_content,
+                insert_position=insert_position if insert_line is not None else "before",
+                auto_indent=auto_indent,
+                validate=True,
+            )
+            linter_warnings = getattr(engine, "linter_warnings", [])
+            suggestion = _get_linter_suggestion(target_file) if linter_warnings else ""
+            return patched_file, occurrences, linter_warnings, suggestion, None, engine
+        except SyntaxValidationError as e:
+            return "", 0, [], "", {
+                "error": f"Syntax Error: {str(e)}",
+                "filename": e.filename,
+                "line": e.line,
+                "column": e.column
+            }, None
+        except ValueError as e:
+            return "", 0, [], "", _handle_patch_file_value_error(e, target_file), None
+
     if symbol_scope in ("full", "body"):
         if not symbol_name or replace_content is None:
             return "", 0, [], "", {"error": "Error: Both symbol_name and replace_content must be provided when symbol_scope is 'full' or 'body'."}, None
@@ -501,19 +675,23 @@ def patch_file(  # noqa: C901 # NOSONAR
     replacements: Optional[list[dict]] = None,
     files: Optional[list[dict]] = None,
     patches: Optional[list[dict]] = None,
+    insert_line: Optional[int] = None,
+    insert_content: Optional[str] = None,
+    insert_position: Optional[str] = "before",
+    auto_indent: bool = True,
     **kwargs,
 ) -> dict:
     """Perform a robust search-and-replace or apply a strict unified diff (Fuzz = 0) across single or multiple files."""
     files_param = files or patches
     symbol_name_arg = kwargs.get("symbol_name")
-    single_file_args = [target_file, search_content, replace_content, patch_content, replacements, symbol_name_arg]
+    single_file_args = [target_file, search_content, replace_content, patch_content, replacements, symbol_name_arg, insert_content, insert_line]
     has_single_file_args = any(arg is not None for arg in single_file_args)
 
     if files_param is not None and has_single_file_args:
-        return {"error": "Error: Cannot provide both 'files' array and top-level single-file edit parameters."}
+        return _create_error_response("Error: Cannot provide both 'files' array and top-level single-file edit parameters.")
 
     if files_param is None and target_file is None:
-        return {"error": "Error: Either 'target_file' or 'files' must be provided."}
+        return _create_error_response("Error: Either 'target_file' or 'files' must be provided.")
 
     multi_file_mode = files_param is not None
     if multi_file_mode:
@@ -527,6 +705,10 @@ def patch_file(  # noqa: C901 # NOSONAR
             "end_line": end_line,
             "patch_content": patch_content,
             "replacements": replacements,
+            "insert_line": insert_line,
+            "insert_content": insert_content,
+            "insert_position": insert_position,
+            "auto_indent": auto_indent,
             **kwargs
         }]
 
@@ -550,7 +732,7 @@ def patch_file(  # noqa: C901 # NOSONAR
     for item in file_items:
         tf = item.get("target_file")
         if not tf:
-            return {"error": "Error: 'target_file' is required for each item in 'files' array."}
+            return _create_error_response("Error: 'target_file' is required for each item in 'files' array.")
         try:
             rp = workspace.resolve_safe_path(tf)
             resolved_paths.append(rp)
@@ -559,7 +741,7 @@ def patch_file(  # noqa: C901 # NOSONAR
 
     norm_resolved = [os.path.normcase(str(rp)) for rp in resolved_paths]
     if len(norm_resolved) != len(set(norm_resolved)):
-        return {"error": "Error: Duplicate resolved target_file paths found in 'files' batch. For multiple edits in the same file, use 'replacements' within a single item."}
+        return _create_error_response("Error: Duplicate resolved target_file paths found in 'files' batch. For multiple edits in the same file, use 'replacements' within a single item.")
 
     transaction = FileTransaction(workspace_root)
     processed_files: list[dict] = []
@@ -580,7 +762,7 @@ def patch_file(  # noqa: C901 # NOSONAR
         is_creation_diff = item_patch_content is not None and ("old_start=0" in item_patch_content or "@@ -0,0" in item_patch_content or "@@ -0 " in item_patch_content)
 
         if not file_exists and not is_creation_diff:
-            return {"error": f"Target file not found at {target_path}. Use write_file to create new files or supply a valid patch_content creation diff."}
+            return _create_error_response(f"Target file not found at {target_path}. Use write_file to create new files or supply a valid patch_content creation diff.", target_file=tf)
 
         transaction.register_file(target_path)
         original_contents[str(target_path)] = file_content
@@ -601,9 +783,9 @@ def patch_file(  # noqa: C901 # NOSONAR
         )
         if err:
             if multi_file_mode:
-                err_msg = err.get("error", str(err))
-                return {"error": f"Validation failed for file {tf}: {err_msg}", "detail": err_msg}
-            return err
+                err_msg = err.get("error", str(err)) if isinstance(err, dict) else str(err)
+                return _create_error_response(f"Validation failed for file {tf}: {err_msg}", target_file=tf, detail=err_msg)
+            return _create_error_response(err, target_file=tf)
 
         modifications[target_path] = patched_content
         processed_files.append({
@@ -625,11 +807,11 @@ def patch_file(  # noqa: C901 # NOSONAR
         transaction.rollback()
         transaction.cleanup()
         raw_name = fail_path.name if fail_path else "file"
-        return {"error": f"Transaction Aborted (Optimistic Locking Conflict): File '{raw_name}' was modified on disk."}
+        return _create_error_response(f"Transaction Aborted (Optimistic Locking Conflict): File '{raw_name}' was modified on disk.")
 
     if dry_run:
         cache = get_cache()
-        entries = [{"target_path": pf["target_path"], "patched_content": pf["patched_content"], "exists": pf.get("file_exists", True)} for pf in processed_files]
+        entries = [{"target_path": pf["target_path"], "patched_content": pf["patched_content"], "exists": pf.get("file_exists", True), "target_file": pf["target_file"], "occurrences": pf["occurrences"]} for pf in processed_files]
         run_id = cache.store(entries=entries, original_contents=original_contents)
         transaction.cleanup()
 
@@ -637,12 +819,15 @@ def patch_file(  # noqa: C901 # NOSONAR
             pf = processed_files[0]
             eng = pf.get("engine")
             diff_text = generate_diff(pf["file_content"], pf["patched_content"], pf["target_file"])
-            msg = f"```diff\n{diff_text}```\n- Target file: `{pf['target_file']}`\n- Match occurrences inside scope: **{pf['occurrences']}**\n"
+            msg = f"```diff\n{diff_text}```\n"
             res = {
                 "success": True,
                 "dryRun": True,
+                "target_file": pf["target_file"],
                 "message": msg,
+                "diff_content": diff_text,
                 "occurrences": pf["occurrences"],
+                "modified_files": None,
                 "run_id": run_id,
                 "expires_in": cache.get_ttl(),
             }
@@ -651,6 +836,8 @@ def patch_file(  # noqa: C901 # NOSONAR
         msg = f"Dry-run preview for **{len(processed_files)}** file(s):\n"
         structured_warnings = []
         structured_suggestions = []
+        modified_files = []
+        total_occurrences = 0
         for pf in processed_files:
             diff_text = generate_diff(pf["file_content"], pf["patched_content"], pf["target_file"])
             msg += f"\n### `{pf['target_file']}`\n```diff\n{diff_text}```\n"
@@ -658,10 +845,45 @@ def patch_file(  # noqa: C901 # NOSONAR
                 structured_warnings.append({"file": pf["target_file"], "warnings": pf["warnings"]})
                 structured_suggestions.append({"file": pf["target_file"], "suggestion": pf["suggestion"]})
 
+            eng = pf.get("engine")
+            relocated_range = None
+            if eng and getattr(eng, "is_relocated", False):
+                relocated_range = {
+                    "start_line": getattr(eng, "relocated_start_line", 1),
+                    "end_line": getattr(eng, "relocated_end_line", 1),
+                }
+
+            did_you_mean_info = None
+            if eng and getattr(eng, "is_did_you_mean_applied", False):
+                did_you_mean_info = {
+                    "applied": True,
+                    "similarity": getattr(eng, "s_ratio", 0.0),
+                    "start_line": getattr(eng, "did_you_mean_start_line", None),
+                    "end_line": getattr(eng, "did_you_mean_end_line", None),
+                }
+
+            modified_files.append({
+                "target_file": pf["target_file"],
+                "occurrences": pf["occurrences"],
+                "diff_content": diff_text,
+                "relocated_range": relocated_range,
+                "did_you_mean_info": did_you_mean_info,
+            })
+            total_occurrences += pf["occurrences"]
+
+            pf["relocated_range"] = relocated_range
+            pf["did_you_mean_info"] = did_you_mean_info
+
         res = {
             "success": True,
             "dryRun": True,
+            "target_file": processed_files[0]["target_file"] if processed_files else None,
             "message": msg,
+            "diff_content": None,
+            "occurrences": total_occurrences,
+            "relocated_range": None,
+            "did_you_mean_info": None,
+            "modified_files": modified_files,
             "run_id": run_id,
             "expires_in": cache.get_ttl(),
         }
@@ -672,7 +894,7 @@ def patch_file(  # noqa: C901 # NOSONAR
 
     commit_err = _commit_or_defer_transaction(transaction, modifications)
     if commit_err:
-        return commit_err
+        return _create_error_response(commit_err)
 
     if not multi_file_mode:
         pf = processed_files[0]
@@ -683,35 +905,72 @@ def patch_file(  # noqa: C901 # NOSONAR
         if is_did_you_mean:
             s_ratio = getattr(eng, "s_ratio", 0.0)
             ratio_pct = round(s_ratio * 100)
-            msg = f"- Target file: `{pf['target_file']}`\n- Replaced occurrences: **1** (applied via 'did_you_mean' fallback)\n*Note:* Exact search content not found, but closest match (similarity {ratio_pct}%) was matched via 'did_you_mean' flag.\n"
+            msg = f"Patched 1 occurrence in `{pf['target_file']}` (applied via 'did_you_mean' fallback, similarity {ratio_pct}%).\n"
         elif is_relocated:
             r_start = getattr(eng, "relocated_start_line", 1)
             r_end = getattr(eng, "relocated_end_line", 1)
-            msg = f"- Target file: `{pf['target_file']}`\n- Search content was relocated to lines {r_start}-{r_end}\n"
+            msg = f"Patched {pf['occurrences']} occurrence(s) in `{pf['target_file']}` (relocated to lines {r_start}-{r_end}).\n"
         else:
-            msg = f"- Target file: `{pf['target_file']}` patched successfully\n"
+            msg = f"Successfully patched `{pf['target_file']}`.\n"
 
         res = {
             "success": True,
             "dryRun": False,
+            "target_file": pf["target_file"],
             "message": msg,
+            "diff_content": None,
             "occurrences": pf["occurrences"],
+            "modified_files": None,
         }
         return _attach_engine_flags(res, pf)
 
     msg = f"Successfully patched **{len(processed_files)}** file(s):\n"
     structured_warnings = []
     structured_suggestions = []
+    modified_files = []
+    total_occurrences = 0
     for pf in processed_files:
         msg += f"- `{pf['target_file']}` updated.\n"
         if pf["warnings"]:
             structured_warnings.append({"file": pf["target_file"], "warnings": pf["warnings"]})
             structured_suggestions.append({"file": pf["target_file"], "suggestion": pf["suggestion"]})
 
+        eng = pf.get("engine")
+        relocated_range = None
+        if eng and getattr(eng, "is_relocated", False):
+            relocated_range = {
+                "start_line": getattr(eng, "relocated_start_line", 1),
+                "end_line": getattr(eng, "relocated_end_line", 1),
+            }
+
+        did_you_mean_info = None
+        if eng and getattr(eng, "is_did_you_mean_applied", False):
+            did_you_mean_info = {
+                "applied": True,
+                "similarity": getattr(eng, "s_ratio", 0.0),
+                "start_line": getattr(eng, "did_you_mean_start_line", None),
+                "end_line": getattr(eng, "did_you_mean_end_line", None),
+            }
+
+        modified_files.append({
+            "target_file": pf["target_file"],
+            "occurrences": pf["occurrences"],
+            "diff_content": None,
+            "relocated_range": relocated_range,
+            "did_you_mean_info": did_you_mean_info,
+        })
+        total_occurrences += pf["occurrences"]
+
     res = {
         "success": True,
         "dryRun": False,
+        "target_file": processed_files[0]["target_file"] if processed_files else None,
         "message": msg,
+        "diff_content": None,
+        "occurrences": total_occurrences,
+        "relocated_range": None,
+        "did_you_mean_info": None,
+        "modified_files": modified_files,
     }
     if structured_warnings:
         res["warnings"] = structured_warnings
@@ -731,20 +990,33 @@ def _write_file_dry_run(
     if file_exists:
         diff_text = generate_diff(original_content, code_content, target_file)
         output = f"```diff\n{diff_text}```\n"
-        output += f"- Target file: `{target_file}` (Overwriting existing file)\n"
     else:
-        output = f"Preview of creating new file `{target_file}`:\n"
-        output += f"```\n{code_content}\n```\n"
+        diff_text = generate_diff("", code_content, target_file)
+        output = f"Preview of creating new file `{target_file}`:\n```\n{code_content}\n```\n"
     
     cache = get_cache()
     run_id = cache.store(
-        entries=[{"target_path": target_path, "patched_content": code_content}],
+        entries=[{
+            "target_path": target_path,
+            "patched_content": code_content,
+            "exists": file_exists,
+            "target_file": target_file,
+            "occurrences": 1,
+            "relocated_range": None,
+            "did_you_mean_info": None,
+        }],
         original_contents={str(target_path): original_content, target_file: original_content},
     )
     res = {
         "success": True,
         "dryRun": True,
+        "target_file": target_file,
         "message": output,
+        "diff_content": diff_text,
+        "occurrences": 1,
+        "relocated_range": None,
+        "did_you_mean_info": None,
+        "modified_files": None,
         "run_id": run_id,
         "expires_in": cache.get_ttl(),
     }
@@ -774,14 +1046,15 @@ def write_file(
         original_content = ""
         if file_exists:
             if not allow_overwrite:
-                return {
-                    "error": f"File already exists at '{target_file}'. To overwrite it, set 'allow_overwrite' to true."
-                }
+                return _create_error_response(
+                    f"File already exists at '{target_file}'. To overwrite it, set 'allow_overwrite' to true.",
+                    target_file=target_file,
+                )
             try:
                 with open(target_path, "r", encoding="utf-8", newline="", errors="replace") as f:
                     original_content = f.read()
             except Exception as e:
-                return {"error": f"Failed to read existing file: {e}"}
+                return _create_error_response(f"Failed to read existing file: {e}", target_file=target_file)
 
         # Run validation and linting
         linter_warnings = []
@@ -809,14 +1082,19 @@ def write_file(
         try:
             _write_patched_file(target_path, code_content)
         except Exception as e:
-            return {"error": f"Failed to write file: {e}"}
+            return _create_error_response(f"Failed to write file: {e}", target_file=target_file)
 
-        output = f"- Target file: `{target_file}` "
-        output += "overwritten successfully\n" if file_exists else "created successfully\n"
+        output = f"Successfully overwritten `{target_file}`.\n" if file_exists else f"Successfully created `{target_file}`.\n"
         res = {
             "success": True,
             "dryRun": False,
+            "target_file": target_file,
             "message": output,
+            "diff_content": None,
+            "occurrences": 1,
+            "relocated_range": None,
+            "did_you_mean_info": None,
+            "modified_files": None,
         }
         if linter_warnings:
             res["warnings"] = linter_warnings
@@ -824,12 +1102,13 @@ def write_file(
         return res
 
     except SyntaxValidationError as e:
-        return {
-            "error": f"Syntax Error: {str(e)}",
-            "filename": e.filename,
-            "line": e.line,
-            "column": e.column
-        }
+        return _create_error_response(
+            f"Syntax Error: {str(e)}",
+            target_file=target_file,
+            filename=e.filename,
+            line=e.line,
+            column=e.column
+        )
     except ValueError as e:
         return _handle_patch_file_value_error(e, target_file)
 
@@ -1012,6 +1291,31 @@ def _apply_classic_replacement(  # NOSONAR
     return res
 
 
+def _create_error_response(
+    error_msg: Union[str, dict],
+    target_file: Optional[str] = None,
+    detail: Optional[str] = None,
+    **extra_fields,
+) -> dict:
+    """Format standardized error response dictionary with consistent schema fallbacks."""
+    if isinstance(error_msg, dict):
+        base_err = dict(error_msg)
+        tf = base_err.get("target_file", target_file)
+    else:
+        base_err = {"error": str(error_msg)}
+        tf = target_file
+        if detail:
+            base_err["detail"] = detail
+
+    base_err.update(extra_fields)
+    base_err.setdefault("target_file", tf)
+    base_err.setdefault("diff_content", None)
+    base_err.setdefault("relocated_range", None)
+    base_err.setdefault("did_you_mean_info", None)
+    base_err.setdefault("modified_files", None)
+    return base_err
+
+
 def _attach_engine_flags(res: dict, pf: dict) -> dict:
     """Attach linter warnings, suggestions, and engine execution flags to response dictionary."""
     if pf.get("warnings"):
@@ -1028,8 +1332,26 @@ def _attach_engine_flags(res: dict, pf: dict) -> dict:
             res["large_file_fallback"] = True
         if getattr(eng, "is_relocated", False):
             res["is_relocated"] = True
+            res["relocated_range"] = {
+                "start_line": getattr(eng, "relocated_start_line", 1),
+                "end_line": getattr(eng, "relocated_end_line", 1),
+            }
+        else:
+            res.setdefault("relocated_range", None)
+
         if getattr(eng, "is_did_you_mean_applied", False):
             res["is_did_you_mean_applied"] = True
+            res["did_you_mean_info"] = {
+                "applied": True,
+                "similarity": getattr(eng, "s_ratio", 0.0),
+                "start_line": getattr(eng, "did_you_mean_start_line", None),
+                "end_line": getattr(eng, "did_you_mean_end_line", None),
+            }
+        else:
+            res.setdefault("did_you_mean_info", None)
+    else:
+        res.setdefault("relocated_range", None)
+        res.setdefault("did_you_mean_info", None)
     return res
 
 
@@ -1058,18 +1380,19 @@ def _commit_or_defer_transaction(transaction: FileTransaction, modifications: di
 def _handle_patch_file_value_error(e: ValueError, target_file: str) -> dict:
     if str(e) == "fatal_context_mismatch":
         cwd = Path.cwd().resolve()
-        return {
-            "error": "fatal_context_mismatch",
-            "detail": (
+        return _create_error_response(
+            "fatal_context_mismatch",
+            target_file=target_file,
+            detail=(
                 f"[FATAL CONTEXT MISMATCH]\n"
                 f"Relative path '{target_file}' resolves outside the active MCP workspace '{cwd}'.\n\n"
                 "Relative paths are restricted to the active workspace to prevent cross-repo drift.\n"
                 "To fix:\n"
                 "1. Use an absolute path to target a file outside the current workspace.\n"
                 "2. Or ensure the terminal shell is CD'ed to the correct repository.\n"
-            )
-        }
-    res = {"error": str(e)}
+            ),
+        )
+    res = _create_error_response(str(e), target_file=target_file)
     if getattr(e, "run_id", None):
         res["run_id"] = getattr(e, "run_id")
         res["expires_in"] = get_cache().get_ttl()
@@ -1128,14 +1451,14 @@ def apply_last_dry_run(run_id: str) -> dict:
     entry = cache.consume(run_id)
 
     if entry is None:
-        return {"error": f"run_id '{run_id}' not found or expired. Re-run with dry_run=true to get a fresh run_id."}
+        return _create_error_response(f"run_id '{run_id}' not found or expired. Re-run with dry_run=true to get a fresh run_id.")
 
     files = entry["files"]
 
     # Hash guard: verify all files are unchanged before writing any
     error_response = _verify_dry_run_hashes(files)
     if error_response:
-        return error_response
+        return _create_error_response(error_response)
 
     # Transactional execution
     file_items = [{"target_file": str(f["target_path"])} for f in files]
@@ -1156,22 +1479,58 @@ def apply_last_dry_run(run_id: str) -> dict:
     if not ok:
         transaction.rollback()
         transaction.cleanup()
-        return {"error": f"Optimistic locking failed for '{fail_path.name if fail_path else 'file'}'. File was modified on disk."}
+        return _create_error_response(f"Optimistic locking failed for '{fail_path.name if fail_path else 'file'}'. File was modified on disk.")
 
     commit_err = _commit_or_defer_transaction(transaction, modifications)
     if commit_err:
-        return commit_err
+        return _create_error_response(commit_err)
 
-    applied = [str(p) for p in modifications.keys()]
-    output = f"Applied cached patch (run_id={run_id}). Wrote **{len(applied)}** file(s).\n"
-    for path in applied:
-        output += f"- `{path}` updated.\n"
-
-    return {
-        "success": True,
-        "dryRun": False,
-        "message": output,
-    }
+    if len(files) == 1:
+        f = files[0]
+        tf = f.get("target_file") or str(f["target_path"])
+        occ = f.get("occurrences", 1)
+        rel_range = f.get("relocated_range")
+        dym_info = f.get("did_you_mean_info")
+        res = {
+            "success": True,
+            "dryRun": False,
+            "target_file": tf,
+            "message": f"Applied cached patch (run_id={run_id}) for `{tf}`.\n",
+            "diff_content": None,
+            "occurrences": occ,
+            "relocated_range": rel_range,
+            "did_you_mean_info": dym_info,
+            "modified_files": None,
+        }
+    else:
+        tf_primary = files[0].get("target_file") or str(files[0]["target_path"]) if files else None
+        modified_files = []
+        tot_occ = 0
+        output = f"Applied cached patch (run_id={run_id}). Wrote **{len(files)}** file(s).\n"
+        for f in files:
+            tf = f.get("target_file") or str(f["target_path"])
+            occ = f.get("occurrences", 1)
+            output += f"- `{tf}` updated.\n"
+            modified_files.append({
+                "target_file": tf,
+                "occurrences": occ,
+                "diff_content": None,
+                "relocated_range": f.get("relocated_range"),
+                "did_you_mean_info": f.get("did_you_mean_info"),
+            })
+            tot_occ += occ
+        res = {
+            "success": True,
+            "dryRun": False,
+            "target_file": tf_primary,
+            "message": output,
+            "diff_content": None,
+            "occurrences": tot_occ,
+            "relocated_range": None,
+            "did_you_mean_info": None,
+            "modified_files": modified_files,
+        }
+    return res
 
 
 def batch_patch_files(
