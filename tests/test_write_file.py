@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from patchitright_mcp.patch_file import write_file, apply_last_dry_run
-from patchitright_mcp.run_cache import get_cache
 
 
 @pytest.fixture
@@ -134,6 +133,10 @@ def test_write_file_es_module_js_node_fallback(temp_workspace, monkeypatch):
 
     res = write_file(target_file=target, code_content=code, allow_overwrite=False)
     assert res.get("success") is True
+    assert res.get("target_file") == os.path.normpath(target)
+    assert res.get("diff_content") is None
+    assert res.get("occurrences") == 1
+    assert res.get("modified_files") is None
     target_path = temp_workspace / target
     assert target_path.exists()
     assert target_path.read_text(encoding="utf-8") == code
@@ -162,4 +165,8 @@ def test_write_file_mjs_and_cjs_syntax(temp_workspace, monkeypatch):
     res_bad = write_file(target_file=bad_mjs_target, code_content=bad_mjs_code, allow_overwrite=False)
     assert "error" in res_bad
     assert "Syntax Error" in res_bad["error"]
+    assert res_bad.get("target_file") == os.path.normpath(bad_mjs_target)
+    assert res_bad.get("diff_content") is None
+    assert res_bad.get("occurrences") is None
+    assert res_bad.get("modified_files") is None
 

@@ -92,3 +92,27 @@ async def test_patchitright_guide():
     assert "HTML / CSS Accessibility" in data_list["content"]
     assert "Python Security Guidelines" not in data_list["content"]
 
+
+@pytest.mark.asyncio
+async def test_patch_file_schema_line_insertion_fields():
+    from patchitright_mcp.server import list_tools
+    tools = await list_tools()
+    patch_tool = next((t for t in tools if t.name == "patch_file"), None)
+    assert patch_tool is not None
+    props = patch_tool.inputSchema.get("properties", {})
+
+    # Top-level insertion properties
+    for param in ("insert_line", "insert_content", "insert_position", "auto_indent"):
+        assert param in props
+
+    assert props["insert_position"]["enum"] == ["before", "after", "start", "end"]
+
+    # Item-level insertion properties in replacements and files arrays
+    replacements_props = props["replacements"]["items"]["properties"]
+    for param in ("insert_line", "insert_content", "insert_position", "auto_indent"):
+        assert param in replacements_props
+
+    files_props = props["files"]["items"]["properties"]
+    for param in ("insert_line", "insert_content", "insert_position", "auto_indent"):
+        assert param in files_props
+
