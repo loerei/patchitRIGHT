@@ -107,6 +107,12 @@ With the introduction of `symbol_scope: "body"` and `symbol_scope: "full"`, `pat
 
 Inserts code at specified line numbers or relative to AST symbols without requiring `search_content`:
 
+> [!NOTE]
+> **Line Insertion Behavior:** Insert operations NEVER overwrite existing code — they push existing lines **DOWN**.
+> - `insert_position="before"` on line N: Inserts code ABOVE line N (line N shifts down).
+> - `insert_position="after"` on line N: Inserts code BELOW line N (line N+1 shifts down).
+> - `symbol_name` with `"start"` / `"end"`: Inserts at top or bottom inside symbol body (shifting inner lines down).
+
 * **Line Indexing**: Pass `insert_line: 1` to insert at the top of a file, or `insert_line: -1` to append at end of file (EOF).
 * **Symbol Relative Positioning**: Combine `symbol_name` with `insert_position`:
   - `"before"`: Inserts above the symbol (above decorator stacks if present).

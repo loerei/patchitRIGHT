@@ -548,6 +548,12 @@ def _generate_patchitright_guide(file_type: str | list[str] = "general") -> str:
 | Edit multiple non-contiguous regions in one file | `replacements` array (applied bottom-up) |
 | Edit multiple files atomically | `files` array — all validated before writing |
 
+> [!NOTE]
+> **Line Insertion Behavior:** Insert operations NEVER overwrite existing code — they push existing lines **DOWN**.
+> - `insert_position="before"` on line N: Inserts code ABOVE line N (line N shifts down).
+> - `insert_position="after"` on line N: Inserts code BELOW line N (line N+1 shifts down).
+> - `symbol_name` with `"start"` / `"end"`: Inserts at top or bottom inside symbol body (shifting inner lines down).
+
 **Surgical precision**: keep `search_content` to the minimum lines needed for a unique match. Prefer `replacements` over multiple calls.
 
 ### `write_file` — create new files or fully replace content
