@@ -214,7 +214,8 @@ class PatchEngine:
 
         total_lines = len(self.file_lines)
 
-        if insert_line == -1 or insert_line > total_lines:
+        is_eof = (insert_line == -1 or insert_line > total_lines)
+        if is_eof:
             target_idx = total_lines
             ref_idx = total_lines - 1
         else:
@@ -227,7 +228,7 @@ class PatchEngine:
                 ref_idx = line_idx
 
         indent = ""
-        if auto_indent:
+        if auto_indent and not is_eof:
             ref_line_idx = max(0, min(ref_idx, total_lines - 1))
             ref_line = self.file_lines[ref_line_idx]
             if not ref_line.strip():

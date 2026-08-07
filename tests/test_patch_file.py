@@ -2102,6 +2102,24 @@ class TestLineBasedInsertion:
         assert "error" in res2
         assert "Cannot combine 'insert_content'" in res2["error"]
 
+    def test_insert_line_eof_indentation_default_root_scope(self, tmp_path, monkeypatch):
+        """Verify appending to EOF via insert_line=-1 defaults to root scope (0 spaces) even if last line is indented."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "dummy_test.py"
+        f.write_text("class Calculator:\n    def add(self, a, b):\n        return a + b\n")
+
+        res = patch_file(
+            target_file="dummy_test.py",
+            insert_line=-1,
+            insert_content="# Footer comment",
+            auto_indent=True,
+            dry_run=False
+        )
+        assert res["success"] is True
+        content = f.read_text()
+        assert content.endswith("\n# Footer comment\n") or content.endswith("\n# Footer comment")
+        assert "        # Footer comment" not in content
+
     def test_insert_line_auto_indent_pre_indented_content(self, tmp_path, monkeypatch):
         """Verify pre-indented insert_content is normalized with textwrap.dedent under auto_indent=True."""
         monkeypatch.chdir(tmp_path)
