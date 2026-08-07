@@ -66,7 +66,7 @@ async def test_patchitright_guide():
     assert "version" in data
     assert "content" in data
     assert "patchitright-mcp" in data["content"]
-    assert "Insert code at line or symbol" in data["content"]
+    assert "Insert code at line" in data["content"]
     assert "JavaScript / TypeScript Clean-Code" not in data["content"]
 
     # Call the tool (single string js_ts - for robustness / backward compatibility)
@@ -102,17 +102,19 @@ async def test_patch_file_schema_line_insertion_fields():
     props = patch_tool.inputSchema.get("properties", {})
 
     # Top-level insertion properties
-    for param in ("insert_line", "insert_content", "insert_position", "auto_indent"):
+    for param in ("insert_line", "insert_content", "auto_indent"):
         assert param in props
 
-    assert props["insert_position"]["enum"] == ["before", "after", "start", "end"]
+    assert "insert_position" not in props
 
     # Item-level insertion properties in replacements and files arrays
     replacements_props = props["replacements"]["items"]["properties"]
-    for param in ("insert_line", "insert_content", "insert_position", "auto_indent"):
+    for param in ("insert_line", "insert_content", "auto_indent"):
         assert param in replacements_props
+    assert "insert_position" not in replacements_props
 
     files_props = props["files"]["items"]["properties"]
-    for param in ("insert_line", "insert_content", "insert_position", "auto_indent"):
+    for param in ("insert_line", "insert_content", "auto_indent"):
         assert param in files_props
+    assert "insert_position" not in files_props
 

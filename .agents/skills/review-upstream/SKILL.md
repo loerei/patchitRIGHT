@@ -56,7 +56,7 @@ After gathering decisions, apply them, distribute, and clean up the workspace:
    ```
 3. Sync the updates to all workspaces:
    ```powershell
-   node distribute-skills.js --all D:\Projects
+   agents --distribute
    ```
 4. Commit and push the updates:
    ```powershell

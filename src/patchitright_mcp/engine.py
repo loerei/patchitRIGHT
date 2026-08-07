@@ -177,7 +177,6 @@ class PatchEngine:
         self,
         insert_line: Optional[int],
         insert_content: str,
-        insert_position: str = "before",
         auto_indent: bool = True,
         validate: bool = True,
     ) -> tuple[str, int]:
@@ -185,7 +184,6 @@ class PatchEngine:
 
         insert_line: 1-indexed line number (1 for top of file, -1 for EOF).
         insert_content: string content to insert.
-        insert_position: 'before' or 'after'.
         auto_indent: if True, matches target reference line leading whitespace.
 
         Returns: (patched_file, 1)
@@ -194,7 +192,7 @@ class PatchEngine:
             raise ValueError("Error: 'insert_content' cannot be empty.")
 
         if insert_line is None:
-            raise ValueError("Error: 'insert_line' or location parameter is required.")
+            raise ValueError("Error: 'insert_line' parameter is required.")
 
         if insert_line == 0 or insert_line < -1:
             raise ValueError("Error: Line index must be >= 1 or -1 for end-of-file.")
@@ -218,21 +216,14 @@ class PatchEngine:
         if insert_line > total_lines:
             self.insertion_warnings.append(f"Warning: Specified insert_line ({insert_line}) exceeds total file lines ({total_lines}). Clamped insertion to end-of-file.")
 
-        if insert_line == total_lines and insert_position == "after":
-            self.insertion_warnings.append(f"Warning: Specified insert_line ({total_lines}) with insert_position='after' targets end-of-file.")
-
         is_eof = (insert_line == -1 or insert_line > total_lines)
         if is_eof:
             target_idx = total_lines
             ref_idx = total_lines - 1
         else:
             line_idx = insert_line - 1
-            if insert_position == "after":
-                target_idx = line_idx + 1
-                ref_idx = line_idx
-            else:
-                target_idx = line_idx
-                ref_idx = line_idx
+            target_idx = line_idx
+            ref_idx = line_idx
 
         indent = ""
         if auto_indent and not is_eof:

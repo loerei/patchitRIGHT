@@ -1,64 +1,90 @@
 ---
 name: sonar-remediation
-description: >
-  Safely resolve, refactor, and fix code smells, duplications, and security alerts identified by SonarQube/SonarCloud. Use when fixing Sonar issues, refactoring duplicated code blocks, or fixing code quality gate violations.
+description: Inspect, remediate, accept, and automate SonarQube and SonarCloud code quality, duplication, and security issues across any language or repository. Use when fixing Sonar issues, querying open smells/bugs, resolving code duplications, running automated Sonar batch fixes, or executing /goal Sonar remediation.
 ---
 
-# Sonar Remediation & Code Quality Fixes
+# Sonar Remediation & Quality Gate Workflows
 
-Remediate Code Quality, Security, and Duplication issues safely while verifying correctness locally.
+Inspect, remediate, accept, and automate SonarQube/SonarCloud code quality issues across single files, PRs, or entire repositories. (Works with `sonarcloud:` and `sonarqube:` MCP servers).
 
-## Remediation Workflow
+## Workflows
 
-### 1. Preemptive Code Inspection
+### 1. Issue Query Scope Flowchart
 
-Check modified files for common Sonar violations before running remote analyses:
+```mermaid
+flowchart TD
+    Start["Sonar Issue Query Request"] --> DetermineScope{"Determine Query Scope"}
+    DetermineScope -->|"1. By File Name"| FileScope["File Scope"]
+    FileScope --> FileCall["search_sonar_issues({ projectKey, componentKeys: ['<projectKey>:<filePath>'], issueStatuses: ['OPEN'] })"]
+    DetermineScope -->|"2. By Commit"| CommitScope["Commit Scope"]
+    CommitScope --> CommitCall["git show --name-only <commit_hash> -> search_sonar_issues({ projectKey, componentKeys, inNewCodePeriod: true })"]
+    DetermineScope -->|"3. By Pull Request (PR)"| PRScope["Pull Request Scope"]
+    PRScope --> PRCall["search_sonar_issues({ projectKey, pullRequest: '<pr_id>', issueStatuses: ['OPEN'] })"]
+    DetermineScope -->|"4. By Branch"| BranchScope["Branch Scope"]
+    BranchScope --> BranchCall["search_sonar_issues({ projectKey, branch: '<branch_name>', issueStatuses: ['OPEN'] })"]
+    DetermineScope -->|"5. Repository Scope"| RepoScope["Repository Scope"]
+    RepoScope --> RepoCall["search_sonar_issues({ projectKey, issueStatuses: ['OPEN'] })"]
+    DetermineScope -->|"6. Combined (File + PR)"| CombinedScope["Combined Scope"]
+    CombinedScope --> CombinedCall["search_sonar_issues({ projectKey, pullRequest: '<pr_id>', componentKeys: ['<projectKey>:<filePath>'], issueStatuses: ['OPEN'] })"]
+    FileCall --> ProcessIssues["Analyze & Apply Remediation"]
+    CommitCall --> ProcessIssues
+    PRCall --> ProcessIssues
+    BranchCall --> ProcessIssues
+    RepoCall --> ProcessIssues
+    CombinedCall --> ProcessIssues
+```
 
-- **Nested Ternaries**: Replace with helper functions or dedicated components.
-- **Avoid Negated Conditions**: Convert `if (!condition)` to standard positive conditions where natural.
-- **Readonly Props**: Mark React component props interfaces as `Readonly<Props>`.
-- **Promise Handling**: Ensure floating promises are handled with `.catch()` instead of prefixed with `void`.
+> [!IMPORTANT]
+> When analyzing an active PR, MUST pass `pullRequestId` or `pullRequest`. Omitting PR ID queries the default branch (`main`).
+> See [REFERENCE.md](REFERENCE.md) for full MCP Tool Parameter Reference & Argument Schemas.
 
-### 2. Code Duplication Resolution (CPD)
+### 2. Issue Triage & Action Decision Flowchart
 
-When working with Code Duplication (CPD) issues:
+```mermaid
+flowchart TD
+    Start["Query Open Issues (search_sonar_issues)"] --> Triage{"Issue Category / Rule Key"}
+    Triage -->|"S3776 / S2004 / css:S7924"| FlagAccept["DO NOT EDIT CODE / DO NOT SPLIT FUNCTIONS - Flag 'ACCEPT' via change_sonar_issue_status"]
+    Triage -->|"S8786 (Regex Backtracking)"| CheckRegex{"Regex Simplifiable?"}
+    CheckRegex -->|"Yes"| FixCode["Fix Code (Eliminate Backtracking)"]
+    CheckRegex -->|"No"| FlagAccept
+    Triage -->|"CPD / Duplications"| GetDup["Call get_duplications & inspect disk"]
+    GetDup --> FixCode
+    Triage -->|"S1854, S1481, S7781, S2933..."| FixCode
+    FlagAccept --> VerifyLoop["Continuous Verification Loop"]
+    FixCode --> VerifyLoop
+```
 
-- **MUST call get_duplications first** to retrieve the exact duplicated blocks and line ranges.
-- **MUST read the actual code from the files** at the exact duplicated ranges to confirm the real contents on disk before making any assumptions.
-- **MUST read the `/improve-codebase-architecture` skill** to design a deep, unified plan before proposing a solution or refactoring plan.
-- **Deep Refactoring**: For widespread or structural duplication (e.g. similar modals, forms, page layouts), do NOT perform manual micro-patches. Instead, use the `/improve-codebase-architecture` skill to analyze and design a deep, unified module with high locality (e.g. extracting a generic composed component). _Note: If activating `/improve-codebase-architecture` specifically to resolve CPD, you may bypass the HTML report generation and provide only a clear technical implementation plan._
-- **Utility Extraction**: Move duplicate utility routines (e.g. string formats, serializations) to a shared helpers file.
-- **Component Extraction**: Extract identical markup blocks into a single shared component (e.g. shared layout elements, dialogs, form controls).
+> [!IMPORTANT]
+> Before calling `change_sonar_issue_status` to flag any issue as `"accept"` or `"falsepositive"`, MUST search for the issue key using `search_sonar_issues` with `issueStatuses: ["OPEN"]`.
+> See [REFERENCE.md](REFERENCE.md) for Detailed Rule Remediation & Triage Matrix.
 
-### 3. Local Verification Loop
+### 3. Remediation Safety Boundaries
 
-Always verify changes locally before pushing:
+- **NEVER delete, rename, or move** standalone entrypoints, child processes, worker scripts, or dynamic IPC/service wrappers.
+- **NEVER modify** exported module interfaces, public API signatures, or database schemas during Sonar Remediation.
+- **Domain Contract Preservation (`S1854`, `S1481`)**: NEVER alter returned object keys or state properties (e.g. `favorite`, `id`, `status`) to consume an unused variable. Safely delete the dead variable calculation instead.
 
-- **Run Typechecks**: Execute `npm run typecheck` to verify import paths and type safety.
-- **Run Unit Tests**: Execute the test suites (e.g. `npm run test` or `npm run test:chat-turn`) to ensure behavior remains correct.
-- **Run Local Linters**: Run fast local linters (e.g. `ruff` for Python, `eslint`/`biome` for JS/TS) to verify code style and conventions. If resolving quality or Sonar issues, proactively fix any linter warnings reported in the modified files to ensure overall code health.
+### 4. Continuous Zero-Issue & Remote CI Verification Flowchart
 
-### 4. Unused Code & Unused Functions (Dead Code)
+```mermaid
+flowchart TD
+    ApplyChanges["Apply Code Fixes / Flag Accept"] --> LocalVerify["Run Local Verification (typecheck, vitest)"]
+    LocalVerify --> CommitPush["Commit & Push to Remote Branch"]
+    CommitPush --> ScheduleTimer["MUST Schedule 150s Timer (schedule)"]
+    ScheduleTimer --> TimerExpire["150s Timer Expired Notification"]
+    TimerExpire --> ReQuery["Re-query Sonar Open Issues (search_sonar_issues)"]
+    ReQuery --> CheckZero{"total === 0?"}
+    CheckZero -->|"No (Issues remain)"| ApplyChanges
+    CheckZero -->|"Yes (0 issues)"| Complete["Goal Complete / Safe to Merge PR"]
+```
 
-When handling issues regarding unused functions, methods, or exports:
+### 5. Script-Automated Task Execution
 
-- **Do NOT delete immediately**: Many functions are called dynamically (e.g. via Electron IPC routing, string-based lookups, or external exports) which static analysers cannot trace.
-- **MUST run Impact Analysis first**: Use `gitnexus_impact` or `jcodemunch:find_references` / `check_references` to check for occurrences.
-- **Check dynamic references**: Verify if the function name matches any string literals or IPC event names (e.g. inside `ipcMain.handle` or `ipcRenderer.invoke`).
-- **If dynamic or exported**: Keep the code and flag the issue as `accept` / `falsepositive` instead of deleting it to avoid breaking runtime behavior.
+For large backlogs, run companion scripts in `.agents/skills/sonar-remediation/scripts/`: `count_issues.py`, `generate_plan.py` (`request_feedback: true`), `generate_task.py` (`user_facing: true`).
+**Task Execution Loop**: Fix branch -> For each file in `task.md`: Mark `[/]` -> Patch via `patch_file` -> Mark `[x]` -> Verify via project build/test tools before committing.
 
-### 5. Safe Issue Acceptance (Flagging on SonarQube/SonarCloud)
+---
 
-For false positives, design/style rules where standard WCAG contrast ratios conflict with custom brand themes, or when a code fix introduces disproportionate regression risk:
+## Detailed Rules & Code Examples
 
-- **Do NOT force a code fix** if it breaks user experience or visual harmony.
-- **Cognitive Complexity rules (e.g., S3776)**: **Always flag these as ACCEPTED. Never modify the codebase to split functions just to satisfy SonarQube's complexity metrics, as this reduces locality and creates shallow, fragmented helper modules. Structural refactoring should only be driven by `/improve-codebase-architecture` and user design discussions.**
-- **MUST search for the issue key** in SonarQube/SonarCloud using `search_sonar_issues_in_projects` with `issueStatuses: ["OPEN"]` and filter by file or project.
-- **MUST call change_sonar_issue_status** to flag the issue status as `"accept"` or `"falsepositive"` instead of modifying the codebase.
-- Always explain the design or technical rationale to the user or team before flagging the issue.
-
-### 6. Remediation Safety Boundaries
-
-- **NEVER delete, rename, or move** standalone entrypoints, child processes, worker scripts, or dynamic wrappers.
-- **NEVER split functions** for Cognitive Complexity (S3776). ALWAYS flag S3776 as ACCEPTED. Structural refactoring requires `/improve-codebase-architecture`.
-- **NEVER modify** function signatures, return types, or exported module interfaces during Sonar remediation.
+See [REFERENCE.md](REFERENCE.md) for Preemptive Code Inspection, domain-scoped **Before / After** code examples, MCP argument schemas, and specific rule remediation patterns. (MUST read [REFERENCE.md](REFERENCE.md) before applying code fixes).

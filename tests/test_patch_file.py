@@ -1844,18 +1844,16 @@ class TestLineBasedInsertion:
             target_file="sample.py",
             insert_line=1,
             insert_content="import sys\n",
-            insert_position="before",
             dry_run=False
         )
         assert res1["success"] is True
         assert f.read_text() == "import sys\nline 1\nline 2\nline 3\n"
 
-        # Insert after line 2 (which is now 'line 1')
+        # Insert before line 3 (which is now 'line 2')
         res2 = patch_file(
             target_file="sample.py",
-            insert_line=2,
+            insert_line=3,
             insert_content="# header comment",
-            insert_position="after",
             dry_run=False
         )
         assert res2["success"] is True
@@ -1893,23 +1891,8 @@ class TestLineBasedInsertion:
         assert "error" in res_neg
         assert "must be >= 1 or -1" in res_neg["error"]
 
-    def test_insert_line_numeric_position_restrictions(self, tmp_path, monkeypatch):
-        """Positions 'start' and 'end' require a symbol_name."""
-        monkeypatch.chdir(tmp_path)
-        f = tmp_path / "sample.py"
-        f.write_text("a = 1\n")
-
-        res = patch_file(
-            target_file="sample.py",
-            insert_line=1,
-            insert_content="b = 2",
-            insert_position="start"
-        )
-        assert "error" in res
-        assert "Positions 'start' and 'end' require a symbol_name" in res["error"]
-
     def test_insert_line_simultaneous_line_and_symbol_prohibited(self, tmp_path, monkeypatch):
-        """Providing both insert_line and symbol_name in a single item raises ValueError."""
+        """Providing both insert_line/insert_content and symbol_name in a single item raises ValueError."""
         monkeypatch.chdir(tmp_path)
         f = tmp_path / "sample.py"
         f.write_text("def foo():\n    pass\n")
@@ -1921,7 +1904,7 @@ class TestLineBasedInsertion:
             insert_content="x = 1"
         )
         assert "error" in res
-        assert "Cannot specify both 'insert_line' and 'symbol_name'" in res["error"]
+        assert "Cannot combine 'insert_content'" in res["error"]
 
     def test_insert_line_empty_file(self, tmp_path, monkeypatch):
         """Insertion into a 0-byte file must work correctly."""
@@ -2044,66 +2027,6 @@ class TestLineBasedInsertion:
         assert "\t" in f.read_text()
         assert "\tx = 1\n\tpass" in f.read_text()
 
-    def test_insert_relative_to_symbol_with_decorators(self, tmp_path, monkeypatch):
-        """symbol-relative insertion with position 'before' must insert above decorators."""
-        monkeypatch.chdir(tmp_path)
-        f = tmp_path / "dec.py"
-        f.write_text("@decorator_one\n@decorator_two\ndef foo():\n    pass\n")
-
-        res = patch_file(
-            target_file="dec.py",
-            symbol_name="foo",
-            insert_content="# method doc",
-            insert_position="before",
-            dry_run=False
-        )
-        assert res["success"] is True
-        assert f.read_text().startswith("# method doc\n@decorator_one")
-
-    def test_mixed_search_and_line_insertion_batch(self, tmp_path, monkeypatch):
-        """Bottom-up execution sorting for mixed insertion and replacement items in replacements array."""
-        monkeypatch.chdir(tmp_path)
-        f = tmp_path / "sample.py"
-        f.write_text("line 1\nline 2\nline 3\nline 4\n")
-
-        res = patch_file(
-            target_file="sample.py",
-            replacements=[
-                {"insert_line": 1, "insert_content": "# header"},
-                {"search_content": "line 3", "replace_content": "modified line 3"},
-            ],
-            dry_run=False
-        )
-        assert res["success"] is True
-        content = f.read_text()
-        assert "# header\nline 1" in content
-        assert "modified line 3" in content
-
-    def test_insert_line_invalid_params_validation(self, tmp_path, monkeypatch):
-        """Parameter conflict rules: insert_content cannot mix with search_content or be empty."""
-        monkeypatch.chdir(tmp_path)
-        f = tmp_path / "sample.py"
-        f.write_text("a = 1\n")
-
-        # Empty content
-        res1 = patch_file(
-            target_file="sample.py",
-            insert_line=1,
-            insert_content=""
-        )
-        assert "error" in res1
-        assert "cannot be empty" in res1["error"]
-
-        # Conflict with search_content
-        res2 = patch_file(
-            target_file="sample.py",
-            insert_line=1,
-            insert_content="b = 2",
-            search_content="a = 1"
-        )
-        assert "error" in res2
-        assert "Cannot combine 'insert_content'" in res2["error"]
-
     def test_insert_line_tab_space_mismatch_warning(self, tmp_path, monkeypatch):
         """Verify tab vs space mismatch warning when auto_indent=False."""
         monkeypatch.chdir(tmp_path)
@@ -2119,22 +2042,6 @@ class TestLineBasedInsertion:
         )
         assert res["success"] is True
         assert any("contains tabs while auto_indent=False" in w for w in res.get("warnings", []))
-
-    def test_insert_line_after_last_line_warning(self, tmp_path, monkeypatch):
-        """Verify insert_line == total_lines with insert_position='after' emits warning."""
-        monkeypatch.chdir(tmp_path)
-        f = tmp_path / "sample.py"
-        f.write_text("line 1\nline 2")
-
-        res = patch_file(
-            target_file="sample.py",
-            insert_line=2,
-            insert_position="after",
-            insert_content="# End comment",
-            dry_run=False
-        )
-        assert res["success"] is True
-        assert any("targets end-of-file" in w for w in res.get("warnings", []))
 
     def test_insert_line_out_of_bounds_clamping_warning(self, tmp_path, monkeypatch):
         """Verify insert_line > total_lines emits a clamping warning in the response."""
@@ -2171,7 +2078,7 @@ class TestLineBasedInsertion:
         assert content.endswith("\n# Footer comment\n") or content.endswith("\n# Footer comment")
         assert "        # Footer comment" not in content
 
-    def test_insert_line_auto_indent_pre_indented_content(self, tmp_path, monkeypatch):
+    def test_insert_line_pre_indented_content(self, tmp_path, monkeypatch):
         """Verify pre-indented insert_content is normalized with textwrap.dedent under auto_indent=True."""
         monkeypatch.chdir(tmp_path)
         f = tmp_path / "sample.py"
@@ -2181,7 +2088,6 @@ class TestLineBasedInsertion:
             target_file="sample.py",
             insert_line=2,
             insert_content="    \"\"\"Pre-indented docstring.\"\"\"",
-            insert_position="before",
             auto_indent=True,
             dry_run=False
         )

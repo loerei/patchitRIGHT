@@ -331,42 +331,19 @@ def _process_single_file_in_memory(
                 if "search_content" in r or "replace_content" in r:
                     return "", 0, [], "", {"error": f"Error: replacements[{idx}] cannot combine insert_content with search_content or replace_content."}, None
                 ins_line = r.get("insert_line")
-                sym_name = r.get("symbol_name")
-                ins_pos = r.get("insert_position", "before")
-                if ins_line is not None and sym_name is not None:
-                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] cannot specify both insert_line and symbol_name."}, None
-                if ins_line is None and sym_name is None:
-                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] must specify either insert_line or symbol_name."}, None
-
-                target_line = ins_line
-                if sym_name:
-                    sym_start, sym_end, sym_err, b_range = _resolve_ast_boundaries(
-                        cwd, target_path, sym_name, storage_path, None, None, "boundary", file_content
-                    )
-                    if sym_err:
-                        return "", 0, [], "", sym_err, None
-                    if ins_pos == "before":
-                        file_lines = file_content.split("\n")
-                        actual_line = sym_start or 1
-                        while actual_line > 1 and file_lines[actual_line - 2].strip().startswith("@"):
-                            actual_line -= 1
-                        target_line = actual_line
-                    elif ins_pos == "after":
-                        target_line = sym_end
-                    elif ins_pos in ("start", "end"):
-                        if b_range is None:
-                            return "", 0, [], "", {"error": f"Error: Cannot resolve body range for symbol '{sym_name}'."}, None
-                        target_line = b_range.start_line if ins_pos == "start" else b_range.end_line
+                if ins_line is None:
+                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] specifies insert_content but is missing insert_line."}, None
+                if "symbol_name" in r:
+                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] cannot combine insert_content with symbol_name."}, None
 
                 resolved_items.append({
                     "r": r,
                     "is_insertion": True,
-                    "insert_line": target_line,
+                    "insert_line": ins_line,
                     "insert_content": ins_content,
-                    "insert_position": ins_pos,
                     "auto_indent": r.get("auto_indent", True),
-                    "start_line": target_line or 1,
-                    "end_line": target_line or 1,
+                    "start_line": ins_line or 1,
+                    "end_line": ins_line or 1,
                 })
             else:
                 scope = r.get("symbol_scope", "boundary")
@@ -453,7 +430,6 @@ def _process_single_file_in_memory(
                     temp_content, occurrences_cnt = r_engine.apply_line_insertion(
                         insert_line=item["insert_line"],
                         insert_content=item["insert_content"],
-                        insert_position=item["insert_position"],
                         auto_indent=item["auto_indent"],
                         validate=(idx == len(sorted_resolved_items) - 1)
                     )
@@ -527,7 +503,6 @@ def _process_single_file_in_memory(
     # Handle Line-Based Insertion mode
     insert_line = kwargs.get("insert_line")
     insert_content = kwargs.get("insert_content")
-    insert_position = kwargs.get("insert_position", "before")
     auto_indent = bool(kwargs.get("auto_indent", True)) if kwargs.get("auto_indent") is not None else True
 
     if insert_content is not None or insert_line is not None:
@@ -535,45 +510,16 @@ def _process_single_file_in_memory(
             return "", 0, [], "", {"error": "Error: 'insert_content' cannot be empty."}, None
         if insert_content is None:
             return "", 0, [], "", {"error": "Error: 'insert_content' is required when specifying an insertion operation."}, None
-        if search_content is not None or replace_content is not None or patch_content is not None or start_line is not None or end_line is not None:
-            return "", 0, [], "", {"error": "Error: Cannot combine 'insert_content' with 'search_content', 'replace_content', 'patch_content', 'start_line', or 'end_line' in a single item."}, None
-        if insert_line is not None and symbol_name is not None:
-            return "", 0, [], "", {"error": "Error: Cannot specify both 'insert_line' and 'symbol_name' in a single insertion operation."}, None
-        if insert_line is None and symbol_name is None:
-            return "", 0, [], "", {"error": "Error: Either 'insert_line' or 'symbol_name' must be provided for insertion."}, None
-        if insert_line is not None and insert_position in ("start", "end"):
-            return "", 0, [], "", {"error": "Error: Positions 'start' and 'end' require a symbol_name."}, None
-
-        target_insert_line = insert_line
-        if symbol_name:
-            sym_start, sym_end, sym_err, b_range = _resolve_ast_boundaries(
-                cwd, target_path, symbol_name, storage_path, None, None, symbol_scope, file_content
-            )
-            if sym_err:
-                return "", 0, [], "", sym_err, None
-            if insert_position == "before":
-                # Decorator detection
-                file_lines = file_content.split("\n")
-                actual_line = sym_start or 1
-                while actual_line > 1 and file_lines[actual_line - 2].strip().startswith("@"):
-                    actual_line -= 1
-                target_insert_line = actual_line
-            elif insert_position == "after":
-                target_insert_line = sym_end
-            elif insert_position in ("start", "end"):
-                if b_range is None:
-                    return "", 0, [], "", {"error": f"Error: Cannot resolve body range for symbol '{symbol_name}' to insert at '{insert_position}'."}, None
-                if insert_position == "start":
-                    target_insert_line = b_range.start_line
-                else:
-                    target_insert_line = b_range.end_line
+        if insert_line is None:
+            return "", 0, [], "", {"error": "Error: 'insert_line' is required when specifying an insertion operation."}, None
+        if search_content is not None or replace_content is not None or patch_content is not None or start_line is not None or end_line is not None or symbol_name is not None:
+            return "", 0, [], "", {"error": "Error: Cannot combine 'insert_content' with 'search_content', 'replace_content', 'patch_content', 'start_line', 'end_line', or 'symbol_name' in a single item."}, None
 
         engine = PatchEngine(file_content, target_file, bypass_validation=bypass_validation)
         try:
             patched_file, occurrences = engine.apply_line_insertion(
-                insert_line=target_insert_line,
+                insert_line=insert_line,
                 insert_content=insert_content,
-                insert_position=insert_position if insert_line is not None else "before",
                 auto_indent=auto_indent,
                 validate=True,
             )
@@ -710,7 +656,6 @@ def patch_file(  # noqa: C901 # NOSONAR
     patches: Optional[list[dict]] = None,
     insert_line: Optional[int] = None,
     insert_content: Optional[str] = None,
-    insert_position: Optional[str] = "before",
     auto_indent: bool = True,
     **kwargs,
 ) -> dict:
@@ -740,7 +685,6 @@ def patch_file(  # noqa: C901 # NOSONAR
             "replacements": replacements,
             "insert_line": insert_line,
             "insert_content": insert_content,
-            "insert_position": insert_position,
             "auto_indent": auto_indent,
             **kwargs
         }]
