@@ -269,7 +269,7 @@ class JsTsValidator(BaseValidator):
                 shell=(os.name == 'nt'),
                 encoding="utf-8",
                 stdin=subprocess.DEVNULL,
-                timeout=10
+                timeout=20
             )
             log_step(f"JsTsValidator.validate: orig check done. Code={orig_process.returncode}")
             if orig_process.returncode != 0:
@@ -277,7 +277,7 @@ class JsTsValidator(BaseValidator):
                 if self._is_orig_output_invalid(orig_output, temp_path.name):
                     log_step("JsTsValidator.validate: original content has syntax error, skipping validation")
                     return True
-        except OSError as e:
+        except (OSError, subprocess.SubprocessError) as e:
             log_step(f"JsTsValidator.validate: biome original check failed: {e}")
         return False
 
@@ -335,7 +335,7 @@ class JsTsValidator(BaseValidator):
                 shell=(os.name == 'nt'),
                 encoding="utf-8",
                 stdin=subprocess.DEVNULL,
-                timeout=10
+                timeout=20
             )
             log_step(f"JsTsValidator.validate: new check done. Code={process.returncode}")
             # Biome formats syntax errors in stderr/stdout with "pars" or "error"
@@ -350,7 +350,7 @@ class JsTsValidator(BaseValidator):
                     raise BiomeRunnerError("Biome failed to run (non-zero exit code, no syntax errors parsed)")
         except SyntaxValidationError:
             raise
-        except OSError as e:
+        except (OSError, subprocess.SubprocessError) as e:
             log_step(f"JsTsValidator.validate: biome execution failed: {e}")
             raise BiomeRunnerError(f"Biome execution failed: {e}") from e
         finally:
