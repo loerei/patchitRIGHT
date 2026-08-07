@@ -370,37 +370,48 @@ class JsTsValidator(BaseValidator):
         orig_check_text = _strip_ts_types(original_content) if filename.endswith((".ts", ".tsx")) else original_content
         new_check_text = _strip_ts_types(content) if filename.endswith((".ts", ".tsx")) else content
 
-        try:
-            # Check if original was valid
-            orig_process = subprocess.run(
-                [node_exe, "--check", "-"],
-                input=orig_check_text,
-                text=True,
-                encoding="utf-8",
-                capture_output=True,
-                check=False,
-                timeout=10
-            )
-            if orig_process.returncode != 0:
-                log_step("JsTsValidator.validate: original failed node check, skipping")
-                return
+        suffix = ".patchitright_temp.js" if filename.endswith((".ts", ".tsx")) else f".patchitright_temp{Path(filename).suffix}"
+        temp_path = Path(filename).with_suffix(suffix)
+        log_step(f"JsTsValidator.validate: node checking via temp path {temp_path}")
 
+        try:
+            temp_path.parent.mkdir(parents=True, exist_ok=True)
+            # Check if original was valid
+            if orig_check_text:
+                with open(temp_path, "w", encoding="utf-8", newline="") as f:
+                    f.write(orig_check_text)
+                orig_process = subprocess.run(
+                    [node_exe, "--check", str(temp_path)],
+                    text=True,
+                    encoding="utf-8",
+                    capture_output=True,
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    timeout=10
+                )
+                if orig_process.returncode != 0:
+                    log_step("JsTsValidator.validate: original failed node check, skipping")
+                    return
+
+            with open(temp_path, "w", encoding="utf-8", newline="") as f:
+                f.write(new_check_text)
             process = subprocess.run(
-                [node_exe, "--check", "-"],
-                input=new_check_text,
+                [node_exe, "--check", str(temp_path)],
                 text=True,
                 encoding="utf-8",
                 capture_output=True,
                 check=False,
+                stdin=subprocess.DEVNULL,
                 timeout=10
             )
             if process.returncode != 0:
                 err_msg = process.stderr.strip() if process.stderr else "Syntax Error"
                 # Convert to ASCII-safe representation to prevent Windows stdout encoding crashes
                 err_msg = err_msg.encode("ascii", errors="replace").decode("ascii")
-                import re
                 line, column = None, None
-                match = re.search(r"\[stdin\]:(\d+)(?::(\d+))?", err_msg)
+                match = re.search(rf"{re.escape(temp_path.name)}:(\d+)(?::(\d+))?", err_msg)
+                if not match:
+                    match = re.search(r"\[stdin\]:(\d+)(?::(\d+))?", err_msg)
                 if match:
                     line = int(match.group(1))
                     if match.group(2):
@@ -419,6 +430,8 @@ class JsTsValidator(BaseValidator):
             raise
         except OSError as e:
             log_step(f"JsTsValidator.validate: node execution failed: {e}")
+        finally:
+            self._cleanup_temp_path(temp_path)
 
     def _validate_with_tsc(self, content: str, filename: str, original_content: str) -> None:
         if not filename.endswith((".ts", ".tsx")):

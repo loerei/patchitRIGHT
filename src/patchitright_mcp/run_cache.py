@@ -90,6 +90,10 @@ class RunCache:
                 "patched_content": patched_content,
                 "original_hash": original_hash,
                 "exists": bool(e.get("exists", target_path.exists())),
+                "target_file": e.get("target_file"),
+                "occurrences": e.get("occurrences", 0),
+                "relocated_range": e.get("relocated_range"),
+                "did_you_mean_info": e.get("did_you_mean_info"),
             })
 
         with self._lock:
