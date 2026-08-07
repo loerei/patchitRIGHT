@@ -259,6 +259,10 @@ class PatchEngine:
             norm_insert = norm_insert[:-1]
         norm_insert = norm_insert.replace("\r\n", "\n").replace("\r", "")
 
+        if auto_indent and norm_insert.strip():
+            import textwrap
+            norm_insert = textwrap.dedent(norm_insert)
+
         insert_lines = norm_insert.split("\n")
         if indent:
             indented_lines = [

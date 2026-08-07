@@ -2102,6 +2102,24 @@ class TestLineBasedInsertion:
         assert "error" in res2
         assert "Cannot combine 'insert_content'" in res2["error"]
 
+    def test_insert_line_auto_indent_pre_indented_content(self, tmp_path, monkeypatch):
+        """Verify pre-indented insert_content is normalized with textwrap.dedent under auto_indent=True."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "sample.py"
+        f.write_text("def foo():\n    pass\n")
+
+        res = patch_file(
+            target_file="sample.py",
+            insert_line=2,
+            insert_content="    \"\"\"Pre-indented docstring.\"\"\"",
+            insert_position="before",
+            auto_indent=True,
+            dry_run=False
+        )
+        assert res["success"] is True
+        content = f.read_text()
+        assert "    \"\"\"Pre-indented docstring.\"\"\"\n    pass" in content
+
     def test_same_target_line_tie_breaking(self, tmp_path, monkeypatch):
         """Tie-breaking test: when replacement and insertion share target line, replacement executes first."""
         monkeypatch.chdir(tmp_path)
