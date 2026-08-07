@@ -72,6 +72,10 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 - `replace_content` *(string)*: Replacement text.
 | `patch_content` | `string` | Strict Unified Diff string to apply (`Fuzz = 0`). |
 | `replacements` | `array` | List of replacement objects applied bottom-up to prevent line-drift. |
+| `insert_line` | `integer` | 1-indexed target line number (`1` for top of file, `-1` for EOF, or positive line index). |
+| `insert_content` | `string` | Text content to insert. |
+| `insert_position` | `string` | Relative insertion position: `"before"` (default), `"after"`, `"start"`, or `"end"`. (`"start"` and `"end"` require `symbol_name`). |
+| `auto_indent` | `boolean` | Infers and prepends reference line indentation (spaces or tabs). Defaults to `true`. |
 | `symbol_name` | `string` | Scopes search matching to a specific class/function AST boundary using jCodeMunch. |
 | `start_line` / `end_line`| `integer` | Scopes search matching to a specific 1-indexed line range. |
 | `symbol_scope` | `string` | Scopes the mutation style of the target symbol. Supports: `"boundary"` (default: classic search-and-replace), `"full"` (replaces the entire function/class signature + body), or `"body"` (replaces *only* the inner content between `{` and `}`). |
@@ -93,6 +97,20 @@ With the introduction of `symbol_scope: "body"` and `symbol_scope: "full"`, `pat
 * **Auto Newline Padding**: Intelligently pads multiline brace blocks with line endings (`\n` or `\r\n` matching the file format) while preserving compact formatting for single-line arrow functions.
 * **Multibyte Character Safety**: Maps tree-sitter's byte-level coordinates to Python character positions, ensuring multibyte characters (like emojis `🐛` or accented letters `é`) are never corrupted during column-level splicing.
 * **Upfront Resolution**: Resolves all boundaries upfront and mutates from bottom to top, preventing offset-drift errors in multi-patch `replacements` queues.
+
+---
+
+## 📌 Line-Based & Symbol-Relative Insertion
+
+Inserts code at specified line numbers or relative to AST symbols without requiring `search_content`:
+
+* **Line Indexing**: Pass `insert_line: 1` to insert at the top of a file, or `insert_line: -1` to append at end of file (EOF).
+* **Symbol Relative Positioning**: Combine `symbol_name` with `insert_position`:
+  - `"before"`: Inserts above the symbol (above decorator stacks if present).
+  - `"after"`: Inserts below the symbol's end boundary.
+  - `"start"` / `"end"`: Inserts at the entry or exit line inside the symbol body.
+* **Auto-Indentation**: Detects reference line indentation (spaces or tabs) and scans adjacent non-blank lines if the target line is empty. Normalizes pre-indented blocks via `textwrap.dedent`.
+* **Warning System**: Returns diagnostic warnings in the response object for out-of-bounds line clamping, tab/space mismatches (`auto_indent=false`), and indentation fallbacks.
 
 ---
 
