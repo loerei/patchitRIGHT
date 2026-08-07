@@ -36,10 +36,14 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 * **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true` / `false`, default: `false`):
   When enabled, `patchitRIGHT` automatically triggers a background thread to call `jCodeMunch`'s file indexer (`index-file`) immediately after writing a change. This keeps the AST index in sync in real-time, making subsequent search or impact queries instantly consistent.
 
+### Exposing Legacy Tools
+* **`PATCHITRIGHT_SHOW_LEGACY`** (`true` / `false`, default: `false`):
+  Exposes the legacy `batch_patch_files` tool in the MCP schema for backward compatibility. Multi-file edits are now natively handled inside `patch_file` via the `files` array.
+
 ### Exposing the Bypass Validation Flag
 * **`PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION`** (`true` / `false`, default: `false`):
   By default, the `bypass_validation` tool parameter is hidden from the MCP schema to prevent AI agents from bypassing syntax/lint checks to escape code-correctness guards. 
-  If set to `true`, the `bypass_validation` parameter will be exposed in the schemas for `patch_file`, `batch_patch_files`, and `write_file`.
+  If set to `true`, the `bypass_validation` parameter will be exposed in the schemas for `patch_file` and `write_file`.
   
   *Note:* The underlying server always accepts `bypass_validation: true` in the API arguments regardless of whether it is exposed in the schema, allowing programmatic override when needed.
 
@@ -56,8 +60,7 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 
 | Tool | Core Functionality | Key Inputs |
 | :--- | :--- | :--- |
-| `patch_file` | Performs surgical code replacement on a single target file (direct patch by default). | `target_file`, `search_content`/`replace_content` OR `patch_content` OR `replacements` |
-| `batch_patch_files` | Performs an atomic, transactional refactoring operation across multiple target files. | `patches` (array of patch objects containing target_file and patch_content) |
+| `patch_file` | Performs surgical code edits (replacements, line insertions, unified diffs) across single or multiple files. | `target_file` (or `files`), `search_content`/`replace_content` OR `insert_content` OR `replacements` |
 | `write_file` | Create a new file or fully overwrite an existing file with syntax validation. | `target_file`, `code_content`, `allow_overwrite` |
 | `apply_last_dry_run` | *(Optional / Advanced)* Applies a previously cached dry-run patch. | `run_id` (a cached run ID valid for 300 seconds) |
 
