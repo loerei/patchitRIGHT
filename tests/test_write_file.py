@@ -34,7 +34,7 @@ def test_write_file_new(temp_workspace):
     
     assert res.get("success") is True
     assert res.get("dryRun") is False
-    assert "created successfully" in res.get("message")
+    assert "Successfully created" in res.get("message")
     
     # Verify file was written
     target_path = temp_workspace / target
@@ -62,7 +62,7 @@ def test_write_file_existing_overwrite(temp_workspace):
     # Try writing with allow_overwrite
     res = write_file(target_file=target, code_content="new_content", allow_overwrite=True)
     assert res.get("success") is True
-    assert "overwritten successfully" in res.get("message")
+    assert "Successfully overwritten" in res.get("message")
     assert target_path.read_text(encoding="utf-8") == "new_content"
 
 

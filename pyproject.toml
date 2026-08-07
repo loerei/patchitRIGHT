@@ -30,7 +30,7 @@ packages = ["src/patchitright_mcp"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-n auto"
+addopts = "-n auto --dist=loadfile"
 
 [dependency-groups]
 dev = [
