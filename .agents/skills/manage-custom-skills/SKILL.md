@@ -1,90 +1,114 @@
 ---
 name: manage-custom-skills
-description: >
-  Create, update, and distribute custom agent skills. Scaffolds new skill folders or updates existing ones,
-  registers them in the skill installer script, and syncs them across all project workspaces. Use when the 
-  user wants to create, edit, update, or manage custom skills.
+description: Create, update, and distribute custom agent skills from the central myskills repository to project workspaces and multi-IDE configurations. Use when user wants to create, edit, update, or manage custom skills.
 ---
 
 # Manage Custom Skills
 
-This skill guides the agent through building or updating custom skills, registering them with the global setup, and distributing them to all project workspaces.
+Enforce single-source-of-truth skill management by writing skills directly to the central `myskills` source catalog before distributing across local project workspaces and multi-IDE environments.
+
+---
+
+## Workflows
+
+```mermaid
+flowchart TD
+    Start["Manage Skill Request"] --> CheckAction{"Select Action"}
+    
+    CheckAction -->|"Create / Update Skill"| GatherReq["1. Gather Requirements<br/>(Name, Purpose, Triggers, Instructions)"]
+    GatherReq --> PickCat["2. Select Category Folder<br/>(design / engineering / quality / productivity / personal)"]
+    PickCat --> WriteSource["3. Write Source SKILL.md<br/>myskills/<category>/<skill-name>/SKILL.md"]
+    WriteSource --> CheckLocal{"Local Project Edit Attempt?"}
+    CheckLocal -->|"Direct Project Edit (Banned)"| BlockLocal["STOP: Must edit base myskills source path first<br/>(Unless frontmatter contains 'local: true')"]
+    CheckLocal -->|"Source Updated"| Distribute["4. Run Distribution Engine<br/>agents --distribute"]
+    
+    CheckAction -->|"Redistribute Only"| Distribute
+    
+    Distribute --> PushGit["5. Git Commit & Push myskills Repo"]
+    PushGit --> UpdateMatrix["6. Update AGENTS.md Policy Matrix"]
+    UpdateMatrix --> Done["Completion Verified"]
+```
 
 ---
 
 ## 1. Gather Requirements
 
-Ask the user:
-1. What is the name of the new or existing skill? (e.g. `my-awesome-skill`)
-2. What does it do? (for the YAML description block)
-3. Under what conditions should the agent trigger it? (triggers)
-4. What instructions, guidelines, and commands should be included?
+Before scaffolding or editing a skill, confirm:
+1. **Name**: Skill identifier (e.g. `my-awesome-skill`).
+2. **Purpose**: Core capability summary for YAML description.
+3. **Triggers**: Explicit conditions and keywords that trigger loading ("Use when...").
+4. **Instructions**: Required workflows, decision trees, guidelines, and commands.
 
 ---
 
-## 2. Scaffold Custom Skill
+## 2. Category Selection & Source-First Execution
 
-Create a new directory inside the custom skills source repository and write the `SKILL.md` file:
-Path: `<projects-dir>/myskills/<skill-name>/SKILL.md`
+Always modify or create skills directly in the central source repository:
+`Path: <projects-dir>/myskills/<category>/<skill-name>/SKILL.md`
 
-Ensure it contains the correct YAML frontmatter:
+> [!IMPORTANT]
+> **Source Location Lookup & Reading Protocol**: When working inside any project repository:
+> 1. To inspect source location metadata, run `agents info skill.<skill-name>`.
+> 2. To read raw skill instructions or auxiliary subdocs directly to stdout, run `agents read skill.<skill-name>` (or `agents read skill.<skill-name>/<subdoc-name>`).
+> 3. **ONLY edit the source file in `myskills` directly.** NEVER modify local project copies inside `.agents/skills/` (local edits will be overwritten).
+> 4. After editing the source file in `myskills`, run `agents distribute` (or `agents distribute -t .`) to sync changes back to local project workspaces and active IDE global targets (`~/.gemini`, `~/.claude`, `~/.cursor`).
+
+### Standard Categories:
+- `design/`: Layout, visual aesthetics, UI taste, styling, mobile/web comps.
+- `engineering/`: Architecture, TDD, debugging, domain modeling, refactoring.
+- `quality/`: Sonar remediation, code reviews, benchmark testing, git guardrails.
+- `productivity/`: Workflow automation, skill management, PR generation, triage, AI writing.
+- `personal/`: Obsidian vault management, article editing, draft shaping.
+
+### Frontmatter Format:
 ```yaml
 ---
 name: <skill-name>
-description: >
-  <One sentence on what it does>. Use when [specific triggers].
+description: <Capability description>. Use when [specific triggers].
 ---
 ```
 
+> [!CAUTION]
+> **Source-First Guardrail**: Never create or edit a global custom skill directly inside a local project workspace (`.agents/skills/<skill-name>/`). Local project edits will be overwritten during distribution unless the skill explicitly contains `local: true` in its frontmatter.
+
+### Cross-Repository Editing Protocol
+
+When requested to create or update a custom skill while working inside an external project repository:
+1. **Query Source Location:** Run `agents info skill.<skill-name>` to get the exact `skillFile` path in `myskills`. (For new skills, run `agents where` to get `<myskills-root>`).
+2. **Edit Source File Only:** Edit the source `SKILL.md` inside `myskills` directly. **DO NOT edit the local `.agents/skills/<skill-name>/` copy.**
+3. **Distribute Back:** Run `agents distribute` (or `agents distribute -t .` for current workspace) to deploy updated skill files back to your current repository and IDE configs.
+4. **Auto-Audit & Sync:** Run `agents audit --add` to keep policy coverage at 100%, then commit & push `myskills`.
+
 ---
 
-## 3. Distribute
+## 3. Distribution & Multi-IDE Sync
 
-Since the script dynamically reads the source directory, the new skill is automatically detected. Run the distribution script to deploy it to all projects:
+Run the distribution engine to sync the central source across all local workspace repositories and global IDE targets (`~/.gemini`, `~/.claude`, `~/.cursor`):
+
 ```powershell
-node <projects-dir>/distribute-skills.js --all <projects-dir>
-```
-Or to a specific project:
-```powershell
-node <projects-dir>/distribute-skills.js --target <projects-dir>/<project-folder>
+agents --distribute
 ```
 
-Navigate to `<projects-dir>/myskills/`, commit the new skill, and push it to the GitHub remote repository to keep it synced:
+Or target a specific project workspace:
+```powershell
+agents --target <projects-dir>/<project-folder>
+```
+
+---
+
+## 4. Remote Synchronization
+
+Navigate to `<projects-dir>/myskills/`, commit the updated skill source, and push upstream:
 ```powershell
 git add .
-git commit -m "Create skill: <skill-name>"
+git commit -m "feat(skills): add/update <skill-name> in <category>"
 git push
 ```
 
-Confirm to the user that the skill has been created, synced locally, and pushed to GitHub.
-
 ---
 
-## 4. Updating & Redistributing Existing Skills
+## 5. Global Policy Matrix Auto-Audit & Update
 
-When editing or updating an existing custom skill:
-1. **Apply changes to source repository**: Copy the updated files from the local workspace to the custom skills source repository directory: `<projects-dir>/myskills/<skill-name>/`
-2. **Redistribute**: Run the distribution script to sync the updates across all project workspaces:
-   ```powershell
-   node <projects-dir>/distribute-skills.js --all <projects-dir>
-   ```
-3. **Push to GitHub**: Commit the modifications or deletion, and push to GitHub:
-   ```powershell
-   git add .
-   git commit -m "Update/Delete skill: <skill-name>"
-   git push
-   ```
-
----
-
-## 5. Update Global Policy Matrix
-
-When a new custom skill is added, you MUST update the task-to-skill classification table in the Global Policy file (typically `AGENTS.md` or `GEMINI.md` at the repository/global configurations root):
-- Locate the **Task-Specific Workflows** table.
-- Categorize the new skill into one of the 5 standard categories:
-  1. **Design & Frontend UI** (styling, layout, taste, mockups)
-  2. **Engineering & Development** (testing, codebase architecture, debugging, prototyping)
-  3. **Code Quality & CI/CD** (sonar quality gates, CI logs)
-  4. **Productivity & Management** (triage, write-pr, to-issues, handoff, AI-writing)
-  5. **Content & Notes** (obsidian, drafts, writing beats)
-- Add the new skill name as a code block backtick item under the **Required Skills to Read** column for the matching category.
+When a custom skill is added, updated, or re-categorized:
+1. Run `agents audit --add` to automatically insert the skill into the **Task-Specific Workflows** table of `AGENTS.md` and platform deltas (`gemini/AGENTS.md`).
+2. Alternatively, run `agents audit` to verify 100% policy skill coverage without modifying files.

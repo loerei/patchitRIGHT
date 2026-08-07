@@ -503,7 +503,6 @@ def _process_single_file_in_memory(
     # Handle Line-Based Insertion mode
     insert_line = kwargs.get("insert_line")
     insert_content = kwargs.get("insert_content")
-    insert_position = kwargs.get("insert_position", "before")
     auto_indent = bool(kwargs.get("auto_indent", True)) if kwargs.get("auto_indent") is not None else True
 
     if insert_content is not None or insert_line is not None:
