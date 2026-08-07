@@ -544,6 +544,7 @@ def _generate_patchitright_guide(file_type: str | list[str] = "general") -> str:
 | :--- | :--- |
 | Edit a function/class body | `symbol_name` + `symbol_scope="body"` + `replace_content` |
 | Edit a single region | Focused `search_content` + `replace_content` |
+| Insert code at line or symbol | `insert_line` (1 for top, -1 for EOF) or `symbol_name` + `insert_content` + `insert_position` ("before"|"after"|"start"|"end") + `auto_indent` |
 | Edit multiple non-contiguous regions in one file | `replacements` array (applied bottom-up) |
 | Edit multiple files atomically | `files` array — all validated before writing |
 

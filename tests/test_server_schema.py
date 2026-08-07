@@ -66,6 +66,7 @@ async def test_patchitright_guide():
     assert "version" in data
     assert "content" in data
     assert "patchitright-mcp" in data["content"]
+    assert "Insert code at line or symbol" in data["content"]
     assert "JavaScript / TypeScript Clean-Code" not in data["content"]
 
     # Call the tool (single string js_ts - for robustness / backward compatibility)
