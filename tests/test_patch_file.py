@@ -2102,6 +2102,38 @@ class TestLineBasedInsertion:
         assert "error" in res2
         assert "Cannot combine 'insert_content'" in res2["error"]
 
+    def test_insert_line_tab_space_mismatch_warning(self, tmp_path, monkeypatch):
+        """Verify tab vs space mismatch warning when auto_indent=False."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "sample.py"
+        f.write_text("    a = 1\n    b = 2\n")
+
+        res = patch_file(
+            target_file="sample.py",
+            insert_line=2,
+            insert_content="\tc = 3",
+            auto_indent=False,
+            dry_run=False
+        )
+        assert res["success"] is True
+        assert any("contains tabs while auto_indent=False" in w for w in res.get("warnings", []))
+
+    def test_insert_line_after_last_line_warning(self, tmp_path, monkeypatch):
+        """Verify insert_line == total_lines with insert_position='after' emits warning."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "sample.py"
+        f.write_text("line 1\nline 2")
+
+        res = patch_file(
+            target_file="sample.py",
+            insert_line=2,
+            insert_position="after",
+            insert_content="# End comment",
+            dry_run=False
+        )
+        assert res["success"] is True
+        assert any("targets end-of-file" in w for w in res.get("warnings", []))
+
     def test_insert_line_out_of_bounds_clamping_warning(self, tmp_path, monkeypatch):
         """Verify insert_line > total_lines emits a clamping warning in the response."""
         monkeypatch.chdir(tmp_path)

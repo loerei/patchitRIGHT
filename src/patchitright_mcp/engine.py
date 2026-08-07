@@ -214,9 +214,12 @@ class PatchEngine:
 
         total_lines = len(self.file_lines)
 
-        self.clamped_warning = None
+        self.insertion_warnings = []
         if insert_line > total_lines:
-            self.clamped_warning = f"Warning: Specified insert_line ({insert_line}) exceeds total file lines ({total_lines}). Clamped insertion to end-of-file."
+            self.insertion_warnings.append(f"Warning: Specified insert_line ({insert_line}) exceeds total file lines ({total_lines}). Clamped insertion to end-of-file.")
+
+        if insert_line == total_lines and insert_position == "after":
+            self.insertion_warnings.append(f"Warning: Specified insert_line ({total_lines}) with insert_position='after' targets end-of-file.")
 
         is_eof = (insert_line == -1 or insert_line > total_lines)
         if is_eof:
@@ -258,6 +261,20 @@ class PatchEngine:
                             break
             if not indent and ref_line.strip():
                 indent = ref_line[:len(ref_line) - len(ref_line.lstrip())]
+
+            if not indent and any(line_str.strip() for line_str in self.file_lines):
+                self.insertion_warnings.append("Warning: Could not infer reference indentation for auto_indent. Defaulted to top-level (0 spaces).")
+
+        if not auto_indent and insert_content:
+            file_has_spaces = any(line_str.startswith(" ") for line_str in self.file_lines if line_str.strip())
+            file_has_tabs = any(line_str.startswith("\t") for line_str in self.file_lines if line_str.strip())
+            content_has_tabs = "\t" in insert_content
+            content_has_spaces = any(line_str.startswith(" ") for line_str in insert_content.splitlines() if line_str.strip())
+
+            if file_has_spaces and content_has_tabs:
+                self.insertion_warnings.append("Warning: File uses spaces for indentation, but inserted content contains tabs while auto_indent=False.")
+            elif file_has_tabs and content_has_spaces:
+                self.insertion_warnings.append("Warning: File uses tabs for indentation, but inserted content contains spaces while auto_indent=False.")
 
         norm_insert = insert_content[:-1] if insert_content.endswith("\n") else insert_content
         if norm_insert.endswith("\r"):

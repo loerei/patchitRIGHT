@@ -500,8 +500,8 @@ def _process_single_file_in_memory(
                     )
 
                 occurrences_sum += occurrences_cnt
-                if getattr(r_engine, "clamped_warning", None):
-                    all_warnings.append(r_engine.clamped_warning)
+                if getattr(r_engine, "insertion_warnings", None):
+                    all_warnings.extend(r_engine.insertion_warnings)
                 last_linter_warnings = list(all_warnings) + list(getattr(r_engine, "linter_warnings", []))
                 final_engine = r_engine
 
@@ -577,9 +577,7 @@ def _process_single_file_in_memory(
                 auto_indent=auto_indent,
                 validate=True,
             )
-            linter_warnings = list(getattr(engine, "linter_warnings", []))
-            if getattr(engine, "clamped_warning", None):
-                linter_warnings.insert(0, engine.clamped_warning)
+            linter_warnings = list(getattr(engine, "insertion_warnings", [])) + list(getattr(engine, "linter_warnings", []))
             suggestion = _get_linter_suggestion(target_file) if linter_warnings else ""
             return patched_file, occurrences, linter_warnings, suggestion, None, engine
         except SyntaxValidationError as e:
