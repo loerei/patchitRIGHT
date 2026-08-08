@@ -1,6 +1,27 @@
+import functools
 import os
 from pathlib import Path
 from typing import Optional
+
+
+@functools.lru_cache(maxsize=256)
+def _cached_resolve_allowed_base_dir(cwd_str: str, target_file_norm: str, storage_path: Optional[str] = None) -> str:
+    """Module-level LRU cached helper for resolving allowed base directory string."""
+    try:
+        from jcodemunch_mcp.tools.resolve_repo import resolve_repo as resolve_repo_fn
+        temp_resolved = os.path.abspath(os.path.join(cwd_str, target_file_norm))
+        repo_res = resolve_repo_fn(temp_resolved, storage_path)
+        if repo_res.get("found") and "source_root" in repo_res:
+            return os.path.abspath(repo_res["source_root"])
+    except Exception:
+        pass
+    return cwd_str
+
+
+def clear_workspace_cache() -> None:
+    """Clear the workspace base directory LRU cache."""
+    _cached_resolve_allowed_base_dir.cache_clear()
+
 
 class Workspace:
     """Manages path safe-resolution, context mismatch checks, and root directory discovery."""
@@ -14,17 +35,11 @@ class Workspace:
         return Path(self.storage_path).resolve() if self.storage_path else self.cwd
 
     def resolve_allowed_base_dir(self, target_file: str) -> Path:
-        """Resolve the allowed base directory, using indexed repo source_root if available."""
-        base_dir = self.cwd
-        try:
-            from jcodemunch_mcp.tools.resolve_repo import resolve_repo as resolve_repo_fn
-            temp_resolved = os.path.abspath(os.path.join(base_dir, target_file))
-            repo_res = resolve_repo_fn(temp_resolved, self.storage_path)
-            if repo_res.get("found") and "source_root" in repo_res:
-                return Path(os.path.abspath(repo_res["source_root"]))
-        except Exception:
-            pass
-        return base_dir
+        """Resolve the allowed base directory, using indexed repo source_root if available (LRU cached)."""
+        cwd_str = str(self.cwd)
+        tf_norm = os.path.normpath(target_file)
+        resolved_str = _cached_resolve_allowed_base_dir(cwd_str, tf_norm, self.storage_path)
+        return Path(resolved_str)
 
     def resolve_safe_path(self, target_file: str) -> Path:
         """Resolve the target path and check context mismatch constraint for relative paths."""
