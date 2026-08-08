@@ -162,9 +162,6 @@ def mask_comments_and_strings(content: str, filename: str) -> str:
                         chars[i] = ' '
                     i += 1
                 continue
-                if chars[i] != '\n':
-                    chars[i] = ' '
-                i += 1
             continue
 
         i += 1
