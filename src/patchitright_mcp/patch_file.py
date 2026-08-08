@@ -12,7 +12,7 @@ from .engine import PatchEngine
 from .transaction import FileTransaction
 from .run_cache import get_cache
 from .body_parser import BodyRange
-from .validators import SyntaxValidationError
+from .validators import SyntaxValidationError, ValidationService
 
 LINTER_WARNINGS_PREFIX = "\n*Linter Warnings:*\n"
 
@@ -523,7 +523,9 @@ def _process_single_file_in_memory(
                 auto_indent=auto_indent,
                 validate=True,
             )
-            linter_warnings = list(getattr(engine, "insertion_warnings", [])) + list(getattr(engine, "linter_warnings", []))
+            linter_warnings = ValidationService.filter_warnings(
+                list(getattr(engine, "insertion_warnings", [])) + list(getattr(engine, "linter_warnings", []))
+            )
             suggestion = _get_linter_suggestion(target_file) if linter_warnings else ""
             return patched_file, occurrences, linter_warnings, suggestion, None, engine
         except SyntaxValidationError as e:

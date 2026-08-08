@@ -74,13 +74,13 @@ class JsTsValidator(BaseValidator):
 
         return None
 
-    def _get_biome_command(self, filename: str = "") -> tuple[str, list[str]] | None:
-        log_step("JsTsValidator: Checking for biome...")
+    def _get_biome_command(self, filename: str = "", mode: str = "check") -> tuple[str, list[str]] | None:
+        log_step(f"JsTsValidator: Checking for biome (mode={mode})...")
         # Check standard PATH
         exe = shutil.which("biome")
         if exe:
             log_step(f"JsTsValidator: Found biome globally: {exe}")
-            return exe, ["check"]
+            return exe, [mode]
         
         # Check local node_modules relative to the project root
         target_dir = Path(filename).parent if filename else Path.cwd()
@@ -97,7 +97,7 @@ class JsTsValidator(BaseValidator):
         for p in local_paths:
             if p.exists():
                 log_step(f"JsTsValidator: Found biome locally: {p}")
-                return str(p), ["check"]
+                return str(p), [mode]
 
         # Check package runners globally/locally using smart detection
         pm = self._detect_package_manager(filename)
@@ -105,31 +105,31 @@ class JsTsValidator(BaseValidator):
             pnpm = shutil.which("pnpm")
             if pnpm:
                 log_step("JsTsValidator: Detected active pnpm project, using pnpm dlx")
-                return pnpm, ["dlx", self.BIOME_PACKAGE, "check"]
+                return pnpm, ["dlx", self.BIOME_PACKAGE, mode]
         elif pm == "yarn":
             yarn = shutil.which("yarn")
             if yarn:
                 log_step("JsTsValidator: Detected active yarn project, using yarn dlx")
-                return yarn, ["dlx", self.BIOME_PACKAGE, "check"]
+                return yarn, ["dlx", self.BIOME_PACKAGE, mode]
         elif pm == "npm":
             npx = shutil.which("npx")
             if npx:
                 log_step("JsTsValidator: Detected active npm project, using npx")
-                return npx, ["--offline", self.BIOME_PACKAGE, "check"]
+                return npx, ["--offline", self.BIOME_PACKAGE, mode]
 
         # Fallback if no package manager detected or preferred runner not found
         npx = shutil.which("npx")
         if npx:
             log_step(f"JsTsValidator: Falling back to npx: {npx}")
-            return npx, ["--offline", self.BIOME_PACKAGE, "check"]
+            return npx, ["--offline", self.BIOME_PACKAGE, mode]
         yarn = shutil.which("yarn")
         if yarn:
             log_step(f"JsTsValidator: Falling back to yarn dlx: {yarn}")
-            return yarn, ["dlx", self.BIOME_PACKAGE, "check"]
+            return yarn, ["dlx", self.BIOME_PACKAGE, mode]
         pnpm = shutil.which("pnpm")
         if pnpm:
             log_step(f"JsTsValidator: Falling back to pnpm dlx: {pnpm}")
-            return pnpm, ["dlx", self.BIOME_PACKAGE, "check"]
+            return pnpm, ["dlx", self.BIOME_PACKAGE, mode]
 
         log_step("JsTsValidator: No biome runner found")
         return None
@@ -488,9 +488,24 @@ class JsTsValidator(BaseValidator):
         else:
             self._validate_with_node(content, filename, original_content)
 
-    def lint(self, content: str, filename: str) -> list[str]:
-        log_step(f"JsTsValidator.lint: starting for {filename}...")
-        biome_cmd = self._get_biome_command(filename)
+    def lint(self, content: str, filename: str, ignore_format: bool = False, ignore_codesmell: bool = False) -> list[str]:
+        log_step(f"JsTsValidator.lint: starting for {filename} (ignore_format={ignore_format}, ignore_codesmell={ignore_codesmell})...")
+        if ignore_format and ignore_codesmell:
+            return []
+
+        mode = "check"
+        if ignore_format:
+            mode = "lint"
+        elif ignore_codesmell:
+            mode = "format"
+
+        try:
+            if mode == "check":
+                biome_cmd = self._get_biome_command(filename)
+            else:
+                biome_cmd = self._get_biome_command(filename, mode=mode)
+        except TypeError:
+            biome_cmd = self._get_biome_command(filename)
         if not biome_cmd:
             log_step("JsTsValidator.lint: biome not found, skipping lint")
             return []
