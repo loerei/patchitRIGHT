@@ -68,3 +68,24 @@ def test_filter_warnings_combined(monkeypatch):
     monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "format,codesmell")
     filtered = ValidationService.filter_warnings(warnings)
     assert filtered == []
+
+def test_filter_warnings_multiline_formatter_block(monkeypatch):
+    warnings = [
+        "x Formatter would have printed the following content:",
+        "1 | - import React from 'react';",
+        "2 | + import React from \"react\";",
+        "! All these imports are only used as types.",
+        "1 | import React from 'react';"
+    ]
+    # Test format only ignore -> should remove the 3 formatter lines and keep the 2 lint lines
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "format")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 2
+    assert filtered[0].startswith("!")
+    assert filtered[1].startswith("1 |")
+
+    # Test codesmell only ignore -> should remove the 2 lint lines and keep the 3 formatter lines
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "codesmell")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 3
+    assert filtered[0].startswith("x Formatter")
