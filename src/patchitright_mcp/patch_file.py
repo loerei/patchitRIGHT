@@ -12,7 +12,7 @@ from .engine import PatchEngine
 from .transaction import FileTransaction
 from .run_cache import get_cache
 from .body_parser import BodyRange
-from .validators import SyntaxValidationError
+from .validators import SyntaxValidationError, ValidationService
 
 LINTER_WARNINGS_PREFIX = "\n*Linter Warnings:*\n"
 
