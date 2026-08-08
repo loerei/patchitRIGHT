@@ -2,6 +2,7 @@ import re
 from typing import Optional, Union
 from rapidfuzz import fuzz
 from .validators import ValidationService
+from .symbol_checker import detect_omitted_symbols, extract_net_diff_declarations
 
 class PatchEngine:
     """Core in-memory engine to apply search-and-replace and unified diff patches."""
@@ -20,6 +21,7 @@ class PatchEngine:
         self.relocated_start_line = None
         self.relocated_end_line = None
         self.linter_warnings = []
+        self.symbol_warnings = []
         self.validator = ValidationService()
         self.bypass_validation = bypass_validation
         self.indentation_adjusted = False
@@ -115,6 +117,26 @@ class PatchEngine:
             return norm_replace
         return target_slice.replace(norm_search, norm_replace)
 
+    def _check_symbol_omissions(
+        self, start_idx: int, end_idx: int, target_slice: str, norm_search: str, replace_content: str
+    ):
+        """Checks for omitted declared symbols that are referenced in outer scope."""
+        base_offset = sum(len(line) + 1 for line in self.file_lines[:start_idx])
+        rel_offset = target_slice.find(norm_search)
+        if rel_offset == -1:
+            rel_offset = 0
+        match_start = base_offset + rel_offset
+        match_end = match_start + len(norm_search)
+        warnings = detect_omitted_symbols(
+            file_content=self.norm_content,
+            match_start=match_start,
+            match_end=match_end,
+            original_slice=norm_search,
+            replace_content=replace_content,
+            filename=self.filename,
+        )
+        self.symbol_warnings.extend(warnings)
+
     def apply_classic_patch(
         self,
         search_content: str,
@@ -127,6 +149,7 @@ class PatchEngine:
         line_filter: Optional[Union[str, int]] = None,
         did_you_mean: bool = False,
         validate: bool = True,
+        check_symbols: bool = True,
     ) -> tuple[str, int]:
         """Applies a classic search-and-replace patch inside line/symbol scope."""
         norm_search = search_content.replace("\r\n", "\n").replace("\r", "")
@@ -156,6 +179,9 @@ class PatchEngine:
         # Line filter assertion
         if line_filter is not None and not self.is_did_you_mean_applied:
             self._assert_line_filter(line_filter, target_slice, norm_search, start_idx)
+
+        if check_symbols:
+            self._check_symbol_omissions(start_idx, end_idx, target_slice, norm_search, norm_replace)
 
         # Apply replacement
         patched_slice = self._apply_replacement_logic(target_slice, norm_search, norm_replace)

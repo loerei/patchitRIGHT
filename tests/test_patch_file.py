@@ -2095,6 +2095,31 @@ class TestLineBasedInsertion:
         content = f.read_text()
         assert "    \"\"\"Pre-indented docstring.\"\"\"\n    pass" in content
 
+    def test_patch_file_symbol_omission_warning_end_to_end(self, tmp_path, monkeypatch):
+        """End-to-end test verifying patch_file output contains symbol omission warnings."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "sorter.ts"
+        code = """
+        const firstIndex = 1;
+        let lastIndex = 2;
+        console.log(firstIndex + lastIndex);
+        """
+        f.write_text(code)
+
+        res = patch_file(
+            target_file="sorter.ts",
+            search_content="        const firstIndex = 1;\n        let lastIndex = 2;",
+            replace_content="        // deleted indices",
+            dry_run=False
+        )
+
+        assert res["success"] is True
+        assert "warnings" in res
+        warning_str = "\n".join(res["warnings"])
+        assert "Symbol Omission Alert" in warning_str
+        assert "firstIndex" in warning_str
+
+
     def test_same_target_line_tie_breaking(self, tmp_path, monkeypatch):
         """Tie-breaking test: when replacement and insertion share target line, replacement executes first."""
         monkeypatch.chdir(tmp_path)
