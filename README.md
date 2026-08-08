@@ -84,6 +84,8 @@ Insert code cleanly directly above a target line without requiring exact text ma
 
 ## Environment Flags & Configuration
 
+* **`set_timeout`** (`number`, default: `10.0`): Overrides tool execution timeout in seconds. Set to `-1` to disable timeout completely (recommended during internal server self-modifications).
+* **`PATCHITRIGHT_DEFAULT_TIMEOUT`** (`float`, default: `10.0`): Configures server-wide default execution timeout limit.
 * **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true` / `false`, default: `false`): Triggers immediate background indexing in `jCodeMunch` after file modifications.
 * **`PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION`** (`true` / `false`, default: `false`): Exposes `bypass_validation` parameter in schemas for emergency override.
 * **`PATCHITRIGHT_SHOW_LEGACY`** (`true` / `false`, default: `false`): Exposes legacy `batch_patch_files` tool.

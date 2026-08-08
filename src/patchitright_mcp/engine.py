@@ -677,6 +677,7 @@ class PatchEngine:
         symbol_scope: str,     # "full" or "body"
         is_expression: bool = False,
         symbol_start_line: Optional[int] = None,
+        validate: bool = True,
     ) -> tuple[str, int]:
         
         """Replace the resolved symbol or body in-place."""
@@ -766,7 +767,7 @@ class PatchEngine:
             patched_file = "\n".join(patched_lines)
 
         # Validate
-        if not self.bypass_validation:
+        if validate and not self.bypass_validation:
             self.validator.validate_file(self.filename, patched_file, self.file_content)
             self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
 

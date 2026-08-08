@@ -208,6 +208,7 @@ def _process_single_file_in_memory(
                         end_col=end_col,
                         symbol_scope=scope,
                         is_expression=is_expr,
+                        validate=(idx == len(sorted_resolved_items) - 1),
                     )
                 else:
                     sym_boundaries = None

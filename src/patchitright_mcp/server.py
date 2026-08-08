@@ -555,7 +555,7 @@ Only use `write_file` overwrite when the file content needs to be **fully change
 
 ### Constraints
 
-* **Self-modification**: Edits to `src/patchitright_mcp/` trigger dev reloads. Always `dry_run=true` first.
+* **Self-modification**: Edits to `src/patchitright_mcp/` trigger dev reloads and background writes. Always use `dry_run=true` first to preview, and add `"set_timeout": -1` or `"bypass_validation": true` to tool arguments to avoid RPC execution timeout limits during internal server refactoring.
 * **Paths**: Use absolute paths or forward-slash relative paths to avoid JSON escaping issues.
 
 ---
