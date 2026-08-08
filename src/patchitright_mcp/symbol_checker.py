@@ -53,35 +53,6 @@ def mask_comments_and_strings(content: str, filename: str) -> str:
     while i < n:
         ch = chars[i]
 
-        # Handle Python comments (#)
-        if is_python and ch == '#':
-            while i < n and chars[i] != '\n':
-                chars[i] = ' '
-                i += 1
-            continue
-
-        # Handle JS/TS comments (// and /* */)
-        if not is_python and ch == '/':
-            if i + 1 < n and chars[i + 1] == '/':
-                while i < n and chars[i] != '\n':
-                    chars[i] = ' '
-                    i += 1
-                continue
-            elif i + 1 < n and chars[i + 1] == '*':
-                chars[i] = ' '
-                chars[i + 1] = ' '
-                i += 2
-                while i < n:
-                    if chars[i] == '*' and i + 1 < n and chars[i + 1] == '/':
-                        chars[i] = ' '
-                        chars[i + 1] = ' '
-                        i += 2
-                        break
-                    if chars[i] != '\n':
-                        chars[i] = ' '
-                    i += 1
-                continue
-
         # Handle Python docstrings (triple quotes)
         if is_python and (norm.startswith('"""', i) or norm.startswith("'''", i)):
             q = norm[i:i+3]
@@ -158,6 +129,39 @@ def mask_comments_and_strings(content: str, filename: str) -> str:
                     chars[i] = ' '
                     i += 1
                     break
+                if chars[i] != '\n':
+                    chars[i] = ' '
+                i += 1
+            continue
+
+        # Handle Python comments (#)
+        if is_python and ch == '#':
+            while i < n and chars[i] != '\n':
+                chars[i] = ' '
+                i += 1
+            continue
+
+        # Handle JS/TS comments (// and /* */)
+        if not is_python and ch == '/':
+            if i + 1 < n and chars[i + 1] == '/':
+                while i < n and chars[i] != '\n':
+                    chars[i] = ' '
+                    i += 1
+                continue
+            elif i + 1 < n and chars[i + 1] == '*':
+                chars[i] = ' '
+                chars[i + 1] = ' '
+                i += 2
+                while i < n:
+                    if chars[i] == '*' and i + 1 < n and chars[i + 1] == '/':
+                        chars[i] = ' '
+                        chars[i + 1] = ' '
+                        i += 2
+                        break
+                    if chars[i] != '\n':
+                        chars[i] = ' '
+                    i += 1
+                continue
                 if chars[i] != '\n':
                     chars[i] = ' '
                 i += 1

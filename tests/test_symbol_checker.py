@@ -286,4 +286,11 @@ def test_write_file_and_markdown_bypass(tmp_path, monkeypatch):
     assert "warnings" not in res2
 
 
+def test_python_hash_inside_string_literal():
+    from patchitright_mcp.symbol_checker import mask_comments_and_strings
+    code = 'hash_str = "# not a comment"\nmy_var = 123'
+    masked = mask_comments_and_strings(code, "test.py")
+    assert "my_var" in masked
+
+
 
