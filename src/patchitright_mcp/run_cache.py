@@ -94,6 +94,8 @@ class RunCache:
                 "occurrences": e.get("occurrences", 0),
                 "relocated_range": e.get("relocated_range"),
                 "did_you_mean_info": e.get("did_you_mean_info"),
+                "symbol_warnings": e.get("symbol_warnings", []),
+                "warnings": e.get("warnings", []),
             })
 
         with self._lock:

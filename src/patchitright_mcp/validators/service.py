@@ -52,6 +52,8 @@ class ValidationService:
             is_explicit_format = (
                 "formatter would have printed" in lower_w
                 or "formatter" in lower_w
+                or "formatted" in lower_w
+                or "formatting" in lower_w
                 or "tab vs space" in lower_w
                 or "indentation" in lower_w
             )

@@ -304,7 +304,14 @@ def _process_single_file_in_memory(
         engine = PatchEngine(file_content, target_file, bypass_validation=bypass_validation)
         try:
             patched_file = engine.apply_unified_patch(patch_content)
-            linter_warnings = getattr(engine, "linter_warnings", [])
+            from .symbol_checker import extract_net_diff_declarations, detect_net_omitted_symbols
+            deleted_syms = extract_net_diff_declarations(patch_content, target_file)
+            diff_sym_warnings = detect_net_omitted_symbols(
+                patched_content=patched_file,
+                deleted_symbols=deleted_syms,
+                filename=target_file,
+            )
+            linter_warnings = list(diff_sym_warnings) + list(getattr(engine, "linter_warnings", []))
             suggestion = _get_linter_suggestion(target_file) if linter_warnings else ""
             return patched_file, 1, linter_warnings, suggestion, None, engine
         except SyntaxValidationError as e:
@@ -466,8 +473,8 @@ def _process_single_file_in_memory(
                         search_content=r["search_content"],
                         replace_content=r["replace_content"],
                         allow_multiple=r.get("allow_multiple", allow_multiple),
-                        start_line=r.get("start_line"),
-                        end_line=r.get("end_line"),
+                        start_line=r.get("start_line") or item.get("start_line"),
+                        end_line=r.get("end_line") or item.get("end_line"),
                         symbol_boundaries=sym_boundaries,
                         symbol_name=sym_name,
                         line_filter=r.get("line_filter"),
@@ -478,15 +485,35 @@ def _process_single_file_in_memory(
                 occurrences_sum += occurrences_cnt
                 if getattr(r_engine, "insertion_warnings", None):
                     all_warnings.extend(r_engine.insertion_warnings)
+                if getattr(r_engine, "symbol_warnings", None):
+                    all_warnings.extend(r_engine.symbol_warnings)
                 last_linter_warnings = list(all_warnings) + list(getattr(r_engine, "linter_warnings", []))
                 final_engine = r_engine
+
+            # Net batch evaluation for multi-replacement items
+            if len(sorted_resolved_items) > 1:
+                from .symbol_checker import extract_declarations, detect_net_omitted_symbols
+                deleted_symbols = set()
+                for item in sorted_resolved_items:
+                    r = item.get("r", {})
+                    if "search_content" in r and r["search_content"]:
+                        deleted_symbols.update(extract_declarations(r["search_content"], target_file))
+                net_warnings = detect_net_omitted_symbols(
+                    patched_content=temp_content,
+                    deleted_symbols=deleted_symbols,
+                    filename=target_file,
+                )
+                last_linter_warnings.extend(net_warnings)
 
             return temp_content, occurrences_sum, last_linter_warnings, final_engine
 
         try:
             patched_file, occurrences, last_warnings, engine = run_chain(file_content)
-            suggestion = _get_linter_suggestion(target_file) if last_warnings else ""
-            return patched_file, occurrences, last_warnings, suggestion, None, engine
+            all_sym_warnings = getattr(engine, "symbol_warnings", []) if engine else []
+            combined_warnings = list(all_sym_warnings) + list(last_warnings)
+            filtered_warnings = ValidationService.filter_warnings(combined_warnings)
+            suggestion = _get_linter_suggestion(target_file) if filtered_warnings else ""
+            return patched_file, occurrences, filtered_warnings, suggestion, None, engine
         except SyntaxValidationError as e:
             return "", 0, [], "", {
                 "error": f"Syntax Error: {str(e)}",
@@ -601,9 +628,11 @@ def _process_single_file_in_memory(
                 did_you_mean=did_you_mean,
                 validate=True,
             )
-        linter_warnings = getattr(engine, "linter_warnings", [])
-        suggestion = _get_linter_suggestion(target_file) if linter_warnings else ""
-        return patched_file, occurrences, linter_warnings, suggestion, None, engine
+        sym_warnings = getattr(engine, "symbol_warnings", [])
+        linter_warnings = list(sym_warnings) + list(getattr(engine, "linter_warnings", []))
+        filtered_warnings = ValidationService.filter_warnings(linter_warnings)
+        suggestion = _get_linter_suggestion(target_file) if filtered_warnings else ""
+        return patched_file, occurrences, filtered_warnings, suggestion, None, engine
     except SyntaxValidationError as e:
         return "", 0, [], "", {
             "error": f"Syntax Error: {str(e)}",
@@ -790,7 +819,18 @@ def patch_file(  # noqa: C901 # NOSONAR
 
     if dry_run:
         cache = get_cache()
-        entries = [{"target_path": pf["target_path"], "patched_content": pf["patched_content"], "exists": pf.get("file_exists", True), "target_file": pf["target_file"], "occurrences": pf["occurrences"]} for pf in processed_files]
+        entries = [
+            {
+                "target_path": pf["target_path"],
+                "patched_content": pf["patched_content"],
+                "exists": pf.get("file_exists", True),
+                "target_file": pf["target_file"],
+                "occurrences": pf["occurrences"],
+                "warnings": pf.get("warnings", []),
+                "suggestion": pf.get("suggestion", ""),
+            }
+            for pf in processed_files
+        ]
         run_id = cache.store(entries=entries, original_contents=original_contents)
         transaction.cleanup()
 
@@ -1432,6 +1472,10 @@ def apply_last_dry_run(run_id: str) -> dict:
             "did_you_mean_info": dym_info,
             "modified_files": None,
         }
+        if f.get("warnings"):
+            res["warnings"] = f["warnings"]
+            res["suggestion"] = f.get("suggestion", "")
+        return res
     else:
         tf_primary = files[0].get("target_file") or str(files[0]["target_path"]) if files else None
         modified_files = []

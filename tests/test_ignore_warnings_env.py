@@ -89,3 +89,4 @@ def test_filter_warnings_multiline_formatter_block(monkeypatch):
     filtered = ValidationService.filter_warnings(warnings)
     assert len(filtered) == 3
     assert filtered[0].startswith("x Formatter")
+
