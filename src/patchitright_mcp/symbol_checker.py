@@ -203,9 +203,18 @@ def extract_declarations(code_slice: str, filename: str) -> set[str]:
         for m in re.finditer(r'\b(?:const|let|var|function|class|interface|type)\s+([a-zA-Z_$][\w$]*)', norm):
             decls.add(m.group(1))
 
-        # Function parameters: function foo(a, b), constructor(a, b), or (a, b) =>
-        for m in re.finditer(r'\b(?:function(?:\s+[\w$]+)?|constructor)\s*\(([^)]*)\)|\(([^)]*)\)\s*=>', norm):
-            params_str = m.group(1) or m.group(2)
+        # Function parameters: function foo(a, b), constructor(a, b)
+        for m in re.finditer(r'\b(?:function|constructor)\b[^(]*\(([^)]*)\)', norm):
+            params_str = m.group(1)
+            if params_str:
+                for p in re.finditer(r'\b([a-zA-Z_$][\w$]*)\b', params_str):
+                    pname = p.group(1)
+                    if pname not in ("number", "string", "boolean", "any", "void", "object", "const", "let", "var"):
+                        decls.add(pname)
+
+        # Arrow function parameters: (a, b) =>
+        for m in re.finditer(r'\(([^)]*)\)\s*=>', norm):
+            params_str = m.group(1)
             if params_str:
                 for p in re.finditer(r'\b([a-zA-Z_$][\w$]*)\b', params_str):
                     pname = p.group(1)
@@ -213,7 +222,7 @@ def extract_declarations(code_slice: str, filename: str) -> set[str]:
                         decls.add(pname)
 
         # Destructuring with aliases: const { a, b: alias = defaultVal } = obj
-        for m in re.finditer(r'\{\s*([^}]+)\s*\}\s*=', norm):
+        for m in re.finditer(r'\{([^}]+)\}\s*=', norm):
             block = m.group(1)
             # Extract key: alias
             for item in block.split(','):
