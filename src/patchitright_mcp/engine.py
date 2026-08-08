@@ -2,7 +2,7 @@ import re
 from typing import Optional, Union
 from rapidfuzz import fuzz
 from .validators import ValidationService
-from .symbol_checker import detect_omitted_symbols, extract_net_diff_declarations
+from .symbol_checker import detect_omitted_symbols
 
 class PatchEngine:
     """Core in-memory engine to apply search-and-replace and unified diff patches."""
@@ -118,7 +118,7 @@ class PatchEngine:
         return target_slice.replace(norm_search, norm_replace)
 
     def _check_symbol_omissions(
-        self, start_idx: int, end_idx: int, target_slice: str, norm_search: str, replace_content: str
+        self, start_idx: int, target_slice: str, norm_search: str, replace_content: str
     ):
         """Checks for omitted declared symbols that are referenced in outer scope."""
         base_offset = sum(len(line) + 1 for line in self.file_lines[:start_idx])
@@ -181,7 +181,7 @@ class PatchEngine:
             self._assert_line_filter(line_filter, target_slice, norm_search, start_idx)
 
         if check_symbols:
-            self._check_symbol_omissions(start_idx, end_idx, target_slice, norm_search, norm_replace)
+            self._check_symbol_omissions(start_idx, target_slice, norm_search, norm_replace)
 
         # Apply replacement
         patched_slice = self._apply_replacement_logic(target_slice, norm_search, norm_replace)

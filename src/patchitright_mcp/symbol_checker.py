@@ -181,33 +181,33 @@ def extract_declarations(code_slice: str, filename: str) -> set[str]:
 
     if is_python:
         # def func_name(...)
-        for m in re.finditer(r'\bdef\s+([a-zA-Z_][a-zA-Z0-9_]*)', norm):
+        for m in re.finditer(r'\bdef\s+([a-zA-Z_]\w*)', norm):
             decls.add(m.group(1))
         # class ClassName(...)
-        for m in re.finditer(r'\bclass\s+([a-zA-Z_][a-zA-Z0-9_]*)', norm):
+        for m in re.finditer(r'\bclass\s+([a-zA-Z_]\w*)', norm):
             decls.add(m.group(1))
         # function parameters
-        for m in re.finditer(r'\bdef\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\(([^)]*)\)', norm):
+        for m in re.finditer(r'\bdef\s+[a-zA-Z_]\w*\s*\(([^)]*)\)', norm):
             params_str = m.group(1)
-            for p in re.finditer(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', params_str):
+            for p in re.finditer(r'\b([a-zA-Z_]\w*)\b', params_str):
                 pname = p.group(1)
                 if pname not in ("self", "cls"):
                     decls.add(pname)
         # local variable assignments (var = val or a, b = val) - exclude self.attr
-        for m in re.finditer(r'(?<!\.)\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:,\s*([a-zA-Z_][a-zA-Z0-9_]*))*\s*=', norm):
+        for m in re.finditer(r'(?<!\.)\b([a-zA-Z_]\w*)\s*(?:=\s*|,\s*([a-zA-Z_]\w*))', norm):
             for group in m.groups():
                 if group and group not in ("self", "cls"):
                     decls.add(group)
     else:
         # JS/TS declarations: const/let/var/function/class/interface/type
-        for m in re.finditer(r'\b(?:const|let|var|function|class|interface|type)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)', norm):
+        for m in re.finditer(r'\b(?:const|let|var|function|class|interface|type)\s+([a-zA-Z_$][\w$]*)', norm):
             decls.add(m.group(1))
 
         # Function parameters: function foo(a, b), constructor(a, b), or (a, b) =>
-        for m in re.finditer(r'(?:function(?:\s+[a-zA-Z_$][a-zA-Z0-9_$]*)?|\bconstructor)\s*\(([^)]*)\)|(?:\(([^)]*)\)\s*=>)', norm):
+        for m in re.finditer(r'\b(?:function(?:\s+[\w$]+)?|constructor)\s*\(([^)]*)\)|\(([^)]*)\)\s*=>', norm):
             params_str = m.group(1) or m.group(2)
             if params_str:
-                for p in re.finditer(r'\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b', params_str):
+                for p in re.finditer(r'\b([a-zA-Z_$][\w$]*)\b', params_str):
                     pname = p.group(1)
                     if pname not in ("number", "string", "boolean", "any", "void", "object", "const", "let", "var"):
                         decls.add(pname)
@@ -265,6 +265,25 @@ def extract_net_diff_declarations(patch_content: str, filename: str) -> set[str]
     readded_decls = extract_declarations("\n".join(plus_lines), filename)
     return deleted_decls - readded_decls
 
+def _find_symbol_reference_lines(symbol: str, patched_lines: list[str]) -> list[int]:
+    """Finds line numbers where symbol is referenced outside properties or interface keys."""
+    pattern = re.compile(r'\b' + re.escape(symbol) + r'\b')
+    ref_lines = []
+    for line_idx, line in enumerate(patched_lines, start=1):
+        for match in pattern.finditer(line):
+            start_col = match.start()
+            prefix = line[:start_col].rstrip()
+            if prefix.endswith((".", "?.")):
+                continue
+            suffix = line[match.end():].lstrip()
+            if suffix.startswith(("?", "?:")):
+                continue
+            if suffix.startswith(":") and not suffix.startswith("::"):
+                if prefix.endswith(("{", ",", "interface")) or "interface " in prefix:
+                    continue
+            ref_lines.append(line_idx)
+    return sorted(set(ref_lines))
+
 def detect_omitted_symbols(
     file_content: str,
     match_start: int,
@@ -274,15 +293,14 @@ def detect_omitted_symbols(
     filename: str
 ) -> list[str]:
     """
-    Detects declared symbols in original_slice that were omitted from replace_content
-    and are actively referenced in the outer scope of file_content.
+    Detects if symbols declared in original_slice are removed from replace_content
+    yet still referenced elsewhere in the file.
     """
     if not is_supported_file(filename):
         return []
 
     norm_file = normalize_lf(file_content)
     lines = norm_file.splitlines()
-
     if len(lines) > MAX_FILE_LINES or len(norm_file.encode('utf-8')) > MAX_FILE_BYTES:
         return []
 
@@ -292,54 +310,26 @@ def detect_omitted_symbols(
 
     retained_symbols = extract_declarations(replace_content, filename)
     omitted_symbols = declared_symbols - retained_symbols
-
     if not omitted_symbols:
         return []
 
-    masked_file = mask_comments_and_strings(norm_file, filename)
-
-    # Construct post-patch content for exact line calculation
     patched_content = norm_file[:match_start] + replace_content + norm_file[match_end:]
     patched_masked = mask_comments_and_strings(patched_content, filename)
     patched_lines = patched_masked.splitlines()
 
     warnings = []
-
     for symbol in sorted(omitted_symbols):
-        pattern = re.compile(r'\b' + re.escape(symbol) + r'\b')
-        ref_lines = []
-
-        for line_idx, line in enumerate(patched_lines, start=1):
-            for match in pattern.finditer(line):
-                start_col = match.start()
-                # Check for property access (.symbol or ?.symbol) or object key ({ symbol: val })
-                prefix = line[:start_col].rstrip()
-                if prefix.endswith(".") or prefix.endswith("?."):
-                    continue
-                
-                # Check object key syntax: symbol followed by colon inside object literal
-                suffix = line[match.end():].lstrip()
-                if suffix.startswith("?") or suffix.startswith("?:"):
-                    continue
-                if suffix.startswith(":") and not suffix.startswith("::"):
-                    if prefix.endswith("{") or prefix.endswith(",") or prefix.endswith("interface") or "interface " in prefix:
-                        continue
-
-                ref_lines.append(line_idx)
-
+        ref_lines = _find_symbol_reference_lines(symbol, patched_lines)
         if ref_lines:
-            line_str = ", ".join(map(str, sorted(set(ref_lines))))
+            line_str = ", ".join(map(str, ref_lines))
             warnings.append(
                 f"Symbol Omission Alert: '{symbol}' was declared in original slice and referenced on lines {line_str}, but is missing from replace_content."
             )
-
     return warnings
 
 def detect_net_omitted_symbols(
-    file_content: str,
     patched_content: str,
     deleted_symbols: set[str],
-    replacement_ranges: list[tuple[int, int]],
     filename: str
 ) -> list[str]:
     """
@@ -358,29 +348,11 @@ def detect_net_omitted_symbols(
     patched_lines = patched_masked.splitlines()
 
     warnings = []
-
     for symbol in sorted(omitted_symbols):
-        pattern = re.compile(r'\b' + re.escape(symbol) + r'\b')
-        ref_lines = []
-
-        for line_idx, line in enumerate(patched_lines, start=1):
-            for match in pattern.finditer(line):
-                start_col = match.start()
-                prefix = line[:start_col].rstrip()
-                if prefix.endswith(".") or prefix.endswith("?."):
-                    continue
-                suffix = line[match.end():].lstrip()
-                if suffix.startswith("?") or suffix.startswith("?:"):
-                    continue
-                if suffix.startswith(":") and not suffix.startswith("::"):
-                    if prefix.endswith("{") or prefix.endswith(",") or prefix.endswith("interface") or "interface " in prefix:
-                        continue
-                ref_lines.append(line_idx)
-
+        ref_lines = _find_symbol_reference_lines(symbol, patched_lines)
         if ref_lines:
-            line_str = ", ".join(map(str, sorted(set(ref_lines))))
+            line_str = ", ".join(map(str, ref_lines))
             warnings.append(
                 f"Symbol Omission Alert: '{symbol}' was declared in original slice and referenced on lines {line_str}, but is missing from replace_content."
             )
-
     return warnings

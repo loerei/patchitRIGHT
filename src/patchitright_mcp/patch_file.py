@@ -307,10 +307,8 @@ def _process_single_file_in_memory(
             from .symbol_checker import extract_net_diff_declarations, detect_net_omitted_symbols
             deleted_syms = extract_net_diff_declarations(patch_content, target_file)
             diff_sym_warnings = detect_net_omitted_symbols(
-                file_content=file_content,
                 patched_content=patched_file,
                 deleted_symbols=deleted_syms,
-                replacement_ranges=[],
                 filename=target_file,
             )
             linter_warnings = list(diff_sym_warnings) + list(getattr(engine, "linter_warnings", []))
@@ -501,10 +499,8 @@ def _process_single_file_in_memory(
                     if "search_content" in r and r["search_content"]:
                         deleted_symbols.update(extract_declarations(r["search_content"], target_file))
                 net_warnings = detect_net_omitted_symbols(
-                    file_content=contents,
                     patched_content=temp_content,
                     deleted_symbols=deleted_symbols,
-                    replacement_ranges=[],
                     filename=target_file,
                 )
                 last_linter_warnings.extend(net_warnings)

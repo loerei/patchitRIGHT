@@ -149,23 +149,15 @@ def test_non_code_files_bypassed():
     assert len(warnings) == 0
 
 def test_detect_net_omitted_symbols_batch():
-    original_content = """
-    const x = 10;
-    const y = 20;
-    console.log(x + y);
-    """
     patched_content = """
     const y = 20;
     console.log(x + y);
     """
     deleted_symbols = {"x"}
-    replacement_ranges = [(0, 15)]
 
     warnings = detect_net_omitted_symbols(
-        file_content=original_content,
         patched_content=patched_content,
         deleted_symbols=deleted_symbols,
-        replacement_ranges=replacement_ranges,
         filename="test.js"
     )
     assert len(warnings) == 1
