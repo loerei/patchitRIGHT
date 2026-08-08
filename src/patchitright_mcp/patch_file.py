@@ -586,7 +586,7 @@ def _process_patches_list(
         if pf_res[4]:
             return _create_error_response(pf_res[4], target_file=tf)
 
-        patched_content, occurrences, _, _, _, eng = pf_res
+        patched_content, occurrences, _, _, _, _ = pf_res
         diff = generate_diff(orig_content, patched_content, tf)
         empty_hash = hashlib.sha256(b"").hexdigest()
         norm_orig = orig_content.replace("\r\n", "\n").replace("\r", "")
@@ -685,7 +685,6 @@ def _commit_batch_transaction(
     for pf in processed_files:
         tf = pf["target_file"]
         diff = pf["diff_content"]
-        pf_res = pf["pf_res"]
         occ = pf["occurrences"]
 
         output += f"### `{tf}`\n```diff\n{diff}\n```\n\n"

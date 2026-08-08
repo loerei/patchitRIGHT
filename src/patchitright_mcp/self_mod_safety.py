@@ -105,7 +105,7 @@ def _commit_transaction_with_delay(transaction: FileTransaction, modifications: 
                 with open(target_path, "w", encoding="utf-8", newline="") as f:
                     f.write(content)
                 trigger_jcodemunch_sync(target_path)
-        except Exception as e:
+        except Exception:
             pass
 
     try:
