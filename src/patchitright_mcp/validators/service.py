@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Dict, Type
 from .base import BaseValidator
@@ -22,6 +23,43 @@ class ValidationService:
             ".yaml": YamlValidator,
             ".yml": YamlValidator,
         }
+
+    @staticmethod
+    def filter_warnings(warnings: list[str]) -> list[str]:
+        """Filters warnings according to PATCHITRIGHT_IGNORE_WARNINGS environment variable."""
+        if not warnings:
+            return []
+
+        env_val = os.environ.get("PATCHITRIGHT_IGNORE_WARNINGS", "").strip().lower()
+        if not env_val:
+            return warnings
+
+        tokens = [t.strip() for t in env_val.split(",") if t.strip()]
+        if any(t in ("all", "*", "true", "1") for t in tokens):
+            return []
+
+        ignore_format = any(t in ("format", "formatting") for t in tokens)
+        ignore_codesmell = any(t in ("codesmell", "lint", "linter") for t in tokens)
+
+        filtered = []
+        for w in warnings:
+            # Check if this warning is format-related
+            is_format = (
+                "Formatter would have printed" in w
+                or "Formatter" in w
+                or "tab vs space" in w.lower()
+                or "indentation" in w.lower()
+            )
+
+            if is_format and ignore_format:
+                continue
+
+            if not is_format and ignore_codesmell:
+                continue
+
+            filtered.append(w)
+
+        return filtered
 
     def _get_validator(self, filename: str) -> BaseValidator | None:
         ext = Path(filename).suffix.lower()
@@ -48,5 +86,6 @@ class ValidationService:
                 if w:
                     # Prefix warning with language indicator if needed, e.g. [Python]
                     clean_warnings.append(w)
-            return clean_warnings
+            return self.filter_warnings(clean_warnings)
         return []
+
