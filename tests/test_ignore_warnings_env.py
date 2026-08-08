@@ -24,12 +24,38 @@ def test_filter_warnings_format_only(monkeypatch):
     assert len(filtered) == 1
     assert "F401" in filtered[0]
 
+def test_filter_warnings_formatting_alias(monkeypatch):
+    warnings = [
+        "x Formatter would have printed the following content:",
+        "Tab vs space mismatch",
+        "F401 'os' imported but unused"
+    ]
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "formatting")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 1
+    assert "F401" in filtered[0]
+
 def test_filter_warnings_codesmell_only(monkeypatch):
     warnings = [
         "x Formatter would have printed the following content:",
         "F401 'os' imported but unused"
     ]
     monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "codesmell")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 1
+    assert "Formatter" in filtered[0]
+
+def test_filter_warnings_lint_aliases(monkeypatch):
+    warnings = [
+        "x Formatter would have printed the following content:",
+        "F401 'os' imported but unused"
+    ]
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "lint")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 1
+    assert "Formatter" in filtered[0]
+
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "linter")
     filtered = ValidationService.filter_warnings(warnings)
     assert len(filtered) == 1
     assert "Formatter" in filtered[0]
