@@ -41,7 +41,6 @@ def trigger_jcodemunch_sync(file_paths: Union[Path, list[Path]], storage_path: O
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         startupinfo=startupinfo,
-                        shell=sys.platform == "win32"
                     )
             except Exception as e:
                 print(f"[PATCHITRIGHT] Warning: Failed to trigger jcodemunch sync for {path}: {e}", file=sys.stderr)
@@ -99,11 +98,9 @@ def _commit_transaction_with_delay(transaction: FileTransaction, modifications: 
     def worker():
         time.sleep(delay)
         try:
+            transaction.commit(modifications)
             transaction.cleanup()
-            for target_path, content in modifications.items():
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(target_path, "w", encoding="utf-8", newline="") as f:
-                    f.write(content)
+            for target_path in modifications.keys():
                 trigger_jcodemunch_sync(target_path)
         except Exception:
             pass

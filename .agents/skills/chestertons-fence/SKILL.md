@@ -58,7 +58,7 @@ When executing this skill, output the following structured report BEFORE making 
 
 **Recommendation**:
 - [ ] **Preserve Contract & Fix Defect** (Fix code bug while keeping feature intent)
-- [ ] **Safe Safe Removal** (Empirically verified 100% obsolete dead code)
+- [ ] **Safe Removal** (Empirically verified 100% obsolete dead code)
 ```
 
 ## Core Governance Directives
