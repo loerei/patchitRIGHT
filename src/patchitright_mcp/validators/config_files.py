@@ -1,7 +1,11 @@
 import json
-import json5
 from .base import BaseValidator
 from .errors import SyntaxValidationError
+
+try:
+    import json5  # type: ignore
+except ImportError:
+    json5 = None  # type: ignore
 
 try:
     import tomllib  # type: ignore
@@ -13,20 +17,24 @@ except ImportError:
 
 
 class JsonValidator(BaseValidator):
-    """Validator adapter for JSON and JSONC files using the spec-compliant json5 parser."""
+    """Validator adapter for JSON and JSONC files using the spec-compliant json5 parser (or json fallback)."""
 
     def _parse_content(self, text: str, filename: str):
         if filename.endswith((".jsonc", ".json5")):
-            return json5.loads(text)
+            if json5 is not None:
+                return json5.loads(text)
+            return json.loads(text)
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
-            # Check if json5 parses comments, but enforce no trailing comma for standard .json
-            parsed = json5.loads(text)
-            import re
-            if re.search(r',\s*[}\]]', text):
-                raise e
-            return parsed
+            if json5 is not None:
+                # Check if json5 parses comments, but enforce no trailing comma for standard .json
+                parsed = json5.loads(text)
+                import re
+                if re.search(r',\s*[}\]]', text):
+                    raise e
+                return parsed
+            raise e
 
     def validate(self, content: str, filename: str, original_content: str = "") -> None:
         if not content.strip():
