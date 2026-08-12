@@ -358,30 +358,27 @@ class JsTsValidator(BaseValidator):
         log_step("JsTsValidator.validate: Biome check finished successfully")
 
     def _validate_with_node(self, content: str, filename: str, original_content: str) -> None:
-        # Fallback to node --check if node is available
+        # Fallback to node if node is available
         node_exe = shutil.which("node")
         log_step(f"JsTsValidator.validate: fallback node check path: {node_exe}")
         if not node_exe:
             return
-        def _strip_ts_types(text: str) -> str:
-            import re
-            return re.sub(r':\s*(?:number|string|boolean|any|void|unknown|never|object|Record<[^>]+>|Array<[^>]+>|[A-Z]\w*)', '', text)
 
-        orig_check_text = _strip_ts_types(original_content) if filename.endswith((".ts", ".tsx")) else original_content
-        new_check_text = _strip_ts_types(content) if filename.endswith((".ts", ".tsx")) else content
-
-        suffix = ".patchitright_temp.js" if filename.endswith((".ts", ".tsx")) else f".patchitright_temp{Path(filename).suffix}"
+        is_ts = filename.endswith((".ts", ".tsx"))
+        suffix = f".patchitright_temp{Path(filename).suffix}"
         temp_path = Path(filename).with_suffix(suffix)
         log_step(f"JsTsValidator.validate: node checking via temp path {temp_path}")
+
+        cmd = [node_exe, "--experimental-strip-types", str(temp_path)] if is_ts else [node_exe, "--check", str(temp_path)]
 
         try:
             temp_path.parent.mkdir(parents=True, exist_ok=True)
             # Check if original was valid
-            if orig_check_text:
+            if original_content:
                 with open(temp_path, "w", encoding="utf-8", newline="") as f:
-                    f.write(orig_check_text)
+                    f.write(original_content)
                 orig_process = subprocess.run(
-                    [node_exe, "--check", str(temp_path)],
+                    cmd,
                     text=True,
                     encoding="utf-8",
                     capture_output=True,
@@ -394,9 +391,9 @@ class JsTsValidator(BaseValidator):
                     return
 
             with open(temp_path, "w", encoding="utf-8", newline="") as f:
-                f.write(new_check_text)
+                f.write(content)
             process = subprocess.run(
-                [node_exe, "--check", str(temp_path)],
+                cmd,
                 text=True,
                 encoding="utf-8",
                 capture_output=True,
@@ -408,6 +405,10 @@ class JsTsValidator(BaseValidator):
                 err_msg = process.stderr.strip() if process.stderr else "Syntax Error"
                 # Convert to ASCII-safe representation to prevent Windows stdout encoding crashes
                 err_msg = err_msg.encode("ascii", errors="replace").decode("ascii")
+                # Only raise SyntaxValidationError if this is an actual syntax error (not a runtime ReferenceError/TypeError)
+                if "SyntaxError" not in err_msg and "ERR_INVALID_TYPESCRIPT_SYNTAX" not in err_msg:
+                    log_step(f"JsTsValidator.validate: ignoring runtime error during node check: {err_msg[:100]}")
+                    return
                 line, column = None, None
                 match = re.search(rf"{re.escape(temp_path.name)}:(\d+)(?::(\d+))?", err_msg)
                 if not match:
@@ -419,6 +420,10 @@ class JsTsValidator(BaseValidator):
                 caret_match = re.search(r"\n( *)\^\n", err_msg)
                 if caret_match:
                     column = len(caret_match.group(1)) + 1
+                elif line and not column:
+                    lines = content.splitlines()
+                    if 1 <= line <= len(lines):
+                        column = len(lines[line - 1]) + 1
                 log_step(f"JsTsValidator.validate: raising node SyntaxValidationError for line={line}")
                 raise SyntaxValidationError(
                     message=f"Node JS Syntax Error: {err_msg}",

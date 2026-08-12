@@ -181,61 +181,59 @@ def extract_declarations(code_slice: str, filename: str) -> set[str]:
     norm = normalize_lf(code_slice)
 
     if is_python:
-        # def func_name(...)
-        for m in re.finditer(r'\bdef\s+([a-zA-Z_]\w*)', norm):
-            decls.add(m.group(1))
-        # class ClassName(...)
-        for m in re.finditer(r'\bclass\s+([a-zA-Z_]\w*)', norm):
-            decls.add(m.group(1))
-        # function parameters
-        for m in re.finditer(r'\bdef\s+[a-zA-Z_]\w*\s*\(([^)]*)\)', norm):
-            params_str = m.group(1)
-            for p in re.finditer(r'\b([a-zA-Z_]\w*)\b', params_str):
-                pname = p.group(1)
-                if pname not in ("self", "cls"):
-                    decls.add(pname)
-        # local variable assignments (var = val or a, b = val) - exclude self.attr
-        for m in re.finditer(r'(?<!\.)\b([a-zA-Z_]\w*)\s*(?:=\s*|,\s*([a-zA-Z_]\w*))', norm):
-            for group in m.groups():
-                if group and group not in ("self", "cls"):
-                    decls.add(group)
+        import ast
+        try:
+            tree = ast.parse(norm)
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    decls.add(node.name)
+                    all_args = node.args.args + node.args.kwonlyargs + ([node.args.vararg] if node.args.vararg else []) + ([node.args.kwarg] if node.args.kwarg else [])
+                    for arg in all_args:
+                        if arg and arg.arg not in ("self", "cls"):
+                            decls.add(arg.arg)
+                elif isinstance(node, ast.ClassDef):
+                    decls.add(node.name)
+                elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                    if node.id not in ("self", "cls"):
+                        decls.add(node.id)
+        except Exception:
+            # Fallback for partial/incomplete Python code snippets
+            for m in re.finditer(r'\bdef\s+([a-zA-Z_]\w*)', norm):
+                decls.add(m.group(1))
+            for m in re.finditer(r'\bclass\s+([a-zA-Z_]\w*)', norm):
+                decls.add(m.group(1))
+            for m in re.finditer(r'(?<!\.)\b([a-zA-Z_]\w*)\s*(?:=\s*|,\s*([a-zA-Z_]\w*))', norm):
+                for group in m.groups():
+                    if group and group not in ("self", "cls"):
+                        decls.add(group)
     else:
         # JS/TS declarations: const/let/var/function/class/interface/type
         for m in re.finditer(r'\b(?:const|let|var|function|class|interface|type)\s+([a-zA-Z_$][\w$]*)', norm):
             decls.add(m.group(1))
 
-        # Function parameters: function foo(a, b), constructor(a, b)
-        for m in re.finditer(r'\b(?:function|constructor)\b[^(]*\(([^)]*)\)', norm):
-            params_str = m.group(1)
+        # Function & arrow parameters with balanced bracket handling
+        for m in re.finditer(r'\b(?:function|constructor)\b[^(]*\(', norm):
+            params_str = _extract_balanced_group(norm, m.end() - 1, '(', ')')
             if params_str:
                 for p in re.finditer(r'\b([a-zA-Z_$][\w$]*)\b', params_str):
                     pname = p.group(1)
                     if pname not in ("number", "string", "boolean", "any", "void", "object", "const", "let", "var"):
                         decls.add(pname)
 
-        # Arrow function parameters: (a, b) =>
-        for m in re.finditer(r'\(([^)]*)\)\s*=>', norm):
-            params_str = m.group(1)
+        for m in re.finditer(r'\(\s*[a-zA-Z_$][\w$,\s:]*\)\s*=>', norm):
+            params_str = _extract_balanced_group(norm, m.start(), '(', ')')
             if params_str:
                 for p in re.finditer(r'\b([a-zA-Z_$][\w$]*)\b', params_str):
                     pname = p.group(1)
                     if pname not in ("number", "string", "boolean", "any", "void", "object", "const", "let", "var"):
                         decls.add(pname)
 
-        # Destructuring with aliases: const { a, b: alias = defaultVal } = obj
-        for m in re.finditer(r'\{([^}]+)\}\s*=', norm):
-            block = m.group(1)
-            # Extract key: alias
-            for item in block.split(','):
-                item = item.strip()
-                if ':' in item:
-                    alias_part = item.split(':')[1].split('=')[0].strip()
-                    if alias_part and re.match(r'^[a-zA-Z_$][a-zA-Z0-9_$]*$', alias_part):
-                        decls.add(alias_part)
-                else:
-                    var_part = item.split('=')[0].strip()
-                    if var_part and re.match(r'^[a-zA-Z_$][a-zA-Z0-9_$]*$', var_part):
-                        decls.add(var_part)
+        # Destructuring with balanced bracket handling
+        for m in re.finditer(r'\{\s*', norm):
+            if re.search(r'\}\s*=', norm[m.start():]):
+                block = _extract_balanced_group(norm, m.start(), '{', '}')
+                for p in re.finditer(r'\b([a-zA-Z_$][\w$]*)\b', block):
+                    decls.add(p.group(1))
 
         # Imports: import { x as alias } or import alias from 'mod'
         for m in re.finditer(r'\bimport\s+(?:\{([^}]+)\}|([a-zA-Z_$][a-zA-Z0-9_$]*))\s+from', norm):
@@ -256,6 +254,26 @@ def extract_declarations(code_slice: str, filename: str) -> set[str]:
 
     # Filter out transient short symbols
     return {d for d in decls if not is_transient_symbol(d)}
+
+
+def _extract_balanced_group(text: str, start_pos: int, open_ch: str = '(', close_ch: str = ')') -> str:
+    """Extract content of balanced brackets (handles nested parens/braces)."""
+    depth = 0
+    content = []
+    for i in range(start_pos, len(text)):
+        ch = text[i]
+        if ch == open_ch:
+            if depth > 0:
+                content.append(ch)
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return "".join(content)
+            content.append(ch)
+        elif depth > 0:
+            content.append(ch)
+    return "".join(content)
 
 def extract_net_diff_declarations(patch_content: str, filename: str) -> set[str]:
     """Extracts net deleted symbol declarations across unified diff hunks."""

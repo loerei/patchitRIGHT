@@ -13,6 +13,7 @@ dependencies = [
     "rapidfuzz>=3.0.0",
     "ruff",
     "PyYAML>=6.0",
+    "json5>=0.9.0",
     "tomli>=2.0; python_version < '3.11'",
     "tree-sitter-language-pack>=0.7.0",
 ]
