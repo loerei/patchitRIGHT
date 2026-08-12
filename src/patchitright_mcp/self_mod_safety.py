@@ -1,4 +1,5 @@
 """Self-modification safety, delayed background writers, and jcodemunch background sync."""
+import logging
 import os
 import sys
 import threading
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Optional, Union
 from .transaction import FileTransaction
 
+logger = logging.getLogger(__name__)
 _SHUTDOWN_EVENT = threading.Event()
 
 
@@ -17,7 +19,7 @@ def get_commit_delay() -> float:
         try:
             return max(0.0, float(env_delay))
         except ValueError:
-            pass
+            logger.info("Invalid PATCHITRIGHT_COMMIT_DELAY value %r; falling back to default 0.5s", env_delay)
     return 0.5
 
 

@@ -317,7 +317,7 @@ async def list_tools() -> list[Tool]:
 
 
 def _enrich_tool_schema(tool: Tool, expose_bypass: bool) -> Tool:
-    """Return a new Tool instance with common parameters enriched without mutating original schema."""
+    """Return an enriched Tool instance without dropping non-schema model attributes."""
     props = dict(tool.inputSchema.get("properties", {}))
     if expose_bypass and tool.name in ("patch_file", "batch_patch_files", "write_file"):
         props["bypass_validation"] = {
@@ -331,7 +331,14 @@ def _enrich_tool_schema(tool: Tool, expose_bypass: bool) -> Tool:
     }
     new_schema = dict(tool.inputSchema)
     new_schema["properties"] = props
-    return Tool(name=tool.name, description=tool.description, inputSchema=new_schema)
+
+    if hasattr(tool, "model_copy"):
+        return tool.model_copy(update={"inputSchema": new_schema})
+
+    import copy
+    new_tool = copy.copy(tool)
+    new_tool.inputSchema = new_schema
+    return new_tool
 
 
 @server.call_tool()
