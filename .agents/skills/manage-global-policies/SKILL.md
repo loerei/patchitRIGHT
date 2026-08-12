@@ -15,7 +15,7 @@ Before making edits, locate or read policy configuration files on the current sy
 1. **Repository Source Files (`AGENTS.md` and Platform Deltas):** Run `agents info policy.general` for universal root policy or `agents info policy.<platform>` (e.g. `agents info policy.gemini`) to get the exact `sourceFile` path in `myskills` and `destinationFile` path in the home directory.
    - Universal policy: `<custom-skills-repo-root>/AGENTS.md`
    - Platform-specific overrides (e.g. Gemini): `<custom-skills-repo-root>/gemini/AGENTS.md`
-2. **Read Policy Subdocs Directly:** Run `agents read policy.<subdocname>` (e.g. `agents read policy.git_workflow` or `agents read policy.plan_template`) to print raw subdoc Markdown content directly to stdout without searching file paths.
+2. **Read Policy Subdocs Directly:** Run `agents read policy.<subdocname>` (e.g. `agents read policy.gemini.override_coverage_report`) to print raw subdoc Markdown content directly to stdout without searching file paths.
 3. **Active IDE Global Config File:** Automatically resolved via `destinationFile` from `agents info policy.<platform>`.
 
 ### Cross-Repository Policy Protocol

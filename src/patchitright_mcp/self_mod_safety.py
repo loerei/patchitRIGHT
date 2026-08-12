@@ -1,4 +1,5 @@
 """Self-modification safety, delayed background writers, and jcodemunch background sync."""
+import os
 import sys
 import threading
 import time
@@ -6,11 +7,27 @@ from pathlib import Path
 from typing import Optional, Union
 from .transaction import FileTransaction
 
+_SHUTDOWN_EVENT = threading.Event()
+
+
+def get_commit_delay() -> float:
+    """Get configurable self-modification commit delay in seconds (default 0.5s)."""
+    env_delay = os.environ.get("PATCHITRIGHT_COMMIT_DELAY")
+    if env_delay is not None:
+        try:
+            return max(0.0, float(env_delay))
+        except ValueError:
+            pass
+    return 0.5
+
+
+def set_shutdown_event() -> None:
+    """Signal background worker threads to cancel pending operations on server shutdown."""
+    _SHUTDOWN_EVENT.set()
+
 
 def trigger_jcodemunch_sync(file_paths: Union[Path, list[Path]], storage_path: Optional[str] = None) -> None:
     """Trigger jcodemunch file index update using direct python import or subprocess fallback."""
-    import os
-
     enabled = os.environ.get("PATCHITRIGHT_SYNC_JCODEMUNCH", "").lower() in ("true", "1", "yes")
     if not enabled:
         return
@@ -61,10 +78,13 @@ def _get_linter_suggestion(target_file: str) -> str:
     return ""
 
 
-def _write_file_with_delay(path: Path, content: str, delay: float = 0.5) -> None:
+def _write_file_with_delay(path: Path, content: str, delay: Optional[float] = None) -> None:
     """Write content to path after a short delay on a background thread."""
+    actual_delay = delay if delay is not None else get_commit_delay()
+
     def worker():
-        time.sleep(delay)
+        if actual_delay > 0 and _SHUTDOWN_EVENT.wait(actual_delay):
+            return
         try:
             with open(path, "w", encoding="utf-8", newline="") as f:
                 f.write(content)
@@ -86,17 +106,20 @@ def _write_patched_file(target_path: Path, content: str) -> None:
         is_self_mod = False
 
     if is_self_mod:
-        _write_file_with_delay(target_path, content, delay=0.5)
+        _write_file_with_delay(target_path, content)
     else:
         with open(target_path, "w", encoding="utf-8", newline="") as f:
             f.write(content)
         trigger_jcodemunch_sync(target_path)
 
 
-def _commit_transaction_with_delay(transaction: FileTransaction, modifications: dict[Path, str], delay: float = 0.5) -> None:
+def _commit_transaction_with_delay(transaction: FileTransaction, modifications: dict[Path, str], delay: Optional[float] = None) -> None:
     """Commit transaction after a short delay on a background thread for self-modification."""
+    actual_delay = delay if delay is not None else get_commit_delay()
+
     def worker():
-        time.sleep(delay)
+        if actual_delay > 0 and _SHUTDOWN_EVENT.wait(actual_delay):
+            return
         try:
             transaction.commit(modifications)
             transaction.cleanup()
@@ -121,7 +144,7 @@ def _commit_or_defer_transaction(transaction: FileTransaction, modifications: di
         is_self_mod = False
 
     if is_self_mod:
-        _commit_transaction_with_delay(transaction, modifications, delay=0.5)
+        _commit_transaction_with_delay(transaction, modifications)
     else:
         try:
             transaction.commit(modifications)
