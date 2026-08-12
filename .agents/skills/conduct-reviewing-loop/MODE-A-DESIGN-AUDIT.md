@@ -11,7 +11,7 @@ Use when auditing an unapproved plan, RFC, PRD, or skill draft BEFORE writing co
 > [!NOTE]
 > **Checklist Synthesis Guidance (Main Agent)**:
 > - **For All Draft Artifacts (PRDs, RFCs, Skills, Plans):** Include items #1–#4 in the subagent prompt.
-> - **For Implementation Plans (`implementation_plan.md`):** MUST also include items #5 and #6, and require subagents to read the plan template (`subdocs/plan_template.md` or via `agents read policy.plan_template`).
+> - **For Implementation Plans (`implementation_plan.md`):** MUST also include items #5 and #6, and require subagents to read the plan template (in `AGENTS.md` Section 2).
 
 ```markdown
 You are <Domain> Reviewer #<N>. Audit the proposed <Artifact Type> draft.
@@ -19,7 +19,7 @@ You are <Domain> Reviewer #<N>. Audit the proposed <Artifact Type> draft.
 ### Required Reading (MUST read using view_file / jcodemunch / agents read):
 1. Target Artifact Draft: `<draft_path>`
 2. System Guidelines / Rules: `<rule_paths>`
-3. Plan Layout Template (for Implementation Plans): `subdocs/plan_template.md` (or run `agents read policy.plan_template`)
+3. Plan Layout Template (for Implementation Plans): `AGENTS.md` Section 2
 4. Task-Specific Domain Skills: `<task_domain_skill_paths>` (e.g., /write-a-skill, /write-for-ai, /writing-great-skills for skill drafts, /tdd for tests, /design-taste-frontend for UI)
 
 ### Synthesized Audit Checklist:
@@ -27,7 +27,7 @@ You are <Domain> Reviewer #<N>. Audit the proposed <Artifact Type> draft.
 2. **System Guidelines**: <Rules from AGENTS.md, /codebase-design, etc.>
 3. **Task-Specific Domain Skill Adherence**: <Adherence to /write-a-skill, /write-for-ai, /tdd, etc.>
 4. **Domain & Edge-Case Completeness**: <High-level correctness, safety, or performance checks>
-5. **Template & Layout Adherence** *(Include when auditing Implementation Plans)*: Verify strict adherence to the mandatory plan layout scaffold (`subdocs/plan_template.md`), including required sections (`## Architectural Summary & Key Decisions`, `## User Review Required`, `## Proposed Changes & Execution Checklist`, `## Verification Plan`).
+5. **Template & Layout Adherence** *(Include when auditing Implementation Plans)*: Verify strict adherence to the mandatory plan layout scaffold (`AGENTS.md` Section 2), including required sections (`## Architectural Summary & Key Decisions`, `## User Review Required`, `## Proposed Changes & Execution Checklist`, `## Verification Plan`).
 6. **Execution Checklist Completeness** *(Include when auditing Implementation Plans)*: Verify that the Execution Checklist (`- [ ]`) covers 100% of proposed file modifications, schema changes, and edge-case handling steps outlined in the plan's architectural summary.
 
 ### Output Directive:
@@ -57,7 +57,7 @@ Conclude explicitly with either:
 - [ ] Out-of-Scope / Non-Goals exclusions explicitly recorded
 
 ### Plan-Specific Checks (Implementation Plans Only):
-- [ ] Strict adherence to mandatory layout template (`subdocs/plan_template.md` / `agents read policy.plan_template`) verified
+- [ ] Strict adherence to mandatory layout template (`AGENTS.md` Section 2) verified
 - [ ] Execution Checklist (`- [ ]`) verified covering 100% of proposed file edits, schema changes, and edge cases
 
 ---

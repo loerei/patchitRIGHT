@@ -1,7 +1,10 @@
 import functools
+import logging
 import os
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @functools.lru_cache(maxsize=256)
@@ -13,8 +16,10 @@ def _cached_resolve_allowed_base_dir(cwd_str: str, target_file_norm: str, storag
         repo_res = resolve_repo_fn(temp_resolved, storage_path)
         if repo_res.get("found") and "source_root" in repo_res:
             return os.path.abspath(repo_res["source_root"])
-    except Exception:
-        pass
+    except (ImportError, ModuleNotFoundError):
+        logger.debug("jcodemunch_mcp not installed; falling back to cwd")
+    except Exception as err:
+        logger.warning("Unexpected error resolving repo via jCodeMunch for %s: %s", target_file_norm, err)
     return cwd_str
 
 

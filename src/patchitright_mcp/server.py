@@ -313,22 +313,32 @@ async def list_tools() -> list[Tool]:
             )
         )
 
-    if expose_bypass:
-        for tool in tools:
-            if tool.name in ("patch_file", "batch_patch_files", "write_file"):
-                tool.inputSchema["properties"]["bypass_validation"] = {
-                    "type": "boolean",
-                    "description": "If True, bypasses syntax validation and linting checks. Use with caution.",
-                    "default": False
-                }
+    return [_enrich_tool_schema(tool, expose_bypass) for tool in tools]
 
-    for tool in tools:
-        tool.inputSchema["properties"]["set_timeout"] = {
-            "type": "number",
-            "description": "Optional timeout in seconds to override the default limit. Use -1 to disable the timeout completely."
+
+def _enrich_tool_schema(tool: Tool, expose_bypass: bool) -> Tool:
+    """Return an enriched Tool instance without dropping non-schema model attributes."""
+    props = dict(tool.inputSchema.get("properties", {}))
+    if expose_bypass and tool.name in ("patch_file", "batch_patch_files", "write_file"):
+        props["bypass_validation"] = {
+            "type": "boolean",
+            "description": "If True, bypasses syntax validation and linting checks. Use with caution.",
+            "default": False,
         }
+    props["set_timeout"] = {
+        "type": "number",
+        "description": "Optional timeout in seconds to override the default limit. Use -1 to disable the timeout completely.",
+    }
+    new_schema = dict(tool.inputSchema)
+    new_schema["properties"] = props
 
-    return tools
+    if hasattr(tool, "model_copy"):
+        return tool.model_copy(update={"inputSchema": new_schema})
+
+    import copy
+    new_tool = copy.copy(tool)
+    new_tool.inputSchema = new_schema
+    return new_tool
 
 
 @server.call_tool()
