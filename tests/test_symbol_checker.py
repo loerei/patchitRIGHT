@@ -293,4 +293,38 @@ def test_python_hash_inside_string_literal():
     assert "my_var" in masked
 
 
+def test_mask_comments_and_strings_shebang_and_division():
+    from patchitright_mcp.symbol_checker import mask_comments_and_strings
+    code = "#!/usr/bin/env node\nconst a = 10;\nconst b = 2;\nconst c = a / b;\n// comment\nconst d = 4;"
+    masked = mask_comments_and_strings(code, "test.js")
+    assert "const a = 10;" in masked
+    assert "const c = a / b;" in masked
+    assert "const d = 4;" in masked
+    assert "// comment" not in masked
+
+
+def test_mask_comments_and_strings_escaped_quotes():
+    from patchitright_mcp.symbol_checker import mask_comments_and_strings
+    # String ending with escaped backslash: "C:\\path\\"
+    code = 'const winPath = "C:\\\\path\\\\";\nconst targetVar = 999;'
+    masked = mask_comments_and_strings(code, "test.js")
+    assert "targetVar" in masked
+
+
+def test_detect_omitted_symbols_shebang_js_no_hang():
+    from patchitright_mcp.symbol_checker import detect_omitted_symbols
+    code = "#!/usr/bin/env node\nconst helper = 1;\nconst ratio = 10 / 2;\nconsole.log(helper);"
+    warnings = detect_omitted_symbols(
+        file_content=code,
+        match_start=code.find("const helper = 1;"),
+        match_end=code.find("const helper = 1;") + len("const helper = 1;"),
+        original_slice="const helper = 1;",
+        replace_content="// removed",
+        filename="cli.js"
+    )
+    assert len(warnings) == 1
+    assert "Symbol Omission Alert: 'helper'" in warnings[0]
+
+
+
 

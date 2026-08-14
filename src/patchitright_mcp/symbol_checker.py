@@ -38,9 +38,19 @@ def is_supported_file(filename: str) -> bool:
     ext = Path(filename).suffix.lower()
     return ext in SUPPORTED_EXTENSIONS
 
+def _is_escaped(chars: list[str], idx: int) -> bool:
+    """Returns True if character at idx is preceded by an odd number of backslashes."""
+    slash_count = 0
+    k = idx - 1
+    while k >= 0 and chars[k] == '\\':
+        slash_count += 1
+        k -= 1
+    return (slash_count % 2) != 0
+
+
 def mask_comments_and_strings(content: str, filename: str) -> str:
     """
-    Space-preserving masking of string literals and comments while preserving all \\n linebreaks.
+    Space-preserving masking of string literals and comments while preserving all \n linebreaks.
     Unmasks JS template literal ${expr} and Python f-string {expr} expressions.
     """
     ext = Path(filename).suffix.lower() if filename else ""
@@ -73,7 +83,7 @@ def mask_comments_and_strings(content: str, filename: str) -> str:
             chars[i] = ' '
             i += 1
             while i < n:
-                if chars[i] == '`' and (i == 0 or chars[i-1] != '\\'):
+                if chars[i] == '`' and not _is_escaped(chars, i):
                     chars[i] = ' '
                     i += 1
                     break
@@ -99,7 +109,7 @@ def mask_comments_and_strings(content: str, filename: str) -> str:
             chars[i] = chars[i+1] = ' '
             i += 2
             while i < n:
-                if chars[i] == quote and (i == 0 or chars[i-1] != '\\'):
+                if chars[i] == quote and not _is_escaped(chars, i):
                     chars[i] = ' '
                     i += 1
                     break
@@ -125,7 +135,7 @@ def mask_comments_and_strings(content: str, filename: str) -> str:
             chars[i] = ' '
             i += 1
             while i < n:
-                if chars[i] == quote and (i == 0 or chars[i-1] != '\\'):
+                if chars[i] == quote and not _is_escaped(chars, i):
                     chars[i] = ' '
                     i += 1
                     break
@@ -162,7 +172,6 @@ def mask_comments_and_strings(content: str, filename: str) -> str:
                         chars[i] = ' '
                     i += 1
                 continue
-            continue
 
         i += 1
 

@@ -183,15 +183,17 @@ class JsTsValidator(BaseValidator):
             return err_line, line, column
         return None
 
-    def _get_tsc_command(self) -> list[str] | None:
-        """Check for tsc globally or via npx."""
+    def _get_tsc_command(self, filename: str = "") -> list[str] | None:
+        """Check for tsc globally or locally in node_modules."""
         tsc_exe = shutil.which("tsc")
         log_step(f"JsTsValidator.validate: fallback tsc check path: {tsc_exe}")
         if tsc_exe:
             return [tsc_exe]
-        npx = shutil.which("npx")
-        if npx:
-            return [npx, "--no-install", "tsc"]
+        target_dir = Path(filename).parent if filename else Path.cwd()
+        for p in [target_dir] + list(target_dir.parents):
+            local_tsc = p / "node_modules" / ".bin" / ("tsc.cmd" if os.name == 'nt' else "tsc")
+            if local_tsc.exists():
+                return [str(local_tsc)]
         return None
 
     def _run_tsc_check(self, tsc_cmd: list[str], temp_path: Path, content: str) -> subprocess.CompletedProcess:
@@ -441,7 +443,7 @@ class JsTsValidator(BaseValidator):
     def _validate_with_tsc(self, content: str, filename: str, original_content: str) -> None:
         if not filename.endswith((".ts", ".tsx")):
             return
-        tsc_cmd = self._get_tsc_command()
+        tsc_cmd = self._get_tsc_command(filename)
         if not tsc_cmd:
             self._validate_with_node(content, filename, original_content)
             return
@@ -468,8 +470,9 @@ class JsTsValidator(BaseValidator):
                 raise self._parse_tsc_error(err_msg, temp_path.name, filename)
         except SyntaxValidationError:
             raise
-        except OSError as e:
-            log_step(f"JsTsValidator.validate: tsc execution failed: {e}")
+        except (OSError, subprocess.SubprocessError) as e:
+            log_step(f"JsTsValidator.validate: tsc execution failed: {e}. Falling back to node check...")
+            self._validate_with_node(content, filename, original_content)
         finally:
             if temp_path.exists():
                 try:
