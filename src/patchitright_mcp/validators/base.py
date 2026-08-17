@@ -11,15 +11,17 @@ class BaseValidator:
         """
         pass
 
-    def lint(self, content: str, filename: str) -> list[str]:
+    def lint(self, content: str, filename: str, ignore_format: bool = False, ignore_codesmell: bool = False) -> list[str]:
         """Runs linting/code-smell checks on the content.
 
         Args:
             content: The patched content to lint.
             filename: The name/path of the target file.
+            ignore_format: Whether formatting checks should be skipped.
+            ignore_codesmell: Whether code smell/linter checks should be skipped.
 
         Returns:
             A list of linter warnings (already parsed and standardized).
         """
-        _ = filename
+        _ = (filename, ignore_format, ignore_codesmell)
         return []

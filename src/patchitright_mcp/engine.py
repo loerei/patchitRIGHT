@@ -22,6 +22,7 @@ class PatchEngine:
         self.relocated_end_line = None
         self.linter_warnings = []
         self.symbol_warnings = []
+        self.insertion_warnings = []
         self.validator = ValidationService()
         self.bypass_validation = bypass_validation
         self.indentation_adjusted = False
