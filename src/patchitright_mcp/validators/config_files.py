@@ -61,11 +61,11 @@ class JsonValidator(BaseValidator):
                 column=column,
             )
 
-    def lint(self, content: str, filename: str) -> list[str]:
+    def lint(self, content: str, filename: str, ignore_format: bool = False, ignore_codesmell: bool = False) -> list[str]:
         # Reuse Biome command runner from JsTsValidator to lint JSON/JSONC
         from .javascript import JsTsValidator
         js_val = JsTsValidator()
-        return js_val.lint(content, filename)
+        return js_val.lint(content, filename, ignore_format=ignore_format, ignore_codesmell=ignore_codesmell)
 
 
 class TomlValidator(BaseValidator):

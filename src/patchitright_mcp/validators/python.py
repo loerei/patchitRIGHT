@@ -26,7 +26,10 @@ class PythonValidator(BaseValidator):
                 column=e.offset
             )
 
-    def lint(self, content: str, filename: str) -> list[str]:
+    def lint(self, content: str, filename: str, ignore_format: bool = False, ignore_codesmell: bool = False) -> list[str]:
+        if ignore_codesmell:
+            return []
+
         executable_dir = Path(sys.executable).parent
         ruff_exe = shutil.which("ruff", path=str(executable_dir)) or shutil.which("ruff")
         if not ruff_exe:

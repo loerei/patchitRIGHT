@@ -90,3 +90,67 @@ def test_filter_warnings_multiline_formatter_block(monkeypatch):
     assert len(filtered) == 3
     assert filtered[0].startswith("x Formatter")
 
+def test_parse_ignored_categories():
+    assert ValidationService.parse_ignored_categories("") == set()
+    assert ValidationService.parse_ignored_categories("all") == {"all", "symbol", "insertion", "lint", "format"}
+    assert ValidationService.parse_ignored_categories("*") == {"all", "symbol", "insertion", "lint", "format"}
+    assert ValidationService.parse_ignored_categories("true") == {"all", "symbol", "insertion", "lint", "format"}
+    assert ValidationService.parse_ignored_categories("symbol,format") == {"symbol", "format"}
+    assert ValidationService.parse_ignored_categories("symbols,insertions,linter,formatting") == {"symbol", "insertion", "lint", "format"}
+
+def test_filter_warnings_symbol_category(monkeypatch):
+    warnings = [
+        "Symbol Omission Alert: 'foo' was declared in original slice and referenced on lines 10, but is missing from replace_content.",
+        "F401 'os' imported but unused",
+        "Warning: Specified insert_line (100) exceeds total file lines (50). Clamped insertion to end-of-file.",
+        "x Formatter would have printed the following content:"
+    ]
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "symbol")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 3
+    assert not any("Symbol Omission Alert" in w for w in filtered)
+
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "symbols")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 3
+    assert not any("Symbol Omission Alert" in w for w in filtered)
+
+def test_filter_warnings_insertion_category(monkeypatch):
+    warnings = [
+        "Symbol Omission Alert: 'foo' was declared in original slice and referenced on lines 10, but is missing from replace_content.",
+        "F401 'os' imported but unused",
+        "Warning: Specified insert_line (100) exceeds total file lines (50). Clamped insertion to end-of-file.",
+        "Warning: Could not infer reference indentation for auto_indent. Defaulted to top-level (0 spaces).",
+        "Warning: File uses spaces for indentation, but inserted content contains tabs while auto_indent=False."
+    ]
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "insertion")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 2
+    assert "Symbol Omission Alert" in filtered[0]
+    assert "F401" in filtered[1]
+
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "line")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 2
+
+def test_filter_warnings_combined_categories(monkeypatch):
+    warnings = [
+        "Symbol Omission Alert: 'foo' was declared in original slice and referenced on lines 10, but is missing from replace_content.",
+        "F401 'os' imported but unused",
+        "Warning: Specified insert_line (100) exceeds total file lines (50). Clamped insertion to end-of-file.",
+        "x Formatter would have printed the following content:"
+    ]
+    # Ignore symbol and format -> only lint and insertion remain
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "symbol,format")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 2
+    assert "F401" in filtered[0]
+    assert "exceeds total file lines" in filtered[1]
+
+    # Ignore insertion and lint -> only symbol and format remain
+    monkeypatch.setenv("PATCHITRIGHT_IGNORE_WARNINGS", "insertion,lint")
+    filtered = ValidationService.filter_warnings(warnings)
+    assert len(filtered) == 2
+    assert "Symbol Omission Alert" in filtered[0]
+    assert "Formatter" in filtered[1]
+

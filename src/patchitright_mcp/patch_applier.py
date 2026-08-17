@@ -1,18 +1,11 @@
 """In-memory chunk replacement engine and patch application helpers."""
 from pathlib import Path
-from typing import Optional, Union, Any, TYPE_CHECKING
+from typing import Optional
 from .engine import PatchEngine
-from .line_matcher import (
-    _resolve_ast_boundaries,
-    check_replacement_collisions,
-    sort_resolved_items_descending,
-)
+from .line_matcher import _resolve_ast_boundaries
 from .run_cache import get_cache
 from .self_mod_safety import _get_linter_suggestion, _write_patched_file
 from .validators import SyntaxValidationError, ValidationService
-
-if TYPE_CHECKING:
-    from .body_parser import BodyRange
 
 
 def _apply_patch_content(
@@ -33,8 +26,9 @@ def _apply_patch_content(
             filename=target_file,
         )
         linter_warnings = list(diff_sym_warnings) + list(getattr(engine, "linter_warnings", []))
-        suggestion = _get_linter_suggestion(target_file) if linter_warnings else ""
-        return patched_file, 1, linter_warnings, suggestion, None, engine
+        filtered_warnings = ValidationService.filter_warnings(linter_warnings)
+        suggestion = _get_linter_suggestion(target_file) if filtered_warnings else ""
+        return patched_file, 1, filtered_warnings, suggestion, None, engine
     except SyntaxValidationError as e:
         return "", 0, [], "", {
             "error": f"Syntax Error: {str(e)}",
