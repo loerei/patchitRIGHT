@@ -1,10 +1,13 @@
 import os
+import re
 from pathlib import Path
 from typing import Dict, Type
 from .base import BaseValidator
 from .python import PythonValidator
 from .javascript import JsTsValidator
 from .config_files import JsonValidator, TomlValidator, YamlValidator
+
+DIFF_LINE_PATTERN = re.compile(r"^\s*\d+\s*\|")
 
 class ValidationService:
     """Facade service to manage and coordinate validation and linting across languages."""
@@ -63,9 +66,6 @@ class ValidationService:
         if "all" in ignored_categories:
             return []
 
-        import re
-        diff_line_pattern = re.compile(r"^\s*\d+\s*\|")
-
         filtered = []
         in_formatter_block = False
 
@@ -77,26 +77,28 @@ class ValidationService:
                 cats.add("symbol")
                 in_formatter_block = False
 
+            is_tab_space_warning = "contains tabs while auto_indent" in lower_w or "contains spaces while auto_indent" in lower_w
+            if is_tab_space_warning:
+                cats.add("insertion")
+                cats.add("format")
+
             if (
                 "exceeds total file lines" in lower_w
                 or "clamped insertion to end-of-file" in lower_w
                 or "could not infer reference indentation" in lower_w
                 or "insert_line" in lower_w
                 or "auto_indent=false" in lower_w
-                or "contains tabs while auto_indent" in lower_w
-                or "contains spaces while auto_indent" in lower_w
             ):
                 cats.add("insertion")
                 in_formatter_block = False
 
             is_explicit_format = (
-                "formatter would have printed" in lower_w
+                is_tab_space_warning
+                or "formatter would have printed" in lower_w
                 or "format violations" in lower_w
                 or "formatting violations" in lower_w
                 or "tab vs space" in lower_w
                 or "indentation" in lower_w
-                or "contains tabs while auto_indent" in lower_w
-                or "contains spaces while auto_indent" in lower_w
                 or lower_w.startswith("formatter")
                 or lower_w.startswith("format ")
             )
@@ -106,7 +108,7 @@ class ValidationService:
                 in_formatter_block = True
             elif in_formatter_block:
                 is_diff_line = (
-                    diff_line_pattern.match(w) is not None
+                    DIFF_LINE_PATTERN.match(w) is not None
                     or w.startswith(("|", "->", "=>"))
                     or (len(w) > 2 and w[0] in ("-", "+") and w[1] in (" ", "\t"))
                 )
@@ -151,20 +153,10 @@ class ValidationService:
         if validator:
             ignore_format = "format" in ignored_categories
             ignore_codesmell = "lint" in ignored_categories
-            try:
-                raw_warnings = validator.lint(
-                    content, filename, ignore_format=ignore_format, ignore_codesmell=ignore_codesmell
-                )
-            except TypeError:
-                raw_warnings = validator.lint(content, filename)
-
-            # Standardize and format warnings to clean out noise
-            clean_warnings = []
-            for w in raw_warnings:
-                w = w.strip()
-                if w:
-                    # Prefix warning with language indicator if needed, e.g. [Python]
-                    clean_warnings.append(w)
+            raw_warnings = validator.lint(
+                content, filename, ignore_format=ignore_format, ignore_codesmell=ignore_codesmell
+            )
+            clean_warnings = [w.strip() for w in raw_warnings if w.strip()]
             return self.filter_warnings(clean_warnings, ignored_categories=ignored_categories)
         return []
 

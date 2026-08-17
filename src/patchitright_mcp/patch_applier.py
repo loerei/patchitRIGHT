@@ -2,9 +2,12 @@
 from pathlib import Path
 from typing import Optional
 from .engine import PatchEngine
-from .line_matcher import _resolve_ast_boundaries
-from .run_cache import get_cache
-from .self_mod_safety import _get_linter_suggestion, _write_patched_file
+from .line_matcher import (
+    _resolve_ast_boundaries,
+    check_replacement_collisions,
+    sort_resolved_items_descending,
+)
+from .self_mod_safety import _get_linter_suggestion
 from .validators import SyntaxValidationError, ValidationService
 
 
@@ -137,26 +140,11 @@ def _process_single_file_in_memory(
                     "body_range": body_range,
                 })
 
-        repl_items = [x for x in resolved_items if not x.get("is_insertion")]
-        sorted_repl = sorted(repl_items, key=lambda x: x["start_line"])
-        for i in range(len(sorted_repl) - 1):
-            curr = sorted_repl[i]
-            nxt = sorted_repl[i+1]
-            if curr["end_line"] >= nxt["start_line"]:
-                return "", 0, [], "", {"error": f"Error: Overlapping replacements detected between lines {curr['start_line']}-{curr['end_line']} and {nxt['start_line']}-{nxt['end_line']}."}, None
+        collision_err = check_replacement_collisions(resolved_items)
+        if collision_err:
+            return "", 0, [], "", collision_err, None
 
-        ins_items = [x for x in resolved_items if x.get("is_insertion")]
-        for ins in ins_items:
-            ins_l = ins["insert_line"]
-            for repl in repl_items:
-                if repl["start_line"] < ins_l < repl["end_line"]:
-                    return "", 0, [], "", {"error": f"Error: Cannot insert code inside an active replacement range (lines {repl['start_line']}-{repl['end_line']})."}, None
-
-        sorted_resolved_items = sorted(
-            resolved_items,
-            key=lambda x: (x["start_line"], 1 if not x.get("is_insertion") else 0),
-            reverse=True
-        )
+        sorted_resolved_items = sort_resolved_items_descending(resolved_items)
 
         def run_chain(contents: str, suggest_idx: Optional[int] = None) -> tuple[str, int, list[str], PatchEngine]:
             temp_content = contents
@@ -248,9 +236,7 @@ def _process_single_file_in_memory(
 
         try:
             patched_file, occurrences, last_warnings, engine = run_chain(file_content)
-            all_sym_warnings = getattr(engine, "symbol_warnings", []) if engine else []
-            combined_warnings = list(all_sym_warnings) + list(last_warnings)
-            filtered_warnings = ValidationService.filter_warnings(combined_warnings)
+            filtered_warnings = ValidationService.filter_warnings(last_warnings)
             suggestion = _get_linter_suggestion(target_file) if filtered_warnings else ""
             return patched_file, occurrences, filtered_warnings, suggestion, None, engine
         except SyntaxValidationError as e:
@@ -379,120 +365,3 @@ def _process_single_file_in_memory(
     except ValueError as e:
         return "", 0, [], "", _handle_patch_file_value_error(e, target_file), None
 
-
-def _apply_classic_replacement(
-    dry_run: bool,
-    file_content: str,
-    patched_file: str,
-    target_file: str,
-    target_path: Path,
-    occurrences: int,
-    symbol_name: Optional[str],
-    resolved_start_line: Optional[int],
-    resolved_end_line: Optional[int],
-    start_line: Optional[int],
-    end_line: Optional[int],
-    engine: PatchEngine,
-) -> dict:
-    """Helper applying classic search-and-replace or symbol replacement response payload."""
-    from .patch_file import generate_diff
-
-    is_did_you_mean_applied = getattr(engine, "is_did_you_mean_applied", False)
-    is_relocated = getattr(engine, "is_relocated", False)
-    s_ratio = getattr(engine, "s_ratio", 0.0)
-    ratio_pct = round(s_ratio * 100)
-    if is_did_you_mean_applied:
-        resolved_start_line = engine.did_you_mean_start_line
-        resolved_end_line = engine.did_you_mean_end_line
-    elif is_relocated:
-        resolved_start_line = engine.relocated_start_line
-        resolved_end_line = engine.relocated_end_line
-
-    linter_warnings = getattr(engine, "linter_warnings", [])
-    indentation_adjusted = getattr(engine, "indentation_adjusted", False)
-    indent_delta = getattr(engine, "indent_delta", "")
-    newline_padded = getattr(engine, "newline_padded", False)
-    large_file_fallback = getattr(engine, "large_file_fallback", False)
-
-    if dry_run:
-        diff_text = generate_diff(file_content, patched_file, target_file)
-        output = f"```diff\n{diff_text}```\n"
-        output += f"- Target file: `{target_file}`\n"
-        if is_did_you_mean_applied:
-            output += "- Match occurrences inside scope: **1** (applied via 'did_you_mean' fallback)\n"
-        else:
-            output += f"- Match occurrences inside scope: **{occurrences}**\n"
-        if symbol_name:
-            output += f"- Scope: AST symbol `{symbol_name}` (lines {resolved_start_line}-{resolved_end_line})\n"
-        elif start_line or end_line or is_did_you_mean_applied or is_relocated:
-            start_disp = resolved_start_line if resolved_start_line is not None else 1
-            end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
-            output += f"- Scope: Line range {start_disp}-{end_disp}\n"
-        if is_did_you_mean_applied:
-            output += "*Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
-        elif is_relocated:
-            output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
-        cache = get_cache()
-        run_id = cache.store(
-            entries=[{"target_path": target_path, "patched_content": patched_file}],
-            original_contents={str(target_path): file_content, target_file: file_content},
-        )
-        res = {
-            "success": True,
-            "dryRun": True,
-            "message": output,
-            "occurrences": occurrences,
-            "run_id": run_id,
-            "expires_in": cache.get_ttl(),
-        }
-        if indentation_adjusted:
-            res["indentation_adjusted"] = True
-            res["indent_delta"] = indent_delta
-        if newline_padded:
-            res["newline_padded"] = True
-        if large_file_fallback:
-            res["large_file_fallback"] = True
-        if linter_warnings:
-            res["warnings"] = linter_warnings
-            res["suggestion"] = _get_linter_suggestion(target_file)
-        return res
-
-    try:
-        _write_patched_file(target_path, patched_file)
-    except Exception as e:
-        return {"error": f"Failed to write patched file: {e}"}
-
-    output = f"- Target file: `{target_file}`\n"
-    if is_did_you_mean_applied:
-        output += "- Replaced occurrences: **1** (applied via 'did_you_mean' fallback)\n"
-    else:
-        output += f"- Replaced occurrences: **{occurrences}**\n"
-    if symbol_name:
-        output += f"- Scope: AST symbol `{symbol_name}` (lines {resolved_start_line}-{resolved_end_line})\n"
-    elif start_line or end_line or is_did_you_mean_applied or is_relocated:
-        start_disp = resolved_start_line if resolved_start_line is not None else 1
-        end_disp = resolved_end_line if resolved_end_line is not None else len(engine.file_lines)
-        output += f"- Scope: Line range {start_disp}-{end_disp}\n"
-    if is_did_you_mean_applied:
-        output += "*Note:* Exact search content not found, but closest match (similarity {}%) was matched via 'did_you_mean' flag.\n".format(ratio_pct)
-    elif is_relocated:
-        output += f"*Note:* Search content was relocated from the specified range to lines {resolved_start_line}-{resolved_end_line} (exact unique match found).\n"
-    elif occurrences > 1:
-        output += f"*Warning:* Replaced {occurrences} identical occurrences.\n"
-    res = {
-        "success": True,
-        "dryRun": False,
-        "message": output,
-        "occurrences": occurrences,
-    }
-    if indentation_adjusted:
-        res["indentation_adjusted"] = True
-        res["indent_delta"] = indent_delta
-    if newline_padded:
-        res["newline_padded"] = True
-    if large_file_fallback:
-        res["large_file_fallback"] = True
-    if linter_warnings:
-        res["warnings"] = linter_warnings
-        res["suggestion"] = _get_linter_suggestion(target_file)
-    return res

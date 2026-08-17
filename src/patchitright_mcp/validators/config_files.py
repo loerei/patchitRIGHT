@@ -1,4 +1,5 @@
 import json
+import re
 from .base import BaseValidator
 from .errors import SyntaxValidationError
 
@@ -30,7 +31,6 @@ class JsonValidator(BaseValidator):
             if json5 is not None:
                 # Check if json5 parses comments, but enforce no trailing comma for standard .json
                 parsed = json5.loads(text)
-                import re
                 if re.search(r',\s*[}\]]', text):
                     raise e
                 return parsed
@@ -90,7 +90,6 @@ class TomlValidator(BaseValidator):
             line = None
             column = None
             err_msg = str(e)
-            import re
             match = re.search(r"line\s+(\d+),\s+column\s+(\d+)", err_msg)
             if match:
                 line = int(match.group(1))

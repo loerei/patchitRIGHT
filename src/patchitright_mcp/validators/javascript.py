@@ -508,10 +508,7 @@ class JsTsValidator(BaseValidator):
             mode = "format"
 
         try:
-            if mode == "check":
-                biome_cmd = self._get_biome_command(filename)
-            else:
-                biome_cmd = self._get_biome_command(filename, mode=mode)
+            biome_cmd = self._get_biome_command(filename, mode=mode)
         except TypeError:
             biome_cmd = self._get_biome_command(filename)
         if not biome_cmd:

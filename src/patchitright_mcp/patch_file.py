@@ -1,38 +1,23 @@
 """AST-bounded file editing interface and execution controller facade for patchitRIGHT."""
 import difflib
-import hashlib
 import os
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from .diagnostics import (
     _attach_engine_flags,
     _create_error_response,
-    _handle_batch_value_error,
     _handle_patch_file_value_error,
 )
 from .dry_run import (
-    _verify_dry_run_hashes,
     apply_last_dry_run,
     batch_patch_files,
 )
-from .engine import PatchEngine
-from .line_matcher import (
-    _resolve_ast_boundaries,
-    check_replacement_collisions,
-    sort_resolved_items_descending,
-)
-from .patch_applier import (
-    _apply_classic_replacement,
-    _apply_patch_content,
-    _process_single_file_in_memory,
-)
+from .patch_applier import _process_single_file_in_memory
 from .run_cache import get_cache
 from .self_mod_safety import (
     _commit_or_defer_transaction,
-    _commit_transaction_with_delay,
     _get_linter_suggestion,
-    _write_file_with_delay,
     _write_patched_file,
     run_startup_recovery,
     trigger_jcodemunch_sync,
@@ -40,8 +25,6 @@ from .self_mod_safety import (
 from .transaction import FileTransaction
 from .validators import SyntaxValidationError, ValidationService
 from .workspace import Workspace
-
-LINTER_WARNINGS_PREFIX = "Linter/format warnings detected in patched file"
 
 
 def generate_diff(original: str, modified: str, filename: str) -> str:
@@ -535,171 +518,3 @@ def _resolve_workspace_root(patches: list[dict], workspace: Workspace, cwd: Path
         resolved = common
     return resolved
 
-
-def _process_patches_list(
-    patches: list[dict],
-    dry_run: bool = False,
-    storage_path: Optional[str] = None,
-) -> dict:
-    """Process list of patch dictionary payloads."""
-    cwd = Path.cwd().resolve()
-    workspace = Workspace(cwd, storage_path)
-
-    try:
-        workspace_root = _resolve_workspace_root(patches, workspace, cwd)
-    except ValueError as e:
-        return _handle_batch_value_error(e)
-
-    processed_files = []
-    modifications: dict[Path, str] = {}
-    transaction = FileTransaction(workspace_root)
-
-    for p in patches:
-        tf = p.get("target_file")
-        if not tf:
-            return _create_error_response("Each patch item in 'files' must specify 'target_file'")
-
-        try:
-            target_path = workspace.resolve_safe_path(tf)
-        except ValueError as e:
-            return _handle_batch_value_error(e)
-
-        folder_filter = p.get("folder_filter")
-        file_filter = p.get("file_filter")
-        orig_content, file_exists, err = _read_file_and_check_filters(target_path, cwd, folder_filter, file_filter)
-        if err:
-            return _create_error_response(err, target_file=tf)
-
-        if not file_exists and not p.get("patch_content") and not p.get("replacements"):
-            return _create_error_response(f"Target file '{tf}' does not exist", target_file=tf)
-
-        bypass_val = bool(p.get("bypass_validation", False))
-        pf_res = _process_single_file_in_memory(
-            target_file=tf,
-            target_path=target_path,
-            file_content=orig_content,
-            bypass_validation=bypass_val,
-            cwd=cwd,
-            storage_path=storage_path,
-            **p,
-        )
-        if pf_res[4]:
-            return _create_error_response(pf_res[4], target_file=tf)
-
-        patched_content, occurrences, _, _, _, _ = pf_res
-        diff = generate_diff(orig_content, patched_content, tf)
-        empty_hash = hashlib.sha256(b"").hexdigest()
-        norm_orig = orig_content.replace("\r\n", "\n").replace("\r", "")
-        orig_hash = hashlib.sha256(norm_orig.encode()).hexdigest() if file_exists else empty_hash
-
-        processed_files.append({
-            "target_path": target_path,
-            "target_file": tf,
-            "patched_content": patched_content,
-            "original_hash": orig_hash,
-            "exists": file_exists,
-            "occurrences": occurrences,
-            "diff_content": diff,
-            "pf_res": pf_res,
-        })
-        modifications[target_path] = patched_content
-        transaction.register_file(target_path)
-
-    if dry_run:
-        return _apply_batch_dry_run(processed_files)
-
-    return _commit_batch_transaction(transaction, modifications, processed_files)
-
-
-def _apply_batch_dry_run(processed_files: list[dict]) -> dict:
-    """Build dry-run preview response and store RunCache entry for batch operations."""
-    cache_files = []
-    modified_files = []
-    tot_occ = 0
-    tf_primary = processed_files[0]["target_file"] if processed_files else None
-    output = f"Previewing batch patch across **{len(processed_files)}** file(s). Use `apply_last_dry_run(run_id='<id>')` to apply on disk.\n\n"
-
-    for pf in processed_files:
-        tf = pf["target_file"]
-        diff = pf["diff_content"]
-        pf_res = pf["pf_res"]
-        occ = pf["occurrences"]
-        eng = pf_res[5]
-
-        cache_files.append({
-            "target_path": pf["target_path"],
-            "target_file": tf,
-            "patched_content": pf["patched_content"],
-            "original_hash": pf["original_hash"],
-            "exists": pf["exists"],
-            "occurrences": occ,
-            "warnings": pf_res[2],
-            "suggestion": pf_res[3],
-            "engine": eng,
-        })
-
-        output += f"### `{tf}`\n```diff\n{diff}\n```\n\n"
-        entry = _build_modified_file_entry(pf, diff)
-        modified_files.append(entry)
-        tot_occ += occ
-
-    run_id = get_cache().store(cache_files)
-    return {
-        "success": True,
-        "dryRun": True,
-        "run_id": run_id,
-        "expires_in": get_cache().get_ttl(),
-        "target_file": tf_primary,
-        "message": output.strip(),
-        "diff_content": None,
-        "occurrences": tot_occ,
-        "relocated_range": None,
-        "did_you_mean_info": None,
-        "modified_files": modified_files,
-    }
-
-
-def _commit_batch_transaction(
-    transaction: FileTransaction,
-    modifications: dict[Path, str],
-    processed_files: list[dict],
-) -> dict:
-    """Commit batch transaction atomically across files."""
-    transaction.write_backups()
-    ok, fail_path = transaction.check_optimistic_locking()
-    if not ok:
-        transaction.rollback()
-        transaction.cleanup()
-        fail_name = fail_path.name if fail_path else "file"
-        return _create_error_response(f"Optimistic locking failed for '{fail_name}'. File was modified on disk.")
-
-    commit_err = _commit_or_defer_transaction(transaction, modifications)
-    if commit_err:
-        return _create_error_response(commit_err)
-
-    tf_primary = processed_files[0]["target_file"] if processed_files else None
-    modified_files = []
-    tot_occ = 0
-    output = f"Successfully patched **{len(processed_files)}** file(s).\n\n"
-
-    for pf in processed_files:
-        tf = pf["target_file"]
-        diff = pf["diff_content"]
-        occ = pf["occurrences"]
-
-        output += f"### `{tf}`\n```diff\n{diff}\n```\n\n"
-        entry = _build_modified_file_entry(pf, diff)
-        modified_files.append(entry)
-        tot_occ += occ
-
-    return {
-        "success": True,
-        "dryRun": False,
-        "target_file": tf_primary,
-        "message": output.strip(),
-        "diff_content": None,
-        "occurrences": tot_occ,
-        "relocated_range": None,
-        "did_you_mean_info": None,
-        "modified_files": modified_files,
-    }
