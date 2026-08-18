@@ -236,6 +236,24 @@ class TestLineBasedInsertion:
         assert any("contains tabs while auto_indent=False" in w for w in res.get("warnings", []))
 
 
+    def test_insert_line_preceding_header_colon_auto_indent(self, tmp_path, monkeypatch):
+        """Inserting into a blank line succeeding a def colon block infers 4 spaces."""
+        monkeypatch.chdir(tmp_path)
+        f = tmp_path / "func_colon.py"
+        f.write_text("def my_func():\n\n\n")
+
+        res = patch_file(
+            target_file="func_colon.py",
+            insert_line=2,
+            insert_content="return True",
+            auto_indent=True,
+            dry_run=False
+        )
+        assert res["success"] is True
+        assert "    return True" in f.read_text()
+
+
+
     def test_insert_line_out_of_bounds_clamping_warning(self, tmp_path, monkeypatch):
         """Verify insert_line > total_lines emits a clamping warning in the response."""
         monkeypatch.chdir(tmp_path)

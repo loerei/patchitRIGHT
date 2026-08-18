@@ -1146,3 +1146,22 @@ class TestSymbolScopeCore:
         assert res_live["modified_files"] is None
         assert "Successfully patched" in res_live["message"]
 
+
+    def test_replacements_pipeline_syntax_validation_error(self, tmp_path, monkeypatch):
+        """Replacements pipeline catches SyntaxValidationError and formats error response."""
+        monkeypatch.chdir(tmp_path)
+        app_file = tmp_path / "calc.py"
+        app_file.write_text("def add(a, b):\n    return a + b\n")
+
+        res = patch_file(
+            target_file="calc.py",
+            replacements=[
+                {"search_content": "return a + b", "replace_content": "return a +"}
+            ],
+            dry_run=False
+        )
+        assert "error" in res
+        assert "Syntax Error" in res["error"]
+        assert app_file.read_text() == "def add(a, b):\n    return a + b\n"
+
+

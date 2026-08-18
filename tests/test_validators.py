@@ -313,15 +313,50 @@ def test_yaml_validator_edge_cases():
         assert "Generic YAML fail" in str(exc.value)
 
 
-def test_js_ts_validator_lint_options_and_cleanup():
+def test_js_ts_validator_find_biome_runners():
     val = JsTsValidator()
 
-    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
-        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/biome" if cmd == "biome" else None
-        
-        # Test ignore_format and ignore_codesmell options
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-        warnings = val.lint("const a = 1;", "app.ts", ignore_format=True, ignore_codesmell=True)
-        assert isinstance(warnings, list)
+    # 1. pnpm dlx detection
+    with patch.object(val, "_detect_package_manager", return_value="pnpm"), \
+         patch("shutil.which", side_effect=lambda x: "/usr/bin/pnpm" if x == "pnpm" else None):
+        runner, args = val._get_biome_command("app.ts", "check")
+        assert runner == "/usr/bin/pnpm"
+        assert args == ["dlx", "@biomejs/biome", "check"]
+
+    # 2. yarn dlx detection
+    with patch.object(val, "_detect_package_manager", return_value="yarn"), \
+         patch("shutil.which", side_effect=lambda x: "/usr/bin/yarn" if x == "yarn" else None):
+        runner, args = val._get_biome_command("app.ts", "check")
+        assert runner == "/usr/bin/yarn"
+        assert args == ["dlx", "@biomejs/biome", "check"]
+
+    # 3. npm npx detection
+    with patch.object(val, "_detect_package_manager", return_value="npm"), \
+         patch("shutil.which", side_effect=lambda x: "/usr/bin/npx" if x == "npx" else None):
+        runner, args = val._get_biome_command("app.ts", "check")
+        assert runner == "/usr/bin/npx"
+        assert args == ["--offline", "@biomejs/biome", "check"]
+
+
+def test_js_ts_validator_syntax_error_sorting_and_text_fallback():
+    val = JsTsValidator()
+
+    # 1. Structured JSON diagnostics with sorting by line/column
+    diagnostics = [
+        {"category": "parse/error", "location": {"start": {"line": 10, "column": 5}}, "message": "second err"},
+        {"category": "parse/error", "location": {"start": {"line": 2, "column": 3}}, "message": "first err"},
+        {"category": "lint/style", "location": {"start": {"line": 1, "column": 1}}, "message": "lint warning"},
+    ]
+    earliest = val._find_json_syntax_error(diagnostics)
+    assert earliest["message"] == "first err"
+
+    # 2. Plain-text syntax error detection
+    plain_output = "app.ts:5:12 parse ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  × Expected a semicolon\n"
+    res = val._find_text_syntax_error(plain_output, "app.ts")
+    assert res is not None
+    msg, line, col = res
+    assert line == 5
+    assert col == 12
+
 
 

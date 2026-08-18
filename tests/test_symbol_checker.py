@@ -20,13 +20,115 @@ def test_mask_comments_and_strings_js():
     assert "comment here" not in masked
     assert "${firstIndex}" in masked
 
-def test_mask_comments_and_strings_py():
-    code = 'def foo():\n    # comment\n    s = "hello"\n    f = f"var is {first_index}"'
+def test_extract_declarations_py_args_classes_and_comments():
+    # 1. Comments & Docstrings
+    code_comments = '"""Docstring top"""\n# Leading comment\nx_val = 10  # trailing comment\n\'\'\'Single triple\'\'\''
+    masked = mask_comments_and_strings(code_comments, "test.py")
+    assert "Docstring top" not in masked
+    assert "Single triple" not in masked
+    assert "Leading comment" not in masked
+    assert "trailing comment" not in masked
+    assert "x_val = 10" in masked
+
+    # 2. Python args, kwargs, varargs, classes
+    code_fn = (
+        "class StandaloneClass:\n"
+        "    def execute(self, param_a, param_b=1, *extra_args, **kw_options):\n"
+        "        target_one = target_two = 100\n"
+        "        return param_a + target_one\n"
+    )
+    decls = extract_declarations(code_fn, "test.py")
+    assert "StandaloneClass" in decls
+    assert "execute" in decls
+    assert "param_a" in decls
+    assert "param_b" in decls
+    assert "extra_args" in decls
+    assert "kw_options" in decls
+    assert "target_one" in decls
+    assert "target_two" in decls
+
+    # 3. Incomplete Python syntax regex fallback
+    incomplete_code = "def incomplete_func(arg:\nclass IncompleteClass:\nval_a = 10"
+    decls_fallback = extract_declarations(incomplete_code, "test.py")
+    assert "incomplete_func" in decls_fallback
+    assert "IncompleteClass" in decls_fallback
+    assert "val_a" in decls_fallback
+
+
+def test_extract_declarations_js_arrows_and_imports():
+    # 1. Arrow function params
+    js_arrow = "(first_item, second_item) => first_item + second_item;"
+    decls_arrow = extract_declarations(js_arrow, "test.js")
+    assert "first_item" in decls_arrow
+    assert "second_item" in decls_arrow
+
+    # 2. Imports default and named
+    js_imp = "import DefaultExport from 'lib';\nimport { origName as aliasName, directName } from 'other';"
+    decls_imp = extract_declarations(js_imp, "test.js")
+    assert "DefaultExport" in decls_imp
+    assert "aliasName" in decls_imp
+    assert "directName" in decls_imp
+
+    # 3. extract_net_diff_declarations
+    patch_str = (
+        "--- a/file.js\n"
+        "+++ b/file.js\n"
+        "@@ -1,3 +1,3 @@\n"
+        "-const oldDeclaredSymbol = 1;\n"
+        "+const newDeclaredSymbol = 2;\n"
+    )
+    net_decls = extract_net_diff_declarations(patch_str, "file.js")
+    assert "oldDeclaredSymbol" in net_decls
+    assert "newDeclaredSymbol" not in net_decls
+
+
+
+
+def test_mask_comments_and_strings_py_fstrings_and_decorators():
+    # 1. f-strings with expressions and escaped braces
+    code = 'f = f"Result: {compute(val)} and escaped {{brace}}"\n'
     masked = mask_comments_and_strings(code, "test.py")
-    assert len(masked) == len(code)
-    assert "comment" not in masked
-    assert "hello" not in masked
-    assert "{first_index}" in masked
+    assert "compute(val)" in masked
+    assert "Result:" not in masked
+
+    # 2. Multi-target assignment and decorators
+    code_decls = (
+        "@my_decorator\n"
+        "class MyService:\n"
+        "    field_x = field_y = field_z = 42\n"
+        "    def method(self, arg_one, arg_two=10):\n"
+        "        pass\n"
+    )
+    decls = extract_declarations(code_decls, "test.py")
+    assert "MyService" in decls
+    assert "field_x" in decls
+    assert "field_y" in decls
+    assert "field_z" in decls
+    assert "method" in decls
+
+
+
+def test_mask_comments_and_strings_js_block_comments():
+    code = '/* Multi line\n   block comment */\nconst z = 10;'
+    masked = mask_comments_and_strings(code, "test.js")
+    assert "block comment" not in masked
+    assert "const z = 10;" in masked
+
+
+def test_extract_declarations_py_async_and_tuples():
+    code = (
+        "async def handle_request(req):\n"
+        "    alpha_val, beta_val = get_pair()\n"
+        "    first_item, *rest_items = get_list()\n"
+        "    return alpha_val + beta_val\n"
+    )
+    decls = extract_declarations(code, "test.py")
+    assert "handle_request" in decls
+    assert "alpha_val" in decls
+    assert "beta_val" in decls
+    assert "first_item" in decls
+
+
 
 def test_extract_declarations_js():
     code = """
