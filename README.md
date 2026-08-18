@@ -1,14 +1,12 @@
 # patchitRIGHT
 
-**patchitRIGHT** is a high-performance, single-tool, AST-bounded secure code-writing and file-manipulation MCP server. 
-
-It acts as a safe, surgical companion for AI coding agents and developers. By pairing with [jCodeMunch](https://github.com/jgravelle/jcodemunch-mcp) AST engines, it allows agents to mutate functions/classes directly without re-passing large code blocks, saving substantial prompt tokens while enforcing syntax correctness.
+**patchitRIGHT** is an AST-bounded code-editing MCP server. It edits functions and classes directly by symbol name, inserts code by line index, and validates syntax before writing.
 
 ---
 
 ## Quick Setup (MCP Client)
 
-Add the following configuration to your MCP client configuration file (e.g., `claude_desktop_config.json`):
+Add the following to your MCP client configuration (e.g. `claude_desktop_config.json`):
 
 ```jsonc
 {
@@ -31,81 +29,77 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 
 ---
 
-## Provided Tools
+## Tools
 
-| Tool | Core Functionality | Key Inputs |
+| Tool | Purpose | Key Parameters |
 | :--- | :--- | :--- |
-| `patch_file` | Surgical code edits (AST symbol mutation, replacements, line insertions, unified diffs) across single or multiple files. | `target_file` (or `files`), `symbol_name`, `symbol_scope`, `search_content`/`replace_content`, `replacements` |
-| `write_file` | Create a new file or overwrite an existing file with automatic syntax validation. | `target_file`, `code_content`, `allow_overwrite` |
+| `patch_file` | Modify existing files via AST symbol mutation, text replacement, line insertion, or multi-file batches. | `target_file` (or `files`), `symbol_name`, `symbol_scope`, `search_content`/`replace_content`, `replacements`, `insert_line` |
+| `write_file` | Create a new file or fully replace file content with syntax validation. | `target_file`, `code_content`, `allow_overwrite` |
 
 ---
 
 ## AST-Scoped Replacements
 
-Unlike traditional search-and-replace tools that force AI agents to re-send entire 100+ line functions inside `search_content`, `patchitRIGHT` leverages AST bounds (`symbol_scope: "body"` or `"full"`) via `symbol_name`:
+Edit functions or classes directly without repeating existing code in `search_content`:
 
-* **Eliminate Token Waste**: Pass **only the new body code** in `replace_content`. No need to repeat existing target code.
-* **Smart Indentation Normalization**: Automatically detects the target function's indentation and re-indents `replace_content` to match perfectly.
-* **Multibyte Character Safety**: Accurately maps tree-sitter byte-offsets to Python characters, preventing encoding corruption on files with emojis (`🐛`) or UTF-8 characters.
-* **Upfront Resolution**: Resolves multi-patch queues bottom-up to prevent line-drift errors during multi-symbol edits.
+* **Body replacement**: Pass `symbol_name: "my_func"` and `symbol_scope: "body"` with the new body in `replace_content`.
+* **Full replacement**: Pass `symbol_scope: "full"` to replace signature, decorators, and body.
+* **Auto-indentation**: Target indentation is detected and applied to `replace_content` automatically.
+* **Multi-replacement**: Non-contiguous edits in `replacements` are resolved bottom-up to prevent line-drift.
 
 ---
 
 ## Line-Based Insertion
 
-Insert code cleanly directly above a target line without requiring exact text matching:
+Insert code above a target line index:
 
-* **Line Indexing**: Pass `insert_line: N` to insert directly above line N (pushing line N down). Pass `1` for top of file, or `-1` for end of file (EOF).
-* **Auto-Indentation**: Automatically scans reference lines and normalizes pre-indented blocks.
+* `insert_line: N`: Inserts code directly above line N. Pass `1` for top of file, `-1` for end of file (EOF).
+* **Indentation**: Automatically matches indentation of surrounding context.
 
 ---
 
-## Practical Safeguards & Integrity Guards
+## Validation & Safety Guardrails
 
-* **Integrated Syntax & Lint Checks**: Validates syntax before writing (Python `ast`, JS/TS via Biome/`tsc`, JSON, TOML, YAML) and attaches noise-filtered linter warnings (Ruff / Biome).
-* **Original-Content Syntax Guard**: Skips validation if the target file was *already broken before editing*, preventing legacy pre-existing syntax errors from blocking your patches.
-* **Atomic Rollback & Recovery**: Multi-file patches operate transactionally (all-or-nothing). Automatic backup files guard against unexpected crashes mid-write.
+* **Pre-write Syntax Checking**: Validates syntax before writing (Python `ast`, JS/TS via Biome/`tsc`, JSON, TOML, YAML). Blocks write on syntax errors.
+* **Pre-existing Error Tolerance**: Skips syntax blocking if the file was already invalid before editing.
+* **Atomic Multi-file Writes**: Multi-file edits in `files` apply transactionally (all-or-nothing rollback on failure).
 
 ---
 
 ## Standalone vs. jCodeMunch Mode
 
-`patchitRIGHT` works out-of-the-box in standalone mode or enriched with `jCodeMunch`:
-
-| Feature | jCodeMunch Mode (Indexed) | Standalone Mode (Zero-Dependency) |
+| Feature | jCodeMunch Mode | Standalone Mode |
 | :--- | :--- | :--- |
-| **Dependencies** | Requires `jcodemunch-mcp` | **None** (pure Python package) |
-| **AST Symbol Scoping (`symbol_name`)** | **Supported** (O(1) lookup of class/function bounds) | Manual line-range (`start_line`/`end_line`) |
-| **Exact Search & Replace / Multi-patch** | Supported | Supported |
-| **Syntax Validation & Rollbacks** | Supported | Supported |
-| **Realtime Index Sync (`PATCHITRIGHT_SYNC_JCODEMUNCH`)** | Auto-indexes `jCodeMunch` on write | N/A |
-| **Ideal For** | Complex agentic workflows & symbol awareness | Lightweight CI/CD & zero-setup environments |
+| **Dependencies** | `jcodemunch-mcp` | None (pure Python) |
+| **AST Symbol Scoping (`symbol_name`)** | O(1) symbol lookup | Line range (`start_line`/`end_line`) |
+| **Search-and-Replace / Line Insertion** | Supported | Supported |
+| **Syntax Validation & Rollback** | Supported | Supported |
+| **Realtime Index Sync** | Auto-indexes on write | N/A |
 
 ---
 
-## Environment Flags & Configuration
+## Environment Flags
 
-* **`set_timeout`** (`number`, default: `10.0`): Overrides tool execution timeout in seconds. Set to `-1` to disable timeout completely (recommended during internal server self-modifications).
-* **`PATCHITRIGHT_DEFAULT_TIMEOUT`** (`float`, default: `10.0`): Configures server-wide default execution timeout limit.
-* **`PATCHITRIGHT_IGNORE_WARNINGS`** (`string`, e.g. `"format"`, `"format,lint"`, `"all"`): Filters diagnostics by category to prevent prompt token pollution:
-  * `format` *(Recommended default)*: Suppresses formatting/whitespace diffs and tab vs space warnings.
-  * `lint`: Suppresses code smell and linter diagnostics from Ruff / Biome.
+* **`PATCHITRIGHT_IGNORE_WARNINGS`** (`string`, e.g. `"format"`, `"format,lint"`, `"all"`): Filters diagnostics to prevent prompt token pollution:
+  * `format` *(Recommended)*: Suppresses formatting diffs and tab vs space warnings.
+  * `lint`: Suppresses code smell and linter diagnostics (Ruff / Biome).
   * `insertion`: Suppresses auto-indentation and clamping notices during `insert_line`.
   * `symbol`: Suppresses symbol omission alerts.
-  * `all` (or `*`, `1`, `true`): Suppresses all warning diagnostics.
-* **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true` / `false`, default: `false`): Triggers immediate background indexing in `jCodeMunch` after file modifications.
-* **`PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION`** (`true` / `false`, default: `false`): Exposes `bypass_validation` parameter in schemas for emergency override.
-* **`PATCHITRIGHT_SHOW_LEGACY`** (`true` / `false`, default: `false`): Exposes legacy `batch_patch_files` tool.
+  * `all`: Suppresses all warning diagnostics.
+* **`PATCHITRIGHT_DEFAULT_TIMEOUT`** (`float`, default: `10.0`): Server execution timeout limit in seconds (`set_timeout: -1` disables timeout).
+* **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true`/`false`, default: `false`): Triggers background re-indexing in `jCodeMunch` after file writes.
+* **`PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION`** (`true`/`false`, default: `false`): Exposes `bypass_validation` parameter in schemas.
+* **`PATCHITRIGHT_SHOW_LEGACY`** (`true`/`false`, default: `false`): Exposes legacy `batch_patch_files` tool.
 
 ---
 
 ## Development & Testing
 
 ```bash
-# Run tests in parallel
+# Run test suite
 uv run pytest
 
-# Debug single-threaded
+# Run single-threaded
 uv run pytest -n 0
 ```
 
@@ -113,4 +107,4 @@ uv run pytest -n 0
 
 ## License
 
-Distributed under the **MIT License**. Complies with jCodeMunch dual-use terms when integrated with jCodeMunch-MCP.
+Distributed under the **MIT License**.
