@@ -20,7 +20,10 @@ Add the following to your MCP client configuration (e.g. `claude_desktop_config.
       "env": {
         "PYTHONPATH": "d:/Projects/patchitRIGHT/src",
         "PATCHITRIGHT_SYNC_JCODEMUNCH": "true",
-        "PATCHITRIGHT_IGNORE_WARNINGS": "format" // Recommended: ignore verbose formatter diffs (tabs vs spaces) by default
+        "PATCHITRIGHT_IGNORE_WARNINGS": "format", // Recommended: ignore verbose formatter diffs (tabs vs spaces) by default
+        // "PATCHITRIGHT_DEFAULT_TIMEOUT": "10.0", // Execution timeout limit in seconds (-1 to disable)
+        // "PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION": "false", // Expose emergency bypass_validation in schemas
+        // "PATCHITRIGHT_SHOW_LEGACY": "false" // Expose legacy batch_patch_files tool
       }
     }
   }
