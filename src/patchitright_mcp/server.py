@@ -97,7 +97,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         }
         return [TextContent(type="text", text=json.dumps(error_report, indent=2))]
     except Exception as e:
-        return [TextContent(type="text", text=f"Error executing {name}: {str(e)}")]
+        return [TextContent(type="text", text=f"Error executing {name}: {e!s}")]
 
 
 def _execute_write_file(arguments: dict) -> list[TextContent]:
@@ -224,7 +224,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="patchitRIGHT MCP Server")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--default-timeout", type=float, default=10.0, help="Default tool execution timeout in seconds (-1 to disable)")
-    args, unknown = parser.parse_known_args()
+    args, _unknown = parser.parse_known_args()
 
     DEFAULT_TIMEOUT = args.default_timeout
 

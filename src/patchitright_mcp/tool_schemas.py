@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+
 from mcp.types import Tool
 
 STORAGE_PATH_DESC = "Optional custom path to the jCodeMunch SQLite index database."

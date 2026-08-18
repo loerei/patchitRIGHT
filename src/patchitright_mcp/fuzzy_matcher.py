@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
 from rapidfuzz import fuzz
 
 
@@ -45,7 +44,7 @@ def find_closest_match(
     start_idx: int,
     end_idx: int,
     norm_search: str,
-) -> Optional[tuple[int, int, str, float]]:
+) -> tuple[int, int, str, float] | None:
     """Find closest matching slice within line boundaries using coarse/fine strided scan."""
     search_lines = norm_search.split("\n")
     n = len(search_lines)
@@ -138,7 +137,7 @@ def find_closest_hunk_match(
     hunk_old_lines: list[str],
     start_search: int,
     file_lines: list[str],
-) -> Optional[tuple[int, float]]:
+) -> tuple[int, float] | None:
     """Find closest line index matching unified diff hunk old lines."""
     search_str = "\n".join(hunk_old_lines)
     n = len(hunk_old_lines)

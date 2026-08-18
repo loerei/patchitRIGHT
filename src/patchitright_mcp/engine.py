@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional, Union
 from rapidfuzz import fuzz
 
 from .diff_parser import parse_unified_diff, verify_hunk_match
@@ -64,7 +63,7 @@ class PatchEngine:
         norm_replace: str,
         start_idx: int,
         end_idx: int,
-        symbol_name: Optional[str],
+        symbol_name: str | None,
         allow_multiple: bool,
         did_you_mean: bool,
     ) -> tuple[int, int, str, int]:
@@ -146,11 +145,11 @@ class PatchEngine:
         search_content: str,
         replace_content: str,
         allow_multiple: bool = False,
-        start_line: Optional[int] = None,
-        end_line: Optional[int] = None,
-        symbol_boundaries: Optional[tuple[Optional[int], Optional[int]]] = None,
-        symbol_name: Optional[str] = None,
-        line_filter: Optional[Union[str, int]] = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        symbol_boundaries: tuple[int | None, int | None] | None = None,
+        symbol_name: str | None = None,
+        line_filter: str | int | None = None,
         did_you_mean: bool = False,
         validate: bool = True,
         check_symbols: bool = True,
@@ -205,7 +204,7 @@ class PatchEngine:
 
     def apply_line_insertion(
         self,
-        insert_line: Optional[int],
+        insert_line: int | None,
         insert_content: str,
         auto_indent: bool = True,
         validate: bool = True,
@@ -222,9 +221,8 @@ class PatchEngine:
 
         # Empty file handling
         if not self.file_lines:
-            content = insert_content[:-1] if insert_content.endswith("\n") else insert_content
-            if content.endswith("\r"):
-                content = content[:-1]
+            content = insert_content.removesuffix("\n")
+            content = content.removesuffix("\r")
             patched_file = content
             if validate and not self.bypass_validation:
                 self.validator.validate_file(self.filename, patched_file, self.file_content)
@@ -290,9 +288,8 @@ class PatchEngine:
             elif file_has_tabs and content_has_spaces:
                 self.insertion_warnings.append("Warning: File uses tabs for indentation, but inserted content contains spaces while auto_indent=False.")
 
-        norm_insert = insert_content[:-1] if insert_content.endswith("\n") else insert_content
-        if norm_insert.endswith("\r"):
-            norm_insert = norm_insert[:-1]
+        norm_insert = insert_content.removesuffix("\n")
+        norm_insert = norm_insert.removesuffix("\r")
         norm_insert = norm_insert.replace("\r\n", "\n").replace("\r", "")
 
         if auto_indent and norm_insert.strip():
@@ -323,9 +320,9 @@ class PatchEngine:
 
     def _resolve_classic_boundaries(
         self,
-        start_line: Optional[int],
-        end_line: Optional[int],
-        symbol_boundaries: Optional[tuple[Optional[int], Optional[int]]],
+        start_line: int | None,
+        end_line: int | None,
+        symbol_boundaries: tuple[int | None, int | None] | None,
     ) -> tuple[int, int]:
         resolved_start, resolved_end = start_line, end_line
         if symbol_boundaries:
@@ -346,7 +343,7 @@ class PatchEngine:
         return detect_mismatch_reason(text_a, text_b)
 
     def _handle_missing_match(
-        self, start_idx: int, end_idx: int, norm_search: str, norm_replace: str, target_slice: str, symbol_name: Optional[str]
+        self, start_idx: int, end_idx: int, norm_search: str, norm_replace: str, target_slice: str, symbol_name: str | None
     ) -> None:
         first_lines = "\n".join(norm_search.split("\n")[:3])
         err_msg = f"Error: Search content not found inside the specified scope (lines {start_idx + 1} to {end_idx + 1})!\nFirst 3 lines of search block:\n{first_lines}"
@@ -373,6 +370,7 @@ class PatchEngine:
                     suggested_patched = suggested_patched.replace("\n", "\r\n")
 
                 from pathlib import Path
+
                 from .run_cache import get_cache
                 cache = get_cache()
                 run_id = cache.store(
@@ -381,7 +379,7 @@ class PatchEngine:
                 )
                 err_msg += f"\n\nTo apply this suggestion, run apply_last_dry_run with run_id '{run_id}'."
                 ve = ValueError(err_msg)
-                setattr(ve, "run_id", run_id)
+                ve.run_id = run_id
                 raise ve
             except ValueError:
                 raise
@@ -390,7 +388,7 @@ class PatchEngine:
         raise ValueError(err_msg)
 
     def _assert_line_filter(
-        self, line_filter: Union[str, int], target_slice: str, norm_search: str, start_idx: int
+        self, line_filter: str | int, target_slice: str, norm_search: str, start_idx: int
     ) -> None:
         is_numeric = False
         try:
@@ -424,9 +422,7 @@ class PatchEngine:
         file_lines = list(self.file_lines)
         offset = 0
 
-        hunk_index = 0
-        for hunk in hunks:
-            hunk_index += 1
+        for hunk_index, hunk in enumerate(hunks, 1):
             expected_old_lines = [l_content for l_type, l_content in hunk["lines"] if l_type in (" ", "-")]
             if hunk["old_start"] == 0:
                 expected_pos = 0
@@ -476,10 +472,10 @@ class PatchEngine:
                 err_msg += f"\n*Note:* {r}."
         raise ValueError(err_msg)
 
-    def _find_closest_match(self, start_idx: int, end_idx: int, norm_search: str) -> Optional[tuple[int, int, str, float]]:
+    def _find_closest_match(self, start_idx: int, end_idx: int, norm_search: str) -> tuple[int, int, str, float] | None:
         return find_closest_match(self.file_lines, start_idx, end_idx, norm_search)
 
-    def _find_closest_hunk_match(self, hunk_old_lines: list[str], start_search: int, file_lines: list[str]) -> Optional[tuple[int, float]]:
+    def _find_closest_hunk_match(self, hunk_old_lines: list[str], start_search: int, file_lines: list[str]) -> tuple[int, float] | None:
         return find_closest_hunk_match(hunk_old_lines, start_search, file_lines)
 
     def _parse_unified_diff(self, patch_str: str) -> list[dict]:
@@ -494,7 +490,7 @@ class PatchEngine:
         end_col: int,          # 0-indexed char offset
         symbol_scope: str,     # "full" or "body"
         is_expression: bool = False,
-        symbol_start_line: Optional[int] = None,
+        symbol_start_line: int | None = None,
         validate: bool = True,
     ) -> tuple[str, int]:
         """Replace the resolved symbol or body in-place."""
@@ -506,7 +502,12 @@ class PatchEngine:
         start_line_idx = max(0, min(start_line_idx, len(self.file_lines) - 1))
         end_line_idx = max(start_line_idx, min(end_line_idx, len(self.file_lines) - 1))
 
-        from .body_parser import _infer_indent_unit, detect_indent, normalize_indent, pad_block_newlines
+        from .body_parser import (
+            _infer_indent_unit,
+            detect_indent,
+            normalize_indent,
+            pad_block_newlines,
+        )
 
         if symbol_scope == "body":
             # Extract current body content for indent detection

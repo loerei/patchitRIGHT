@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 
 def parse_hunk_header(match: re.Match) -> dict:
@@ -22,7 +21,7 @@ def parse_hunk_header(match: re.Match) -> dict:
     }
 
 
-def parse_hunk_line(line: str, current_hunk: dict) -> Optional[dict]:
+def parse_hunk_line(line: str, current_hunk: dict) -> dict | None:
     """Parse line prefix and append to current hunk lines list."""
     if line.startswith("-"):
         current_hunk["lines"].append(("-", line[1:]))
