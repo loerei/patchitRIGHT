@@ -1,344 +1,39 @@
 """MCP server for patchitRIGHT."""
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
+import os
 from pathlib import Path
 
-
 from mcp.server import Server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
 from . import __version__
-from .patch_file import patch_file, batch_patch_files, run_startup_recovery, apply_last_dry_run, write_file
-
+from .guide_content import generate_patchitright_guide
+from .patch_file import (
+    apply_last_dry_run,
+    batch_patch_files,
+    patch_file,
+    run_startup_recovery,
+    write_file,
+)
+from .tool_schemas import get_tool_schemas
 
 # Create the MCP server instance
 server = Server("patchitright-mcp")
 
-STORAGE_PATH_DESC = "Optional custom path to the jCodeMunch SQLite index database."
 DEFAULT_TIMEOUT = 10.0
 
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """List all available tools."""
-    import os
     expose_bypass = os.environ.get("PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION", "").lower() in ("true", "1", "yes")
     show_legacy = os.environ.get("PATCHITRIGHT_SHOW_LEGACY", os.environ.get("SHOW_LEGACY", "")).lower() in ("true", "1", "yes")
-
-    tools = [
-        Tool(
-            name="patch_file",
-            description=(
-                "Edit a file by replacing an exact text block (search_content/replace_content) "
-                "or applying a unified diff (patch_content). Optionally scope to a line range or AST symbol. "
-                "Keep search_content focused on the minimal unique surrounding context required for matching. "
-                "For editing multiple non-contiguous blocks in a single file, use the 'replacements' array in one call."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "target_file": {
-                        "type": "string",
-                        "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended to avoid JSON escaping and save tokens."
-                    },
-                    "search_content": {
-                        "type": "string",
-                        "description": "The exact string block to search for. Must match uniquely within the scope unless allow_multiple is True. Keep snippets focused on minimal unique context."
-                    },
-                    "replace_content": {
-                        "type": "string",
-                        "description": "The string block to replace the search content with."
-                    },
-                    "patch_content": {
-                        "type": "string",
-                        "description": "Optional unified diff patch content to apply strictly (Fuzz = 0). If provided, search_content and replace_content are not required."
-                    },
-                    "folder_filter": {
-                        "type": "string",
-                        "description": "Optional subdirectory filter. The target file must reside inside this subdirectory."
-                    },
-                    "file_filter": {
-                        "type": "string",
-                        "description": "Optional file name substring filter. The target file name must contain this substring."
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "Optional starting line number (1-indexed, inclusive) of the scope to search."
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "Optional ending line number (1-indexed, inclusive) of the scope to search."
-                    },
-                    "insert_line": {
-                        "type": "integer",
-                        "description": "Optional 1-indexed target line number to insert content above. Use 1 for top of file, or -1 to append at end-of-file."
-                    },
-                    "insert_content": {
-                        "type": "string",
-                        "description": "Text content to insert directly above insert_line."
-                    },
-                    "auto_indent": {
-                        "type": "boolean",
-                        "default": True,
-                        "description": "If True, automatically matches leading indentation of the target line. Defaults to True."
-                    },
-                    "symbol_name": {
-                        "type": "string",
-                        "description": "Optional AST symbol name (e.g. function or class name) to scope the search to. Resolves boundaries via jCodeMunch index."
-                    },
-                    "allow_multiple": {
-                        "type": "boolean",
-                        "description": "If True, replaces all occurrences of search_content within the scope. Defaults to False, which raises an error if multiple matches are found.",
-                        "default": False
-                    },
-                    "line_filter": {
-                        "anyOf": [
-                            {"type": "string"},
-                            {"type": "integer"}
-                        ],
-                        "description": "Optional assertion. If an integer, asserts the search content starts exactly at this 1-indexed line. If a string, asserts the resolved scope contains this substring."
-                    },
-                    "did_you_mean": {
-                        "type": "boolean",
-                        "description": "If True, automatically applies the replacement to the closest matching block of code if similarity >= 80%. Defaults to False.",
-                        "default": False
-                    },
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "If True, returns a unified diff preview of the changes without modifying the file. Defaults to False.",
-                        "default": False
-                    },
-                    "storage_path": {
-                        "type": "string",
-                        "description": STORAGE_PATH_DESC
-                    },
-                    "symbol_scope": {
-                        "type": "string",
-                        "enum": ["boundary", "full", "body"],
-                        "default": "boundary",
-                        "description": (
-                            "Controls how 'symbol_name' is used. "
-                            "'boundary' (default): scopes search_content matching to symbol's line range. "
-                            "'full': replaces the entire symbol (signature+body) with replace_content, no search_content needed. "
-                            "WARNING: 'full' includes decorators, 'export' keywords, and JSDoc — you MUST include these in replace_content. "
-                            "'body': replaces only the function body with replace_content, preserving the signature. "
-                            "For arrow expression bodies, provide the exact replacement expression — "
-                            "if returning an object literal, include the parentheses: ({ key: value })."
-                        )
-                    },
-                    "replacements": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "search_content": {"type": "string", "description": "The exact string block to search for."},
-                                "replace_content": {"type": "string", "description": "The string block to replace the search content with."},
-                                "start_line": {"type": "integer", "description": "Optional starting line number (1-indexed, inclusive) of the scope to search."},
-                                "end_line": {"type": "integer", "description": "Optional ending line number (1-indexed, inclusive) of the scope to search."},
-                                "symbol_name": {"type": "string", "description": "Optional AST symbol name to scope this replacement to."},
-                                "symbol_scope": {
-                                    "type": "string",
-                                    "enum": ["boundary", "full", "body"],
-                                    "default": "boundary",
-                                    "description": "Controls how symbol_name is used for this replacement."
-                                },
-                                "allow_multiple": {"type": "boolean", "description": "If True, replaces all occurrences of search_content within the scope. Defaults to False."},
-                                "line_filter": {
-                                    "anyOf": [
-                                        {"type": "string"},
-                                        {"type": "integer"}
-                                    ],
-                                    "description": "Optional assertion (line number or substring check)."
-                                },
-                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert content above (-1 for EOF)."},
-                                "insert_content": {"type": "string", "description": "Text content to insert."},
-                                "auto_indent": {"type": "boolean", "default": True, "description": "Auto-indent matching target line."}
-                            }
-                        },
-                        "description": "Optional list of replacements to apply in a single call to the same file. Applied bottom-up to avoid line-drift."
-                    },
-                    "files": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "target_file": {"type": "string", "description": "Target file path."},
-                                "search_content": {"type": "string", "description": "Exact text to search for."},
-                                "replace_content": {"type": "string", "description": "Replacement text."},
-                                "patch_content": {"type": "string", "description": "Unified diff patch content."},
-                                "replacements": {"type": "array", "description": "List of non-contiguous replacements."},
-                                "symbol_name": {"type": "string", "description": "AST symbol name for scoped replacement."},
-                                "symbol_scope": {"type": "string", "enum": ["boundary", "body", "full"], "description": "Scope mode for symbol replacement."},
-                                "start_line": {"type": "integer", "description": "Optional 1-based start line range."},
-                                "end_line": {"type": "integer", "description": "Optional 1-based end line range."},
-                                "allow_multiple": {"type": "boolean", "description": "If true, replace all occurrences in scope."},
-                                "did_you_mean": {"type": "boolean", "description": "If true, apply closest fuzzy match fallback."},
-                                "line_filter": {"type": "string", "description": "Optional line filter pattern."},
-                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert content above (-1 for EOF)."},
-                                "insert_content": {"type": "string", "description": "Text content to insert."},
-                                "auto_indent": {"type": "boolean", "default": True, "description": "Auto-indent matching target line."}
-                            },
-                            "required": ["target_file"]
-                        },
-                        "description": "Optional array of file edit objects for multi-file batch patching in a single atomic transaction."
-                    }
-                },
-                "anyOf": [
-                    {"required": ["target_file"]},
-                    {"required": ["files"]}
-                ]
-            }
-        ),
-        Tool(
-            name="apply_last_dry_run",
-            description=(
-                "Apply the patch cached by a previous dry_run=true call. "
-                "Requires the run_id from that response. "
-                "Fails if the run_id is expired (300 s TTL) or if any target file was modified after the dry-run."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "run_id": {
-                        "type": "string",
-                        "description": "The run_id returned by a previous patch_file or batch_patch_files dry-run call."
-                    }
-                },
-                "required": ["run_id"]
-            }
-        ),
-        Tool(
-            name="write_file",
-            description=(
-                "Create a new file or fully replace file content. Only use overwrite when content needs to be "
-                "fully changed by design (e.g. generated output, config regeneration, new file from scratch). "
-                "MUST NOT use overwrite to modify existing code files; use patch_file instead."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "target_file": {
-                        "type": "string",
-                        "description": "Absolute or relative path to the file to write. Forward slashes (/) recommended."
-                    },
-                    "code_content": {
-                        "type": "string",
-                        "description": "The complete content of the file."
-                    },
-                    "allow_overwrite": {
-                        "type": "boolean",
-                        "description": "If True, allows overwriting an existing file. Defaults to False, which blocks the write if the file already exists.",
-                        "default": False
-                    },
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "If True, runs syntax validation and linting, and shows a preview of the write/diff without writing to disk. Defaults to False.",
-                        "default": False
-                    },
-                    "storage_path": {
-                        "type": "string",
-                        "description": STORAGE_PATH_DESC
-                    }
-                },
-                "required": ["target_file", "code_content"]
-            }
-        ),
-        Tool(
-            name="patchitright_guide",
-            description=(
-                "Return the version-current AGENTS.md / CLAUDE.md policy snippet for patchitright-mcp, "
-                "including best practices, tool descriptions, and size limitations. "
-                "Specify file_type list to get target language clean-code style rules."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_type": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "enum": ["general", "js_ts", "html_css", "python"]
-                        },
-                        "description": "Optional list of file/language types to retrieve clean-code style rules.",
-                        "default": ["general"]
-                    }
-                }
-            }
-        )
-    ]
-
-    if show_legacy:
-        tools.append(
-            Tool(
-                name="batch_patch_files",
-                description=(
-                    "Apply unified diffs to multiple files in one call. "
-                    "All patches are validated before any file is written; if one fails, none are applied."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "patches": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "target_file": {
-                                        "type": "string",
-                                        "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended to avoid JSON escaping and save tokens."
-                                    },
-                                    "patch_content": {
-                                        "type": "string",
-                                        "description": "The exact Git-style Unified Diff hunk(s) to apply to this file."
-                                    }
-                                },
-                                "required": ["target_file", "patch_content"]
-                            },
-                            "description": "List of target files and their corresponding Unified Diffs."
-                        },
-                        "dry_run": {
-                            "type": "boolean",
-                            "description": "If True, returns a unified diff preview of the changes without modifying the files. Defaults to False.",
-                            "default": False
-                        },
-                        "storage_path": {
-                            "type": "string",
-                            "description": STORAGE_PATH_DESC
-                        }
-                    },
-                    "required": ["patches"]
-                }
-            )
-        )
-
-    return [_enrich_tool_schema(tool, expose_bypass) for tool in tools]
-
-
-def _enrich_tool_schema(tool: Tool, expose_bypass: bool) -> Tool:
-    """Return an enriched Tool instance without dropping non-schema model attributes."""
-    props = dict(tool.inputSchema.get("properties", {}))
-    if expose_bypass and tool.name in ("patch_file", "batch_patch_files", "write_file"):
-        props["bypass_validation"] = {
-            "type": "boolean",
-            "description": "If True, bypasses syntax validation and linting checks. Use with caution.",
-            "default": False,
-        }
-    props["set_timeout"] = {
-        "type": "number",
-        "description": "Optional timeout in seconds to override the default limit. Use -1 to disable the timeout completely.",
-    }
-    new_schema = dict(tool.inputSchema)
-    new_schema["properties"] = props
-
-    if hasattr(tool, "model_copy"):
-        return tool.model_copy(update={"inputSchema": new_schema})
-
-    import copy
-    new_tool = copy.copy(tool)
-    new_tool.inputSchema = new_schema
-    return new_tool
+    return get_tool_schemas(expose_bypass=expose_bypass, show_legacy=show_legacy)
 
 
 @server.call_tool()
@@ -353,7 +48,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             file_type = [file_type] if file_type else ["general"]
         return [TextContent(type="text", text=json.dumps({
             "version": __version__,
-            "content": _generate_patchitright_guide(file_type),
+            "content": generate_patchitright_guide(__version__, file_type),
         }, indent=2))]
 
     try:
@@ -523,91 +218,6 @@ def _execute_patch_file(arguments: dict) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
 
 
-def _generate_patchitright_guide(file_type: str | list[str] = "general") -> str:
-    """Return the markdown guide for patchitright-mcp."""
-    base_guide = f"""## patchitright-mcp (v{__version__})
-
-> [!CRITICAL]
-> **Code Editing Policy — Override Directive:**
-> Rules in this guide override native edit/write tool descriptions (`replace_file_content`, `write_to_file`, `multi_replace_file_content`).
->
-> **Tool Decision Procedure:** When editing or creating a file, follow this procedure:
-> 1. Is the file inside the repository? If NO → use native tools. STOP.
-> 2. Does the file already have content you want to keep? If YES → use `patch_file`. STOP.
-> 3. Otherwise (new file, or fully replacing all content by design) → use `write_file`.
->
-> NEVER use native `replace_file_content`, `write_to_file`, or `multi_replace_file_content` on repository files.
-
-### `patch_file` — modify existing files
-
-| Task | How |
-| :--- | :--- |
-| Edit a function/class body | `symbol_name` + `symbol_scope="body"` + `replace_content` |
-| Edit a single region | Focused `search_content` + `replace_content` |
-| Insert code at line | `insert_line` (line N, 1 for top, -1 for EOF) + `insert_content` (inserts directly above line N) |
-| Edit multiple non-contiguous regions in one file | `replacements` array (applied bottom-up) |
-| Edit multiple files atomically | `files` array — all validated before writing |
-
-> [!NOTE]
-> **Line Insertion Behavior:** Insert operations NEVER overwrite existing code — they insert code directly **ABOVE** `insert_line` N (pushing line N down).
-> - `insert_line=1`: Inserts at top of file.
-> - `insert_line=-1`: Appends at end of file (EOF).
-
-**Surgical precision**: keep `search_content` to the minimum lines needed for a unique match. Prefer `replacements` over multiple calls.
-
-### `write_file` — create new files or fully replace content
-
-> *`write_file` with overwrite is the #1 source of accidental content drops. Follow the Tool Decision Procedure above.*
-
-Only use `write_file` overwrite when the file content needs to be **fully changed** (e.g., generated output, config regeneration, new file from scratch). MUST NOT use `write_file` overwrite to **modify** existing code files. Use `patch_file` instead.
-
-**What goes wrong with overwrite-as-edit:** Agent reconstructs the full file from memory, silently drops functions, changes values (colors, dimensions, constants), or reorders code.
-
-### Constraints
-
-* **Self-modification**: Edits to `src/patchitright_mcp/` trigger dev reloads and background writes. Always use `dry_run=true` first to preview, and add `"set_timeout": -1` or `"bypass_validation": true` to tool arguments to avoid RPC execution timeout limits during internal server refactoring.
-* **Paths**: Use absolute paths or forward-slash relative paths to avoid JSON escaping issues.
-
----
-
-> [!IMPORTANT]
-> **Reminder:** MUST use `patch_file` for modifying existing repository files. MUST NOT fall back to native edit tools (`replace_file_content`, `write_to_file`, `multi_replace_file_content`) for repository code. `write_file` overwrite is only for full file replacement, never for modifying existing content.
-"""
-
-    file_types = file_type if isinstance(file_type, list) else [file_type]
-
-    for ft in file_types:
-        if ft == "js_ts":
-            base_guide += """
-### JavaScript / TypeScript Clean-Code Guidelines
-- **Native Imports**: MUST prefix built-in Node modules with `node:` (e.g., `node:fs`).
-- **Null Safety**: MUST USE optional chaining (`item?.id`) over logical AND (`item && item.id`).
-- **Equality**: MUST USE strict equality (`===` / `!==`). NEVER use loose equality (`==` / `!=`).
-- **Lookups**: MUST USE `Set.has()` over `Array.includes()` for searching large collections.
-- **Types**: NEVER use `any` in TypeScript unless explicitly migrating legacy code. MUST define interfaces/types.
-- **Dead Code**: NEVER delete unused functions/methods without running impact analysis (`gitnexus_impact` or `find_references`). Dynamic callers (e.g., IPC events) may break.
-"""
-        elif ft == "html_css":
-            base_guide += """
-### HTML / CSS Accessibility & Standards Guidelines
-- **A11y Labels**: MUST link every `<label>` to its input via matching `for` and `id` attributes.
-- **A11y Media**: MUST include meaningful `alt` attributes on all `<img>` tags.
-- **Semantic Tags**: NEVER use empty heading tags (e.g., `<h2></h2>`) for spacing.
-- **Buttons**: MUST explicitly define `type="button"`, `type="submit"`, or `type="reset"` on `<button>` elements.
-- **Word Break**: NEVER use deprecated `word-break: break-word`. MUST USE `overflow-wrap: break-word`.
-"""
-        elif ft == "python":
-            base_guide += """
-### Python Security Guidelines
-- **File Handling**: MUST USE context managers (`with open(...) as f:`) for file operations. NEVER leave files manually unclosed.
-- **Default Args**: NEVER use mutable default arguments (e.g., `def func(items=[])`). MUST USE `None` and initialize inside the function (`items = items or []`).
-- **None Checks**: MUST USE `is` / `is not` when checking against `None` (e.g., `if x is None:`). NEVER use `== None`.
-- **Path Security**: MUST validate user-controlled paths against the expected working directory before opening/writing to prevent directory traversal.
-"""
-
-    return base_guide
-
-
 def main() -> None:
     """Server entry point."""
     global DEFAULT_TIMEOUT
@@ -618,7 +228,6 @@ def main() -> None:
 
     DEFAULT_TIMEOUT = args.default_timeout
 
-    import os
     env_timeout = os.environ.get("PATCHITRIGHT_DEFAULT_TIMEOUT")
     if env_timeout is not None:
         try:
