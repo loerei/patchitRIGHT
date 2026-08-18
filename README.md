@@ -40,7 +40,7 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
 
 ---
 
-## AST-Scoped Replacements (Zero Token Waste)
+## AST-Scoped Replacements
 
 Unlike traditional search-and-replace tools that force AI agents to re-send entire 100+ line functions inside `search_content`, `patchitRIGHT` leverages AST bounds (`symbol_scope: "body"` or `"full"`) via `symbol_name`:
 
