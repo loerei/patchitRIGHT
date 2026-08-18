@@ -10,7 +10,7 @@ It acts as a safe, surgical companion for AI coding agents and developers. By pa
 
 Add the following configuration to your MCP client configuration file (e.g., `claude_desktop_config.json`):
 
-```json
+```jsonc
 {
   "mcpServers": {
     "patchitright": {
@@ -21,7 +21,8 @@ Add the following configuration to your MCP client configuration file (e.g., `cl
       ],
       "env": {
         "PYTHONPATH": "d:/Projects/patchitRIGHT/src",
-        "PATCHITRIGHT_SYNC_JCODEMUNCH": "true"
+        "PATCHITRIGHT_SYNC_JCODEMUNCH": "true",
+        "PATCHITRIGHT_IGNORE_WARNINGS": "format" // Recommended: ignore verbose formatter diffs (tabs vs spaces) by default
       }
     }
   }
@@ -86,6 +87,12 @@ Insert code cleanly directly above a target line without requiring exact text ma
 
 * **`set_timeout`** (`number`, default: `10.0`): Overrides tool execution timeout in seconds. Set to `-1` to disable timeout completely (recommended during internal server self-modifications).
 * **`PATCHITRIGHT_DEFAULT_TIMEOUT`** (`float`, default: `10.0`): Configures server-wide default execution timeout limit.
+* **`PATCHITRIGHT_IGNORE_WARNINGS`** (`string`, e.g. `"format"`, `"format,lint"`, `"all"`): Filters diagnostics by category to prevent prompt token pollution:
+  * `format` *(Recommended default)*: Suppresses formatting/whitespace diffs and tab vs space warnings.
+  * `lint`: Suppresses code smell and linter diagnostics from Ruff / Biome.
+  * `insertion`: Suppresses auto-indentation and clamping notices during `insert_line`.
+  * `symbol`: Suppresses symbol omission alerts.
+  * `all` (or `*`, `1`, `true`): Suppresses all warning diagnostics.
 * **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true` / `false`, default: `false`): Triggers immediate background indexing in `jCodeMunch` after file modifications.
 * **`PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION`** (`true` / `false`, default: `false`): Exposes `bypass_validation` parameter in schemas for emergency override.
 * **`PATCHITRIGHT_SHOW_LEGACY`** (`true` / `false`, default: `false`): Exposes legacy `batch_patch_files` tool.
