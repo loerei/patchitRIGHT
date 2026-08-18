@@ -1,8 +1,20 @@
-import re
-from typing import Optional, Union
+"""Core patch engine for search-and-replace and unified diff applications."""
+
+from __future__ import annotations
+
 from rapidfuzz import fuzz
-from .validators import ValidationService
+
+from .diff_parser import parse_unified_diff, verify_hunk_match
+from .fuzzy_matcher import (
+    detect_mismatch_reason,
+    expand_alignment_end,
+    expand_alignment_start,
+    find_closest_hunk_match,
+    find_closest_match,
+)
 from .symbol_checker import detect_omitted_symbols
+from .validators import ValidationService
+
 
 class PatchEngine:
     """Core in-memory engine to apply search-and-replace and unified diff patches."""
@@ -32,7 +44,7 @@ class PatchEngine:
     def _find_occurrence_line_ranges(
         self, content: str, search: str, base_line_offset: int = 0
     ) -> list[tuple[int, int]]:
-        """Finds the 1-based start and end line numbers of all occurrences of search in content."""
+        """Find the 1-based start and end line numbers of all occurrences of search in content."""
         ranges = []
         start_pos = 0
         while True:
@@ -51,7 +63,7 @@ class PatchEngine:
         norm_replace: str,
         start_idx: int,
         end_idx: int,
-        symbol_name: Optional[str],
+        symbol_name: str | None,
         allow_multiple: bool,
         did_you_mean: bool,
     ) -> tuple[int, int, str, int]:
@@ -60,7 +72,7 @@ class PatchEngine:
             char_idx = self.norm_content.find(norm_search)
             new_start = self.norm_content[:char_idx].count("\n")
             new_end = new_start + norm_search.count("\n")
-            new_slice = "\n".join(self.file_lines[new_start:new_end + 1])
+            new_slice = "\n".join(self.file_lines[new_start : new_end + 1])
             self.is_relocated = True
             self.relocated_start_line = new_start + 1
             self.relocated_end_line = new_end + 1
@@ -85,24 +97,14 @@ class PatchEngine:
                     self.did_you_mean_end_line = s_end
                     return s_start - 1, s_end - 1, s_text, 1
 
-        target_slice = "\n".join(self.file_lines[start_idx:end_idx + 1])
+        target_slice = "\n".join(self.file_lines[start_idx : end_idx + 1])
         self._handle_missing_match(start_idx, end_idx, norm_search, norm_replace, target_slice, symbol_name)
 
     def _expand_alignment_start(self, target_slice: str, src_start: int, match_char: str) -> int:
-        while src_start > 0 and target_slice[src_start - 1] in "'\"([{":
-            if target_slice[src_start - 1] == match_char:
-                src_start -= 1
-                break
-            src_start -= 1
-        return src_start
+        return expand_alignment_start(target_slice, src_start, match_char)
 
     def _expand_alignment_end(self, target_slice: str, src_end: int, match_char: str) -> int:
-        while src_end < len(target_slice) and target_slice[src_end] in "'\")}]":
-            if target_slice[src_end] == match_char:
-                src_end += 1
-                break
-            src_end += 1
-        return src_end
+        return expand_alignment_end(target_slice, src_end, match_char)
 
     def _apply_replacement_logic(self, target_slice: str, norm_search: str, norm_replace: str) -> str:
         if self.is_did_you_mean_applied:
@@ -121,7 +123,7 @@ class PatchEngine:
     def _check_symbol_omissions(
         self, start_idx: int, target_slice: str, norm_search: str, replace_content: str
     ):
-        """Checks for omitted declared symbols that are referenced in outer scope."""
+        """Check for omitted declared symbols that are referenced in outer scope."""
         base_offset = sum(len(line) + 1 for line in self.file_lines[:start_idx])
         rel_offset = target_slice.find(norm_search)
         if rel_offset == -1:
@@ -143,16 +145,16 @@ class PatchEngine:
         search_content: str,
         replace_content: str,
         allow_multiple: bool = False,
-        start_line: Optional[int] = None,
-        end_line: Optional[int] = None,
-        symbol_boundaries: Optional[tuple[Optional[int], Optional[int]]] = None,
-        symbol_name: Optional[str] = None,
-        line_filter: Optional[Union[str, int]] = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        symbol_boundaries: tuple[int | None, int | None] | None = None,
+        symbol_name: str | None = None,
+        line_filter: str | int | None = None,
         did_you_mean: bool = False,
         validate: bool = True,
         check_symbols: bool = True,
     ) -> tuple[str, int]:
-        """Applies a classic search-and-replace patch inside line/symbol scope."""
+        """Apply a classic search-and-replace patch inside line/symbol scope."""
         norm_search = search_content.replace("\r\n", "\n").replace("\r", "")
         norm_replace = replace_content.replace("\r\n", "\n").replace("\r", "")
 
@@ -161,7 +163,7 @@ class PatchEngine:
         )
 
         # Check occurrences
-        target_slice = "\n".join(self.file_lines[start_idx:end_idx + 1])
+        target_slice = "\n".join(self.file_lines[start_idx : end_idx + 1])
         occurrences = target_slice.count(norm_search)
 
         if occurrences == 0:
@@ -188,7 +190,7 @@ class PatchEngine:
         patched_slice = self._apply_replacement_logic(target_slice, norm_search, norm_replace)
 
         before_part = "\n".join(self.file_lines[:start_idx]) + "\n" if start_idx > 0 else ""
-        after_part = "\n" + "\n".join(self.file_lines[end_idx + 1:]) if end_idx < len(self.file_lines) - 1 else ""
+        after_part = "\n" + "\n".join(self.file_lines[end_idx + 1 :]) if end_idx < len(self.file_lines) - 1 else ""
         patched_file = before_part + patched_slice + after_part
 
         if validate and not self.bypass_validation:
@@ -202,19 +204,12 @@ class PatchEngine:
 
     def apply_line_insertion(
         self,
-        insert_line: Optional[int],
+        insert_line: int | None,
         insert_content: str,
         auto_indent: bool = True,
         validate: bool = True,
     ) -> tuple[str, int]:
-        """Applies a line-based insertion to file_lines.
-
-        insert_line: 1-indexed line number (1 for top of file, -1 for EOF).
-        insert_content: string content to insert.
-        auto_indent: if True, matches target reference line leading whitespace.
-
-        Returns: (patched_file, 1)
-        """
+        """Apply a line-based insertion to file_lines."""
         if not insert_content:
             raise ValueError("Error: 'insert_content' cannot be empty.")
 
@@ -226,9 +221,8 @@ class PatchEngine:
 
         # Empty file handling
         if not self.file_lines:
-            content = insert_content[:-1] if insert_content.endswith("\n") else insert_content
-            if content.endswith("\r"):
-                content = content[:-1]
+            content = insert_content.removesuffix("\n")
+            content = content.removesuffix("\r")
             patched_file = content
             if validate and not self.bypass_validation:
                 self.validator.validate_file(self.filename, patched_file, self.file_content)
@@ -273,12 +267,12 @@ class PatchEngine:
                             found = True
                             # If preceding header ends with ':', append 4 spaces / 1 tab
                             if p_line.rstrip().endswith(":"):
-                                p_indent = p_line[:len(p_line) - len(p_line.lstrip())]
+                                p_indent = p_line[: len(p_line) - len(p_line.lstrip())]
                                 unit = "\t" if "\t" in p_line else "    "
                                 indent = p_indent + unit
                             break
             if not indent and ref_line.strip():
-                indent = ref_line[:len(ref_line) - len(ref_line.lstrip())]
+                indent = ref_line[: len(ref_line) - len(ref_line.lstrip())]
 
             if not indent and any(line_str.strip() for line_str in self.file_lines):
                 self.insertion_warnings.append("Warning: Could not infer reference indentation for auto_indent. Defaulted to top-level (0 spaces).")
@@ -294,9 +288,8 @@ class PatchEngine:
             elif file_has_tabs and content_has_spaces:
                 self.insertion_warnings.append("Warning: File uses tabs for indentation, but inserted content contains spaces while auto_indent=False.")
 
-        norm_insert = insert_content[:-1] if insert_content.endswith("\n") else insert_content
-        if norm_insert.endswith("\r"):
-            norm_insert = norm_insert[:-1]
+        norm_insert = insert_content.removesuffix("\n")
+        norm_insert = norm_insert.removesuffix("\r")
         norm_insert = norm_insert.replace("\r\n", "\n").replace("\r", "")
 
         if auto_indent and norm_insert.strip():
@@ -325,12 +318,11 @@ class PatchEngine:
 
         return patched_file, 1
 
-
     def _resolve_classic_boundaries(
         self,
-        start_line: Optional[int],
-        end_line: Optional[int],
-        symbol_boundaries: Optional[tuple[Optional[int], Optional[int]]],
+        start_line: int | None,
+        end_line: int | None,
+        symbol_boundaries: tuple[int | None, int | None] | None,
     ) -> tuple[int, int]:
         resolved_start, resolved_end = start_line, end_line
         if symbol_boundaries:
@@ -348,19 +340,10 @@ class PatchEngine:
         return start_idx, end_idx
 
     def _detect_mismatch_reason(self, text_a: str, text_b: str) -> list[str]:
-        reasons = []
-        norm_a = text_a.replace("\\n", "\n").replace("\\r\\n", "\n")
-        norm_b = text_b.replace("\\n", "\n").replace("\\r\\n", "\n")
-        if norm_a == norm_b:
-            reasons.append("Mismatch due to raw escape characters (\\n) vs literal newlines")
-        strip_a = "".join(text_a.split())
-        strip_b = "".join(text_b.split())
-        if strip_a == strip_b and norm_a != norm_b:
-            reasons.append("Mismatch due to indentation or whitespace differences")
-        return reasons
+        return detect_mismatch_reason(text_a, text_b)
 
     def _handle_missing_match(
-        self, start_idx: int, end_idx: int, norm_search: str, norm_replace: str, target_slice: str, symbol_name: Optional[str]
+        self, start_idx: int, end_idx: int, norm_search: str, norm_replace: str, target_slice: str, symbol_name: str | None
     ) -> None:
         first_lines = "\n".join(norm_search.split("\n")[:3])
         err_msg = f"Error: Search content not found inside the specified scope (lines {start_idx + 1} to {end_idx + 1})!\nFirst 3 lines of search block:\n{first_lines}"
@@ -377,17 +360,18 @@ class PatchEngine:
                 err_msg += f"\n*Note:* {r}."
 
             try:
-                s_indent = s_text[:len(s_text) - len(s_text.lstrip())]
+                s_indent = s_text[: len(s_text) - len(s_text.lstrip())]
                 s_replace = s_indent + norm_replace if s_indent and not norm_replace.startswith(s_indent) else norm_replace
                 suggested_patched_slice = self._apply_replacement_logic(target_slice, s_text, s_replace)
                 before_part = "\n".join(self.file_lines[:start_idx]) + "\n" if start_idx > 0 else ""
-                after_part = "\n" + "\n".join(self.file_lines[end_idx + 1:]) if end_idx < len(self.file_lines) - 1 else ""
+                after_part = "\n" + "\n".join(self.file_lines[end_idx + 1 :]) if end_idx < len(self.file_lines) - 1 else ""
                 suggested_patched = before_part + suggested_patched_slice + after_part
                 if self.is_crlf:
                     suggested_patched = suggested_patched.replace("\n", "\r\n")
 
-                from .run_cache import get_cache
                 from pathlib import Path
+
+                from .run_cache import get_cache
                 cache = get_cache()
                 run_id = cache.store(
                     entries=[{"target_path": Path(self.filename), "patched_content": suggested_patched}],
@@ -395,7 +379,7 @@ class PatchEngine:
                 )
                 err_msg += f"\n\nTo apply this suggestion, run apply_last_dry_run with run_id '{run_id}'."
                 ve = ValueError(err_msg)
-                setattr(ve, "run_id", run_id)
+                ve.run_id = run_id
                 raise ve
             except ValueError:
                 raise
@@ -404,7 +388,7 @@ class PatchEngine:
         raise ValueError(err_msg)
 
     def _assert_line_filter(
-        self, line_filter: Union[str, int], target_slice: str, norm_search: str, start_idx: int
+        self, line_filter: str | int, target_slice: str, norm_search: str, start_idx: int
     ) -> None:
         is_numeric = False
         try:
@@ -429,7 +413,7 @@ class PatchEngine:
                 )
 
     def apply_unified_patch(self, patch_content: str) -> str:
-        """Applies a Git-style Unified Diff patch (Fuzz = 0)."""
+        """Apply a Git-style Unified Diff patch (Fuzz = 0)."""
         norm_patch = patch_content.replace("\r\n", "\n")
         hunks = self._parse_unified_diff(norm_patch)
         if not hunks:
@@ -438,19 +422,17 @@ class PatchEngine:
         file_lines = list(self.file_lines)
         offset = 0
 
-        hunk_index = 0
-        for hunk in hunks:
-            hunk_index += 1
-            expected_old_lines = [l_content for l_type, l_content in hunk['lines'] if l_type in (' ', '-')]
-            if hunk['old_start'] == 0:
+        for hunk_index, hunk in enumerate(hunks, 1):
+            expected_old_lines = [l_content for l_type, l_content in hunk["lines"] if l_type in (" ", "-")]
+            if hunk["old_start"] == 0:
                 expected_pos = 0
             else:
-                expected_pos = hunk['old_start'] - 1 + offset
+                expected_pos = hunk["old_start"] - 1 + offset
 
             if not self._verify_hunk_match(expected_pos, expected_old_lines, file_lines):
                 self._handle_mismatched_hunk(hunk, hunk_index, expected_pos, offset, expected_old_lines, file_lines)
 
-            new_hunk_lines = [l_content for l_type, l_content in hunk['lines'] if l_type in (' ', '+')]
+            new_hunk_lines = [l_content for l_type, l_content in hunk["lines"] if l_type in (" ", "+")]
 
             file_lines[expected_pos : expected_pos + len(expected_old_lines)] = new_hunk_lines
             hunk_offset = len(new_hunk_lines) - len(expected_old_lines)
@@ -468,14 +450,7 @@ class PatchEngine:
         return patched_file
 
     def _verify_hunk_match(self, expected_pos: int, expected_old_lines: list[str], file_lines: list[str]) -> bool:
-        if expected_pos == 0 and not expected_old_lines:
-            return True
-        if expected_pos < 0 or expected_pos + len(expected_old_lines) > len(file_lines):
-            return False
-        for idx, expected_line in enumerate(expected_old_lines):
-            if file_lines[expected_pos + idx] != expected_line:
-                return False
-        return True
+        return verify_hunk_match(expected_pos, expected_old_lines, file_lines)
 
     def _handle_mismatched_hunk(
         self, hunk: dict, hunk_index: int, expected_pos: int, offset: int, expected_old_lines: list[str], file_lines: list[str]
@@ -497,176 +472,14 @@ class PatchEngine:
                 err_msg += f"\n*Note:* {r}."
         raise ValueError(err_msg)
 
-    def _find_closest_match(self, start_idx: int, end_idx: int, norm_search: str) -> Optional[tuple[int, int, str, float]]:
-        search_lines = norm_search.split("\n")
-        n = len(search_lines)
-        best_ratio = 0.0
-        best_slice = None
-        best_range = None
+    def _find_closest_match(self, start_idx: int, end_idx: int, norm_search: str) -> tuple[int, int, str, float] | None:
+        return find_closest_match(self.file_lines, start_idx, end_idx, norm_search)
 
-        if n >= 6:
-            sample_offsets = [0, n // 2, n - 1]
-            samples = []
-            for off in sample_offsets:
-                if off < n:
-                    line = search_lines[off].strip()
-                    if line:
-                        samples.append((off, line))
-
-            file_stripped = [line.strip() for line in self.file_lines]
-            max_range = min(end_idx - n + 2, len(self.file_lines) - n + 1)
-
-            def eval_sample_score(i: int) -> float:
-                score_sum = 0.0
-                cnt = 0
-                for off, s_line in samples:
-                    c_idx = i + off
-                    if c_idx < len(file_stripped) and file_stripped[c_idx]:
-                        score_sum += fuzz.ratio(file_stripped[c_idx], s_line, score_cutoff=30.0)
-                        cnt += 1
-                return (score_sum / cnt) if cnt > 0 else 0.0
-
-            # 1. Coarse strided scan across the file
-            stride = max(1, n // 10)
-            coarse_scores = []
-            for i in range(start_idx, max_range, stride):
-                score = eval_sample_score(i)
-                coarse_scores.append((score, i))
-
-            coarse_scores.sort(key=lambda x: x[0], reverse=True)
-
-            # 2. Fine local scan around top coarse candidate regions
-            top_coarse = coarse_scores[:5]
-            fine_indices = set()
-            for _, region_i in top_coarse:
-                local_start = max(start_idx, region_i - stride)
-                local_end = min(max_range, region_i + stride + 1)
-                fine_indices.update(range(local_start, local_end))
-
-            fine_scores = []
-            for i in fine_indices:
-                score = eval_sample_score(i)
-                fine_scores.append((score, i))
-
-            fine_scores.sort(key=lambda x: x[0], reverse=True)
-
-            # 3. Evaluate full fuzz.ratio on top candidate windows
-            for sample_score, i in fine_scores:
-                if best_ratio >= 0.5 and (sample_score / 100.0) < (best_ratio - 0.08):
-                    break
-
-                for window_size in (n, max(1, n - 1), n + 1):
-                    if (i + window_size - 1) >= len(self.file_lines):
-                        continue
-                    candidate_slice = "\n".join(self.file_lines[i : i + window_size])
-                    score_cutoff = max(50.0, best_ratio * 100.0)
-                    ratio = fuzz.ratio(candidate_slice, norm_search, score_cutoff=score_cutoff) / 100.0
-                    if ratio > best_ratio:
-                        best_ratio = ratio
-                        best_slice = candidate_slice
-                        best_range = (i + 1, i + window_size)
-                        if best_ratio >= 0.99:
-                            return best_range[0], best_range[1], best_slice, best_ratio
-        else:
-            for window_size in (n, max(1, n - 1), n + 1):
-                for i in range(start_idx, min(end_idx - window_size + 2, len(self.file_lines))):
-                    candidate_slice = "\n".join(self.file_lines[i : i + window_size])
-                    score_cutoff = max(50.0, best_ratio * 100.0)
-                    ratio = fuzz.ratio(candidate_slice, norm_search, score_cutoff=score_cutoff) / 100.0
-                    if ratio > best_ratio:
-                        best_ratio = ratio
-                        best_slice = candidate_slice
-                        best_range = (i + 1, i + window_size)
-                        if best_ratio >= 0.99:
-                            return best_range[0], best_range[1], best_slice, best_ratio
-
-        if best_ratio >= 0.5 and best_range and best_slice:
-            return best_range[0], best_range[1], best_slice, best_ratio
-        return None
-
-    def _find_closest_hunk_match(self, hunk_old_lines: list[str], start_search: int, file_lines: list[str]) -> Optional[tuple[int, float]]:
-        search_str = "\n".join(hunk_old_lines)
-        n = len(hunk_old_lines)
-        if n == 0:
-            return None
-        best_ratio = 0.0
-        best_line = None
-
-        search_range = range(max(0, start_search - 20), min(len(file_lines) - n + 1, start_search + 20))
-        if not list(search_range):
-            search_range = range(len(file_lines) - n + 1)
-
-        for i in search_range:
-            candidate = "\n".join(file_lines[i : i + n])
-            score_cutoff = max(30.0, best_ratio * 100.0)
-            ratio = fuzz.ratio(candidate, search_str, score_cutoff=score_cutoff) / 100.0
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_line = i + 1
-                if best_ratio >= 0.99:
-                    return best_line, best_ratio
-
-        if best_ratio < 0.5:
-            for i in range(len(file_lines) - n + 1):
-                candidate = "\n".join(file_lines[i : i + n])
-                score_cutoff = max(30.0, best_ratio * 100.0)
-                ratio = fuzz.ratio(candidate, search_str, score_cutoff=score_cutoff) / 100.0
-                if ratio > best_ratio:
-                    best_ratio = ratio
-                    best_line = i + 1
-                    if best_ratio >= 0.99:
-                        return best_line, best_ratio
-
-        if best_ratio >= 0.3 and best_line is not None:
-            return best_line, best_ratio
-        return None
+    def _find_closest_hunk_match(self, hunk_old_lines: list[str], start_search: int, file_lines: list[str]) -> tuple[int, float] | None:
+        return find_closest_hunk_match(hunk_old_lines, start_search, file_lines)
 
     def _parse_unified_diff(self, patch_str: str) -> list[dict]:
-        hunks = []
-        lines = patch_str.splitlines()
-        hunk_header_re = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
-        current_hunk = None
-
-        for line in lines:
-            match = hunk_header_re.match(line)
-            if match:
-                current_hunk = self._parse_hunk_header(match)
-                hunks.append(current_hunk)
-                continue
-
-            if current_hunk is not None:
-                current_hunk = self._parse_hunk_line(line, current_hunk)
-        return hunks
-
-    def _parse_hunk_header(self, match: re.Match) -> dict:
-        old_start = int(match.group(1))
-        old_lines = int(match.group(2)) if match.group(2) else 1
-        new_start = int(match.group(3))
-        new_lines = int(match.group(4)) if match.group(4) else 1
-
-        return {
-            'old_start': old_start,
-            'old_lines': old_lines,
-            'new_start': new_start,
-            'new_lines': new_lines,
-            'lines': []
-        }
-
-    def _parse_hunk_line(self, line: str, current_hunk: dict) -> Optional[dict]:
-        if line.startswith('-'):
-            current_hunk['lines'].append(('-', line[1:]))
-        elif line.startswith('+'):
-            current_hunk['lines'].append(('+', line[1:]))
-        elif line.startswith(' '):
-            current_hunk['lines'].append((' ', line[1:]))
-        elif line == '':
-            current_hunk['lines'].append((' ', ''))
-        else:
-            if line.startswith(('--- ', '+++ ', 'diff ')):
-                return None
-            else:
-                current_hunk['lines'].append((' ', line))
-        return current_hunk
+        return parse_unified_diff(patch_str)
 
     def apply_symbol_replacement(
         self,
@@ -677,10 +490,9 @@ class PatchEngine:
         end_col: int,          # 0-indexed char offset
         symbol_scope: str,     # "full" or "body"
         is_expression: bool = False,
-        symbol_start_line: Optional[int] = None,
+        symbol_start_line: int | None = None,
         validate: bool = True,
     ) -> tuple[str, int]:
-        
         """Replace the resolved symbol or body in-place."""
         replace_content = replace_content.replace("\r\n", "\n").replace("\r", "")
         start_line_idx = start_line - 1
@@ -690,7 +502,12 @@ class PatchEngine:
         start_line_idx = max(0, min(start_line_idx, len(self.file_lines) - 1))
         end_line_idx = max(start_line_idx, min(end_line_idx, len(self.file_lines) - 1))
 
-        from .body_parser import detect_indent, normalize_indent, pad_block_newlines, _infer_indent_unit
+        from .body_parser import (
+            _infer_indent_unit,
+            detect_indent,
+            normalize_indent,
+            pad_block_newlines,
+        )
 
         if symbol_scope == "body":
             # Extract current body content for indent detection
@@ -699,24 +516,24 @@ class PatchEngine:
             else:
                 first = self.file_lines[start_line_idx][start_col:]
                 last = self.file_lines[end_line_idx][:end_col]
-                middle = self.file_lines[start_line_idx + 1:end_line_idx]
+                middle = self.file_lines[start_line_idx + 1 : end_line_idx]
                 body_text = "\n".join([first] + middle + [last])
-            
+
             body_lines = body_text.split("\n")
             sig_line = self.file_lines[start_line_idx]
-            
+
             # 1. Detect base indent
             if self.filename.endswith(".py"):
                 if symbol_start_line and start_line_idx == symbol_start_line - 1:
-                    sig_indent = sig_line[:len(sig_line) - len(sig_line.lstrip())]
+                    sig_indent = sig_line[: len(sig_line) - len(sig_line.lstrip())]
                     indent_unit = _infer_indent_unit(self.file_lines)
                     target_indent = sig_indent + indent_unit
                 else:
                     first_body_line = self.file_lines[start_line_idx]
-                    target_indent = first_body_line[:len(first_body_line) - len(first_body_line.lstrip())]
+                    target_indent = first_body_line[: len(first_body_line) - len(first_body_line.lstrip())]
             else:
                 target_indent = detect_indent(body_lines, sig_line, self.file_lines)
-            
+
             # 2. Re-indent replace_content in isolation
             replace_content, adjusted, delta = normalize_indent(replace_content, target_indent)
             self.indentation_adjusted = adjusted
@@ -728,7 +545,7 @@ class PatchEngine:
             is_single_line_body = start_line_idx == end_line_idx
             replacement_is_multiline = "\n" in replace_content
             if not is_expression and (not is_single_line_body or replacement_is_multiline):
-                sig_indent = sig_line[:len(sig_line) - len(sig_line.lstrip())]
+                sig_indent = sig_line[: len(sig_line) - len(sig_line.lstrip())]
                 replace_content, padded = pad_block_newlines(replace_content, sig_indent, False)
                 self.newline_padded = padded
 
@@ -742,20 +559,20 @@ class PatchEngine:
             # Prevent double indentation if replacement starts with target_indent
             # and prefix is exactly target_indent.
             if replace_content.startswith(target_indent) and prefix == target_indent:
-                replace_content = replace_content[len(target_indent):]
+                replace_content = replace_content[len(target_indent) :]
 
             spliced_str = prefix + replace_content + suffix
             spliced_lines = spliced_str.split("\n")
 
             patched_lines = list(self.file_lines)
-            patched_lines[start_line_idx:end_line_idx + 1] = spliced_lines
+            patched_lines[start_line_idx : end_line_idx + 1] = spliced_lines
             patched_file = "\n".join(patched_lines)
 
-        else: # "full"
+        else:  # "full"
             # Resolve signature indent
             sig_line = self.file_lines[start_line_idx]
-            sig_indent = sig_line[:len(sig_line) - len(sig_line.lstrip())]
-            
+            sig_indent = sig_line[: len(sig_line) - len(sig_line.lstrip())]
+
             # 1. Re-indent full replacement to match signature indent
             replace_content, adjusted, delta = normalize_indent(replace_content, sig_indent)
             self.indentation_adjusted = adjusted
@@ -764,7 +581,7 @@ class PatchEngine:
 
             # 2. Line replacement
             patched_lines = list(self.file_lines)
-            patched_lines[start_line_idx:end_line_idx + 1] = replace_content.split("\n")
+            patched_lines[start_line_idx : end_line_idx + 1] = replace_content.split("\n")
             patched_file = "\n".join(patched_lines)
 
         # Validate
@@ -776,4 +593,3 @@ class PatchEngine:
             patched_file = patched_file.replace("\n", "\r\n")
 
         return patched_file, 1
-        
