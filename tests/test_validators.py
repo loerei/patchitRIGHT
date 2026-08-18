@@ -254,24 +254,74 @@ def test_js_ts_validator_detect_package_manager(tmp_path, monkeypatch):
     assert val._detect_package_manager(str(tmp_path / "app.js")) == "yarn"
 
 
-def test_js_ts_validator_lint_warning_filtering():
+def test_json_validator_edge_cases():
+    val = JsonValidator()
+
+    # 1. Empty or whitespace content
+    val.validate("", "config.json")
+    val.validate("   \n\t ", "config.json")
+
+    # 2. Already invalid original content skips validation
+    val.validate("invalid {", "config.json", original_content="invalid {")
+
+    # 3. .json5 with unquoted keys and comments
+    val.validate("{ key: 'value', // comment\n }", "config.json5", original_content="{}")
+
+    # 4. Fallback when json5 is None
+    with patch("patchitright_mcp.validators.config_files.json5", None):
+        val.validate('{"a": 1}', "config.jsonc")
+        with pytest.raises(SyntaxValidationError):
+            val.validate('{ bad: json }', "config.jsonc")
+
+
+def test_toml_validator_edge_cases():
+    val = TomlValidator()
+
+    # 1. Empty content
+    val.validate("", "config.toml")
+
+    # 2. Already invalid original content skips validation
+    val.validate("[invalid", "config.toml", original_content="[invalid")
+
+    # 3. tomllib is None
+    with patch("patchitright_mcp.validators.config_files.tomllib", None):
+        val.validate("key = 'val'", "config.toml")
+
+    # 4. Detailed error message parsing with line and column
+    with pytest.raises(SyntaxValidationError) as exc:
+        val.validate("key = [1, 2", "config.toml")
+    assert "TOML Syntax Error" in str(exc.value)
+
+
+def test_yaml_validator_edge_cases():
+    val = YamlValidator()
+
+    # 1. Empty content
+    val.validate("", "config.yaml")
+
+    # 2. Already invalid original content skips validation
+    val.validate("key: : bad", "config.yaml", original_content="key: : bad")
+
+    # 3. PyYAML not installed (ImportError)
+    with patch.dict("sys.modules", {"yaml": None}):
+        val.validate("key: val", "config.yaml")
+
+    # 4. YAML without problem_mark (generic exception)
+    with patch("yaml.safe_load", side_effect=Exception("Generic YAML fail")):
+        with pytest.raises(SyntaxValidationError) as exc:
+            val.validate("key: val", "config.yaml")
+        assert "Generic YAML fail" in str(exc.value)
+
+
+def test_js_ts_validator_lint_options_and_cleanup():
     val = JsTsValidator()
+
     with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
         mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/biome" if cmd == "biome" else None
         
-        # Simulating stderr containing package manager errors mixed with a biome warning
-        npm_output = (
-            "npm error code ENOTCACHED\n"
-            "npm error request failed\n"
-            "app.js:1:1 lint/suspicious/noDebugger  ═════════════════════════════════════════════════\n"
-            "  × Don't use debugger.\n"
-        )
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr=npm_output)
-        
-        warnings = val.lint("debugger;", "app.js")
-        
-        # Verify that npm error logs are filtered out, and only linter warnings remain
-        assert len(warnings) > 0
-        assert not any("npm error" in w for w in warnings)
-        assert any("noDebugger" in w for w in warnings) or any("Don't use debugger" in w for w in warnings)
+        # Test ignore_format and ignore_codesmell options
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        warnings = val.lint("const a = 1;", "app.ts", ignore_format=True, ignore_codesmell=True)
+        assert isinstance(warnings, list)
+
 

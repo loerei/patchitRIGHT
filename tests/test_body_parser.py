@@ -558,3 +558,22 @@ class TestCssHtmlBodyParsing:
             body_text = "\n".join([lines[0][r.start_col:]] + lines[1:2] + [lines[2][:r.end_col]])
             assert "if (a < b" in body_text
 
+    def test_js_ts_fallback_comments_escapes_templates(self):
+        # JS code with comments containing braces, escaped strings, and nested template literals
+        src = (
+            "function process(x) {\n"
+            "  // Line comment with { not a brace }\n"
+            "  /* Block comment with { not a brace } */\n"
+            "  const s1 = \"Escaped \\\" { quote\";\n"
+            "  const s2 = 'Single \\' { quote';\n"
+            "  const s3 = `Template with ${`nested ${x}`}`;\n"
+            "  return x + 1;\n"
+            "}\n"
+        )
+        with patch("patchitright_mcp.body_parser._run_tree_sitter_safe", return_value=None):
+            r = get_body_range(src, "test.js", 1, 8)
+            assert r.start_line == 1
+            assert r.end_line == 8
+            assert r.is_expression is False
+
+
