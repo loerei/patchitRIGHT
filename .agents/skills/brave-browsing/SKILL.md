@@ -1,45 +1,29 @@
 ---
 name: brave-browsing
-description: Configure and execute Chrome DevTools MCP server using Brave browser instead of default Google Chrome. Use when configuring browser automation with Brave, loading logged-in user profile data (--userDataDir), or resolving Chromium connection errors.
+description: Configure and execute Chrome DevTools MCP server using Brave browser instead of Google Chrome. Use when configuring browser automation with Brave, loading user profiles (--userDataDir), or resolving Chromium connection errors.
 ---
 
-# Brave Browsing with Chrome DevTools MCP
+# Brave Browsing
 
-## Fast Connection Protocol (Agent Execution Rule)
+## 1. Connection Protocol
 
-Whenever invoked via `/browser` or `/brave-browsing`, agents MUST run the helper script FIRST before taking any other action:
+When invoked via `/browser` or `/brave-browsing`, MUST run helper script first:
 
 ```powershell
 node D:\Projects\myskills\productivity\brave-browsing\scripts\ensure-brave.js
 ```
 
-### Workflows
+### Response Branching
 
-```mermaid
-flowchart TD
-    Start["User Requests /browser or /brave-browsing"] --> RunEnsure["Run: node ensure-brave.js"]
-    
-    RunEnsure --> State1["[✔] Brave 9222 ready"]
-    RunEnsure --> State2["[🚀] Launched Brave with port 9222 (Registry configured)"]
-    RunEnsure --> State3["[🚀] Launched Brave with port 9222 (Registry NOT configured)"]
-    
-    State1 --> DirectWork["Execute Web Task Immediately"]
-    State2 --> DirectWork
-    State3 -->|"Optionally offer Registry setup"| DirectWork
-```
+| Script Output Signal | Action |
+| :--- | :--- |
+| `[✔] Brave 9222 ready` | Execute browser automation task immediately. |
+| `[🚀] Launched Brave (Registry configured)` | Execute browser automation task. |
+| `[🚀] Launched Brave (Registry NOT configured)` | Execute browser task; optionally propose persistent Registry setup. |
 
-### Script Output States:
+---
 
-1. **`[✔] Brave 9222 ready`**: Port 9222 is active and listening. **Proceed directly to browser automation task with zero delay.**
-2. **`[🚀] Launched Brave with port 9222 (Registry configured)`**: Brave was launched automatically with remote debugging port 9222. **Proceed to browser automation task.**
-3. **`[🚀] Launched Brave with port 9222 (Registry NOT configured). Consider configuring Registry to streamline workflow.`**: Brave was launched via CLI flags. **Proceed to browser automation task, and optionally offer user Registry setup.**
+## 2. Domain References
 
-## Domain Pointers
-
-- **First-Time MCP & Registry Setup**: For configuring `mcp_config.json` or persistent Windows Registry launch flags, read [SETUP.md](SETUP.md) via `view_file`.
-- **Extension Popup Automation**: For bypassing active-tab restrictions on Chrome Extension Popups (`chrome-extension://...`), read [EXTENSION-POPUP.md](EXTENSION-POPUP.md) via `view_file`.
-
-## Completion Checklist
-- [ ] Ran `ensure-brave.js` helper script.
-- [ ] Confirmed Brave connection on port 9222.
-- [ ] Executed user's web task without hesitation.
+- **MCP & Registry Configuration**: see [SETUP.md](SETUP.md).
+- **Chrome Extension Popup Automation**: see [EXTENSION-POPUP.md](EXTENSION-POPUP.md).

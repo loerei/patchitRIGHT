@@ -1,49 +1,42 @@
 # Mode A: Pre-Implementation Design Audit Reference
 
+> [!IMPORTANT]
+> **Audience: MAIN AGENT ONLY.**  
+> This document contains prompt synthesis templates and orchestration protocols for the Main Agent.  
+> **NEVER** pass this file or its path under `Required Reading` to Subagent Reviewers. Subagents must be given [REVIEWER-DESIGN-AUDIT.md](REVIEWER-DESIGN-AUDIT.md).
+
 Templates, checklist builders, and anti-anchoring protocols for stress-testing and auditing unapproved plans, RFCs, PRDs, or skill drafts BEFORE writing code.
 
 ---
 
 ## 1. Mode A: Pre-Implementation Design Audit Prompt Template
 
-Use when auditing an unapproved plan, RFC, PRD, or skill draft BEFORE writing code.
-
-> [!NOTE]
-> **Checklist Synthesis Guidance (Main Agent)**:
-> - **For All Draft Artifacts (PRDs, RFCs, Skills, Plans):** Include items #1–#4 in the subagent prompt.
-> - **For Implementation Plans (`implementation_plan.md`):** MUST also include items #5 and #6, and require subagents to read the plan template (in `AGENTS.md` Section 2).
+Use when creating `scratch/reviewer_prompt_v1.md` to audit an unapproved plan, RFC, PRD, or skill draft:
 
 ```markdown
 You are <Domain> Reviewer #<N>. Audit the proposed <Artifact Type> draft.
 
-### Required Reading (MUST read using view_file / jcodemunch / agents read):
+### Required Reading (MUST read using view_file / jcodemunch):
 1. Target Artifact Draft: `<draft_path>`
-2. System Guidelines / Rules: `<rule_paths>`
-3. Plan Layout Template (for Implementation Plans): `AGENTS.md` Section 2
-4. Task-Specific Domain Skills: `<task_domain_skill_paths>` (e.g., /write-a-skill, /write-for-ai, /writing-great-skills for skill drafts, /tdd for tests, /design-taste-frontend for UI)
+2. Repository Guidelines & Rules: `AGENTS.md`
+3. Reviewer Discipline & Output Protocol: [REVIEWER-DESIGN-AUDIT.md](file:///<repo-root>/.agents/skills/conduct-reviewing-loop/REVIEWER-DESIGN-AUDIT.md)
+4. Task-Specific Domain Skills: `<task_domain_skill_paths>` (e.g., /write-a-skill, /write-for-ai, /tdd, /design-taste-frontend)
 
-### Synthesized Audit Checklist:
-1. **User Requirements**: <User-defined high-level constraints and preferences>
-2. **System Guidelines**: <Rules from AGENTS.md, /codebase-design, etc.>
-3. **Task-Specific Domain Skill Adherence**: <Adherence to /write-a-skill, /write-for-ai, /tdd, etc.>
-4. **Domain & Edge-Case Completeness**: <High-level correctness, safety, or performance checks>
-5. **Template & Layout Adherence** *(Include when auditing Implementation Plans)*: Verify strict adherence to the mandatory plan layout scaffold (`AGENTS.md` Section 2), including required sections (`## Architectural Summary & Key Decisions`, `## User Review Required`, `## Proposed Changes & Execution Checklist`, `## Verification Plan`).
-6. **Execution Checklist Completeness** *(Include when auditing Implementation Plans)*: Verify that the Execution Checklist (`- [ ]`) covers 100% of proposed file modifications, schema changes, and edge-case handling steps outlined in the plan's architectural summary.
+### Dynamic Task Audit Checklist:
+1. **User Requirements**: <Synthesized ticket/feature requirements and constraints>
+2. **System Guidelines & Architecture**: <Key architectural rules from AGENTS.md, /codebase-design, etc.>
+3. **Domain & Edge-Case Completeness**: <Specific edge-case handling, error paths, and safety criteria>
+4. **Template & Layout Adherence** *(For Implementation Plans)*: Verify mandatory plan layout sections (`AGENTS.md` Section 2).
+5. **Execution Checklist Completeness** *(For Implementation Plans)*: Verify that the Execution Checklist (`- [ ]`) covers 100% of proposed file edits, schema changes, and edge cases.
 
-### Output Directive:
-Return your evaluation to the parent agent using `send_message` containing:
-1. Explicit status (`STATUS: PASS` or `STATUS: REVISIONS NEEDED`)
-2. Numbered list of findings/required edits (blocking issues)
-3. (Optional) `Suggestions for Improvement (Non-blocking)`: Polish or future considerations that do NOT affect PASS status.
-
-Conclude explicitly with either:
-- **STATUS: REVISIONS NEEDED** (with a numbered list of required edits to the draft document), OR
-- **STATUS: PASS** (if the draft is 100% complete, edge-case safe, and fully compliant).
+*Evaluate strictly per the rules and standard output format in [REVIEWER-DESIGN-AUDIT.md](file:///<repo-root>/.agents/skills/conduct-reviewing-loop/REVIEWER-DESIGN-AUDIT.md).*
 ```
 
 ---
 
-## 2. Pre-Implementation Audit Checklist
+## 2. Pre-Implementation Audit Checklist (Main Agent Guidance)
+
+When synthesizing the prompt checklist, ensure coverage across:
 
 ### General Checks (All Draft Artifacts):
 - [ ] User goals & constraints explicitly addressed
@@ -65,8 +58,6 @@ Conclude explicitly with either:
 ## 3. Clean & Neutral Artifact Protocol (Anti-Anchoring)
 
 When updating draft artifacts between review iterations, integrate all fixes seamlessly as native, first-class specifications. NEVER include past reviewer references, version tags based on reviewers, or meta-changelogs inside the document body.
-
-For example, after Reviewer #3 points out an edge case or problem:
 
 - **BAD (Meta-Contaminated / Anchoring Bias)**:
   > `# Plan v4 (Per Reviewer #3 Feedback)`  

@@ -1,10 +1,8 @@
-# Brave MCP & Registry Setup Guide
+# Brave MCP & Registry Setup
 
-> Auxiliary domain sub-document for [brave-browsing](SKILL.md). Read via `view_file` when configuring new MCP environments or persistent Registry launch parameters.
+## 1. MCP Configuration
 
-## Quick Start Configuration
-
-Ensure `mcp_config.json` (located at `~/.gemini/config/mcp_config.json`) contains the `--browserUrl` parameter:
+Ensure `~/.gemini/config/mcp_config.json` sets `--browserUrl`:
 
 ```json
 {
@@ -22,21 +20,25 @@ Ensure `mcp_config.json` (located at `~/.gemini/config/mcp_config.json`) contain
 }
 ```
 
-## Setup Modes
+---
 
-### Mode 1: Remote Debugging Port (--browserUrl) - Recommended
-- **Command:** `brave.exe --remote-debugging-port=9222 --remote-allow-origins=http://127.0.0.1:9222,http://localhost:9222`
-- **MCP Config:** `--browserUrl http://127.0.0.1:9222`
+## 2. Launch Modes
 
-### Mode 2: System-Wide Registry Automation (Persistent)
+### Mode 1: Manual CLI Flag
+```powershell
+brave.exe --remote-debugging-port=9222 --remote-allow-origins=http://127.0.0.1:9222,http://localhost:9222
+```
+
+### Mode 2: Persistent Windows Registry Automation
 > [!CAUTION]
-> **Tier 3 Execution Gate:** Modifying Registry keys is a system-wide modification. Agents MUST present the exact plan and obtain EXPLICIT USER APPROVAL before executing any Registry commands.
+> Modifying Registry keys requires **Tier 3 Explicit User Approval**.
 
-- **Target Registry Keys:**
-  1. `HKCU:\Software\Classes\BraveHTML\shell\open\command`
-  2. `HKCU:\Software\Classes\http\shell\open\command`
-  3. `HKCU:\Software\Classes\https\shell\open\command`
-- **Value:** `"C:\Users\<username>\AppData\Local\BraveSoftware\Brave-Browser\Application\brave.exe" --remote-debugging-port=9222 --remote-allow-origins=http://127.0.0.1:9222,http://localhost:9222 -- "%1"`
+Target Registry Paths:
+- `HKCU:\Software\Classes\BraveHTML\shell\open\command`
+- `HKCU:\Software\Classes\http\shell\open\command`
+- `HKCU:\Software\Classes\https\shell\open\command`
 
-#### Restore Default:
-- **Value:** `"C:\Users\<username>\AppData\Local\BraveSoftware\Brave-Browser\Application\brave.exe" -- "%1"`
+| State | Registry String Value |
+| :--- | :--- |
+| **Debug Mode** | `"C:\Users\<username>\AppData\Local\BraveSoftware\Brave-Browser\Application\brave.exe" --remote-debugging-port=9222 --remote-allow-origins=http://127.0.0.1:9222,http://localhost:9222 -- "%1"` |
+| **Default Restore** | `"C:\Users\<username>\AppData\Local\BraveSoftware\Brave-Browser\Application\brave.exe" -- "%1"` |

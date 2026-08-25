@@ -1,6 +1,6 @@
 # Write Skill DTTC Reference & Case Studies
 
-Detailed case studies comparing raw Human-in-the-Loop (HITL) UX friction against standardized Domain Terms and Tag Commands (DTTC) solutions, drawn from [/conduct-reviewing-loop](file:///d:/Projects/myskills/.agents/skills/conduct-reviewing-loop/SKILL.md).
+Detailed case studies comparing raw Human-in-the-Loop (HITL) UX friction against standardized Domain Terms and Tag Commands (DTTC) solutions, drawn from [`conduct-reviewing-loop`](file:///d:/Projects/myskills/productivity/conduct-reviewing-loop/SKILL.md).
 
 ---
 
