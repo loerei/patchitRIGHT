@@ -114,6 +114,34 @@ class TestClassicAutoIndent:
             "        return val\n"
         )
 
+    def test_classic_patch_did_you_mean_full_line_indent_drift(self, tmp_path, monkeypatch):
+        """Whole-line did_you_mean replaces line cleanly without dangling trailing chars from partial ratio alignment."""
+        monkeypatch.chdir(tmp_path)
+        test_file = tmp_path / "calc.py"
+        test_file.write_text(
+            "class Foo:\n"
+            "    def run(self):\n"
+            "        total = sum(result) * 102\n"
+            "        return total\n"
+        )
+
+        res = patch_file(
+            target_file="calc.py",
+            search_content="    totl = sum(result) * 102",
+            replace_content="    total = sum(result) * 10",
+            did_you_mean=True,
+            auto_indent=True,
+        )
+
+        assert res.get("success") is True
+        content = test_file.read_text()
+        assert content == (
+            "class Foo:\n"
+            "    def run(self):\n"
+            "        total = sum(result) * 10\n"
+            "        return total\n"
+        )
+
     def test_replacements_batch_auto_indent(self, tmp_path, monkeypatch):
         """replacements array applies auto_indent per item."""
         monkeypatch.chdir(tmp_path)

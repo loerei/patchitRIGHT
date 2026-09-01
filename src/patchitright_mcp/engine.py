@@ -116,6 +116,23 @@ class PatchEngine:
         from .body_parser import normalize_indent
 
         if self.is_did_you_mean_applied:
+            # If the search content covers the full target slice (e.g. whole line/block match)
+            if fuzz.ratio(target_slice.strip(), norm_search.strip()) >= 70.0:
+                if auto_indent:
+                    disk_non_empty = [l for l in target_slice.split("\n") if l.strip()]
+                    disk_base_indent = min((l[: len(l) - len(l.lstrip())] for l in disk_non_empty), key=len) if disk_non_empty else ""
+
+                    replace_non_empty = [l for l in norm_replace.split("\n") if l.strip()]
+                    replace_base_indent = min((l[: len(l) - len(l.lstrip())] for l in replace_non_empty), key=len) if replace_non_empty else ""
+
+                    if disk_base_indent != replace_base_indent:
+                        norm_replace_adjusted, adjusted, delta = normalize_indent(norm_replace, disk_base_indent)
+                        if adjusted:
+                            self.indentation_adjusted = True
+                            self.indent_delta = delta
+                            norm_replace = norm_replace_adjusted
+                return norm_replace
+
             alignment = fuzz.partial_ratio_alignment(target_slice, norm_search)
             if alignment:
                 src_start = self._expand_alignment_start(target_slice, alignment.src_start, norm_search[0])
