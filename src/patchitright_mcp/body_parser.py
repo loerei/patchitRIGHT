@@ -299,7 +299,7 @@ def pad_block_newlines(
 
     content_stripped = replace_content.rstrip(" \t")
     if not content_stripped.endswith(("\n", "\r\n")):
-        replace_content = replace_content + eol
+        replace_content = content_stripped + eol
         padded = True
 
     # Ensure the trailing newline is followed by the signature indent
