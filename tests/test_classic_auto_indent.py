@@ -177,3 +177,59 @@ class TestClassicAutoIndent:
             "    y = 20\n"
             "    return x + y\n"
         )
+
+    def test_batch_telemetry_aggregation(self, tmp_path, monkeypatch):
+        """Batch replacements aggregates telemetry (e.g. indentation_adjusted) from any item."""
+        monkeypatch.chdir(tmp_path)
+        test_file = tmp_path / "telemetry.py"
+        test_file.write_text(
+            "def f():\n"
+            "    x = 1\n"
+            "    y = 2\n"
+            "    return x + y\n"
+        )
+
+        res = patch_file(
+            target_file="telemetry.py",
+            replacements=[
+                {
+                    "search_content": "    x = 1",
+                    "replace_content": "x = 10",  # Triggers auto_indent
+                    "auto_indent": True,
+                },
+                {
+                    "search_content": "    y = 2",
+                    "replace_content": "    y = 20",  # Matches exact indent, no adjust
+                    "auto_indent": True,
+                },
+            ],
+        )
+
+        assert res.get("success") is True
+        assert "automatically aligned" in res.get("message", "")
+
+    def test_insertion_at_replacement_end_line_collision(self, tmp_path, monkeypatch):
+        """Inserting at repl['end_line'] is caught as a replacement collision."""
+        from patchitright_mcp.line_matcher import check_replacement_collisions
+
+        items = [
+            {"start_line": 10, "end_line": 15, "is_insertion": False},
+            {"insert_line": 15, "is_insertion": True},
+        ]
+        err = check_replacement_collisions(items)
+        assert err is not None
+        assert "Cannot insert code inside an active replacement range" in err["error"]
+
+    def test_classic_patch_empty_search_content_error(self, tmp_path, monkeypatch):
+        """Empty search_content raises ValueError."""
+        monkeypatch.chdir(tmp_path)
+        test_file = tmp_path / "empty.py"
+        test_file.write_text("print('hello')\n")
+
+        res = patch_file(
+            target_file="empty.py",
+            search_content="",
+            replace_content="print('bye')",
+        )
+        assert "error" in res
+        assert "cannot be empty" in res.get("error", "")

@@ -1,6 +1,6 @@
 """In-memory chunk replacement engine and patch application helpers."""
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from .engine import PatchEngine
 from .line_matcher import (
     _resolve_ast_boundaries,
@@ -40,7 +40,17 @@ def _apply_patch_content(
             "column": e.column
         }, None
     except ValueError as e:
-        return "", 0, [], "", {"error": str(e)}, None
+        from .diagnostics import _handle_patch_file_value_error
+        return "", 0, [], "", _handle_patch_file_value_error(e, target_file), None
+
+
+def _safe_int(v: Any) -> Optional[int]:
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        return None
 
 
 def _process_single_file_in_memory(
@@ -82,7 +92,7 @@ def _process_single_file_in_memory(
                     return "", 0, [], "", {"error": f"Error: replacements[{idx}] specifies insert_line but is missing insert_content."}, None
                 if "search_content" in r or "replace_content" in r:
                     return "", 0, [], "", {"error": f"Error: replacements[{idx}] cannot combine insert_content with search_content or replace_content."}, None
-                ins_line = r.get("insert_line")
+                ins_line = _safe_int(r.get("insert_line"))
                 if ins_line is None:
                     return "", 0, [], "", {"error": f"Error: replacements[{idx}] specifies insert_content but is missing insert_line."}, None
                 if "symbol_name" in r:
@@ -94,14 +104,15 @@ def _process_single_file_in_memory(
                     "insert_line": ins_line,
                     "insert_content": ins_content,
                     "auto_indent": r.get("auto_indent", True),
-                    "start_line": ins_line or 1,
-                    "end_line": ins_line or 1,
+                    "start_line": ins_line,
+                    "end_line": ins_line,
+                    "orig_idx": idx,
                 })
             else:
                 scope = r.get("symbol_scope", "boundary")
                 sym_name = r.get("symbol_name")
-                r_start = r.get("start_line")
-                r_end = r.get("end_line")
+                r_start = _safe_int(r.get("start_line"))
+                r_end = _safe_int(r.get("end_line"))
 
                 body_range = None
                 resolved_start = r_start
@@ -123,7 +134,7 @@ def _process_single_file_in_memory(
                     resolved_start = sym_start
                     resolved_end = sym_end
                     body_range = b_range
-                elif "search_content" in r and r["search_content"] in file_content:
+                elif "search_content" in r and r["search_content"] in file_content and resolved_start is None:
                     s_text = r["search_content"]
                     s_char_idx = file_content.find(s_text)
                     match_start_l = file_content[:s_char_idx].count("\n") + 1
@@ -139,6 +150,8 @@ def _process_single_file_in_memory(
                     "start_line": resolved_start or 1,
                     "end_line": resolved_end or len(file_content.split("\n")),
                     "body_range": body_range,
+                    "orig_idx": idx,
+                    "unbounded": resolved_start is None,
                 })
 
         collision_err = check_replacement_collisions(resolved_items)
@@ -148,18 +161,23 @@ def _process_single_file_in_memory(
         sorted_resolved_items = sort_resolved_items_descending(resolved_items)
 
         def run_chain(contents: str, suggest_idx: Optional[int] = None) -> tuple[str, int, list[str], PatchEngine]:
+            from .body_parser import is_treesitter_size_exceeded
+            is_large = is_treesitter_size_exceeded(contents)
             temp_content = contents
             occurrences_sum = 0
             last_linter_warnings = []
             all_warnings = []
             final_engine = None
+            executed_engines = []
 
             for idx, item in enumerate(sorted_resolved_items):
                 r_engine = PatchEngine(temp_content, target_file, bypass_validation=bypass_validation)
                 r = item["r"]
                 scope = item.get("scope", "boundary")
+                if is_large and scope == "body":
+                    r_engine.large_file_fallback = True
                 sym_name = item.get("symbol_name")
-                is_suggest = (suggest_idx is not None and idx == suggest_idx)
+                is_suggest = (suggest_idx is not None and idx == suggest_idx) or bool(r.get("did_you_mean", did_you_mean))
 
                 if item.get("is_insertion"):
                     temp_content, occurrences_cnt = r_engine.apply_line_insertion(
@@ -176,13 +194,16 @@ def _process_single_file_in_memory(
                     end_col = 0
                     is_expr = False
 
-                    if scope == "body" and b_range is not None:
+                    if scope == "body":
+                        if b_range is None:
+                            raise ValueError(f"Error: Could not resolve body boundaries for symbol '{sym_name}'.")
                         start_line_val = b_range.start_line
                         start_col = b_range.start_col
                         end_line_val = b_range.end_line
                         end_col = b_range.end_col
                         is_expr = b_range.is_expression
 
+                    delim_type = b_range.delimiter_type if b_range and hasattr(b_range, "delimiter_type") else "brace"
                     temp_content, occurrences_cnt = r_engine.apply_symbol_replacement(
                         replace_content=r["replace_content"],
                         start_line=start_line_val,
@@ -191,6 +212,7 @@ def _process_single_file_in_memory(
                         end_col=end_col,
                         symbol_scope=scope,
                         is_expression=is_expr,
+                        delimiter_type=delim_type,
                         validate=(idx == len(sorted_resolved_items) - 1),
                     )
                 else:
@@ -202,8 +224,8 @@ def _process_single_file_in_memory(
                         search_content=r["search_content"],
                         replace_content=r["replace_content"],
                         allow_multiple=r.get("allow_multiple", allow_multiple),
-                        start_line=r.get("start_line") or item.get("start_line"),
-                        end_line=r.get("end_line") or item.get("end_line"),
+                        start_line=r.get("start_line") if not item.get("unbounded") else None,
+                        end_line=r.get("end_line") if not item.get("unbounded") else None,
                         symbol_boundaries=sym_boundaries,
                         symbol_name=sym_name,
                         line_filter=r.get("line_filter"),
@@ -218,6 +240,7 @@ def _process_single_file_in_memory(
                 if getattr(r_engine, "symbol_warnings", None):
                     all_warnings.extend(r_engine.symbol_warnings)
                 last_linter_warnings = list(all_warnings) + list(getattr(r_engine, "linter_warnings", []))
+                executed_engines.append(r_engine)
                 final_engine = r_engine
 
             if len(sorted_resolved_items) > 1:
@@ -233,6 +256,25 @@ def _process_single_file_in_memory(
                     filename=target_file,
                 )
                 last_linter_warnings.extend(net_warnings)
+
+            if final_engine and executed_engines:
+                final_engine.indentation_adjusted = any(getattr(e, "indentation_adjusted", False) for e in executed_engines)
+                final_engine.newline_padded = any(getattr(e, "newline_padded", False) for e in executed_engines)
+                final_engine.is_relocated = any(getattr(e, "is_relocated", False) for e in executed_engines)
+                final_engine.is_did_you_mean_applied = any(getattr(e, "is_did_you_mean_applied", False) for e in executed_engines)
+                if any(getattr(e, "large_file_fallback", False) for e in executed_engines):
+                    final_engine.large_file_fallback = True
+
+                for e in executed_engines:
+                    if getattr(e, "is_relocated", False) and getattr(e, "relocated_start_line", None) is not None:
+                        final_engine.relocated_start_line = e.relocated_start_line
+                        final_engine.relocated_end_line = e.relocated_end_line
+                    if getattr(e, "is_did_you_mean_applied", False) and getattr(e, "s_ratio", 0.0) > 0.0:
+                        final_engine.s_ratio = e.s_ratio
+                        final_engine.did_you_mean_start_line = e.did_you_mean_start_line
+                        final_engine.did_you_mean_end_line = e.did_you_mean_end_line
+                    if getattr(e, "indentation_adjusted", False) and getattr(e, "indent_delta", ""):
+                        final_engine.indent_delta = e.indent_delta
 
             return temp_content, occurrences_sum, last_linter_warnings, final_engine
 
@@ -296,10 +338,8 @@ def _process_single_file_in_memory(
         if search_content is None or replace_content is None:
             return "", 0, [], "", {"error": "Error: Either replacements, patch_content, OR both search_content and replace_content must be provided."}, None
 
-    from .body_parser import MAX_LINES_FOR_TREESITTER, MAX_BYTES_FOR_TREESITTER
-    file_lines_count = len(file_content.split("\n"))
-    file_char_count = len(file_content)
-    large_file = file_lines_count > MAX_LINES_FOR_TREESITTER or file_char_count > MAX_BYTES_FOR_TREESITTER
+    from .body_parser import is_treesitter_size_exceeded
+    large_file = is_treesitter_size_exceeded(file_content)
 
     resolved_start_line, resolved_end_line, err, body_range = _resolve_ast_boundaries(
         cwd, target_path, symbol_name, storage_path, start_line, end_line, symbol_scope, file_content
@@ -319,13 +359,16 @@ def _process_single_file_in_memory(
             end_c = 0
             is_expr = False
 
-            if symbol_scope == "body" and body_range is not None:
+            if symbol_scope == "body":
+                if body_range is None:
+                    return "", 0, [], "", {"error": f"Error: Could not resolve body boundaries for symbol '{symbol_name}'."}, None
                 start_l = body_range.start_line
                 start_c = body_range.start_col
                 end_l = body_range.end_line
                 end_c = body_range.end_col
                 is_expr = body_range.is_expression
 
+            delim_type = body_range.delimiter_type if body_range and hasattr(body_range, "delimiter_type") else "brace"
             patched_file, occurrences = engine.apply_symbol_replacement(
                 replace_content=replace_content,
                 start_line=start_l,
@@ -334,6 +377,7 @@ def _process_single_file_in_memory(
                 end_col=end_c,
                 symbol_scope=symbol_scope,
                 is_expression=is_expr,
+                delimiter_type=delim_type,
             )
         else:
             sym_boundaries = None

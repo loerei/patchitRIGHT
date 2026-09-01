@@ -59,6 +59,10 @@ def _resolve_ast_boundaries(
                         body_range = get_body_range(file_content, str(target_path), found_line, end_l)
                     except Exception:
                         pass
+                    if symbol_scope == "body":
+                        if body_range:
+                            return body_range.start_line, body_range.end_line, None, body_range
+                        return None, None, {"error": f"Error: Could not resolve body boundaries for symbol '{symbol_name}'."}, None
                     return found_line, end_l, None, body_range
             return None, None, {"error": f"Workspace at '{cwd}' is not indexed and symbol '{symbol_name}' could not be matched."}, None
             
@@ -85,6 +89,8 @@ def _resolve_ast_boundaries(
                     file_content = f.read()
             from .body_parser import get_body_range
             body_range = get_body_range(file_content, str(target_path), sym_start, sym_end)
+            if body_range is None:
+                return None, None, {"error": f"Error: Could not resolve body boundaries for symbol '{symbol_name}'."}, None
             return body_range.start_line, body_range.end_line, None, body_range
 
         return sym_start, sym_end, None, None
@@ -94,7 +100,7 @@ def _resolve_ast_boundaries(
 
 def check_replacement_collisions(resolved_items: list[dict]) -> Optional[dict]:
     """Check for overlapping replacement ranges or insertions inside active replacement bodies."""
-    repl_items = [x for x in resolved_items if not x.get("is_insertion")]
+    repl_items = [x for x in resolved_items if not x.get("is_insertion") and not x.get("unbounded")]
     sorted_repl = sorted(repl_items, key=lambda x: x["start_line"])
     for i in range(len(sorted_repl) - 1):
         curr = sorted_repl[i]
@@ -106,15 +112,29 @@ def check_replacement_collisions(resolved_items: list[dict]) -> Optional[dict]:
     for ins in ins_items:
         ins_l = ins["insert_line"]
         for repl in repl_items:
-            if repl["start_line"] < ins_l < repl["end_line"]:
+            if repl["start_line"] < ins_l <= repl["end_line"]:
                 return {"error": f"Error: Cannot insert code inside an active replacement range (lines {repl['start_line']}-{repl['end_line']})."}
     return None
 
 
 def sort_resolved_items_descending(resolved_items: list[dict]) -> list[dict]:
-    """Sort resolved items descending by target line; replacements before insertions."""
+    """Sort resolved items descending by target line; replacements before insertions.
+    Co-located insertions targeting the same line execute in reverse declaration order
+    so that subsequent insertions push earlier ones down, preserving declared order.
+    EOF insertions (insert_line == -1) execute in ascending declaration order.
+    """
+    def _ins_key(x: dict) -> int:
+        if not x.get("is_insertion"):
+            return -x.get("orig_idx", 0)
+        is_eof = (x.get("insert_line") == -1 or x.get("start_line") == -1)
+        return -x.get("orig_idx", 0) if is_eof else x.get("orig_idx", 0)
+
     return sorted(
         resolved_items,
-        key=lambda x: (x["start_line"], 1 if not x.get("is_insertion") else 0),
+        key=lambda x: (
+            x["start_line"],
+            1 if not x.get("is_insertion") else 0,
+            _ins_key(x),
+        ),
         reverse=True,
     )

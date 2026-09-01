@@ -7,30 +7,24 @@ from rapidfuzz import fuzz
 
 def expand_alignment_start(target_slice: str, src_start: int, match_char: str) -> int:
     """Expand fuzzy alignment start boundary to matching delimiters."""
-    while src_start > 0 and target_slice[src_start - 1] in "'\"([{":
-        if target_slice[src_start - 1] == match_char:
-            src_start -= 1
-            break
-        src_start -= 1
+    if match_char and match_char in "'\"([{" and 0 < src_start <= len(target_slice) and target_slice[src_start - 1] == match_char:
+        return src_start - 1
     return src_start
 
 
 def expand_alignment_end(target_slice: str, src_end: int, match_char: str) -> int:
     """Expand fuzzy alignment end boundary to matching delimiters."""
-    while src_end < len(target_slice) and target_slice[src_end] in "'\")}]":
-        if target_slice[src_end] == match_char:
-            src_end += 1
-            break
-        src_end += 1
+    if match_char and match_char in "'\")}]" and 0 <= src_end < len(target_slice) and target_slice[src_end] == match_char:
+        return src_end + 1
     return src_end
 
 
 def detect_mismatch_reason(text_a: str, text_b: str) -> list[str]:
     """Detect heuristic explanations for string mismatches (escapes, whitespace)."""
     reasons = []
-    norm_a = text_a.replace("\\n", "\n").replace("\\r\\n", "\n")
-    norm_b = text_b.replace("\\n", "\n").replace("\\r\\n", "\n")
-    if norm_a == norm_b:
+    norm_a = text_a.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+    norm_b = text_b.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+    if text_a != text_b and norm_a == norm_b:
         reasons.append("Mismatch due to raw escape characters (\\n) vs literal newlines")
     strip_a = "".join(text_a.split())
     strip_b = "".join(text_b.split())
@@ -62,7 +56,8 @@ def find_closest_match(
                     samples.append((off, line))
 
         file_stripped = [line.strip() for line in file_lines]
-        max_range = min(end_idx - n + 2, len(file_lines) - n + 1)
+        min_window = max(1, n - 1)
+        max_range = min(end_idx - min_window + 2, len(file_lines) - min_window + 1)
 
         def eval_sample_score(i: int) -> float:
             score_sum = 0.0
@@ -92,11 +87,11 @@ def find_closest_match(
             fine_indices.update(range(local_start, local_end))
 
         fine_scores = []
-        for i in fine_indices:
+        for i in sorted(fine_indices):
             score = eval_sample_score(i)
             fine_scores.append((score, i))
 
-        fine_scores.sort(key=lambda x: x[0], reverse=True)
+        fine_scores.sort(key=lambda x: (-x[0], x[1]))
 
         # 3. Evaluate full fuzz.ratio on top candidate windows
         for sample_score, i in fine_scores:
@@ -118,6 +113,8 @@ def find_closest_match(
     else:
         for window_size in (n, max(1, n - 1), n + 1):
             for i in range(start_idx, min(end_idx - window_size + 2, len(file_lines))):
+                if (i + window_size - 1) >= len(file_lines):
+                    continue
                 candidate_slice = "\n".join(file_lines[i : i + window_size])
                 score_cutoff = max(50.0, best_ratio * 100.0)
                 ratio = fuzz.ratio(candidate_slice, norm_search, score_cutoff=score_cutoff) / 100.0

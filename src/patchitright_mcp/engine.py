@@ -19,7 +19,13 @@ from .validators import ValidationService
 class PatchEngine:
     """Core in-memory engine to apply search-and-replace and unified diff patches."""
 
-    def __init__(self, file_content: str, filename: str, bypass_validation: bool = False):
+    def __init__(
+        self,
+        file_content: str,
+        filename: str,
+        bypass_validation: bool = False,
+        validator: Optional[ValidationService] = None,
+    ):
         self.file_content = file_content
         self.filename = filename
         self.is_crlf = "\r\n" in file_content
@@ -35,11 +41,12 @@ class PatchEngine:
         self.linter_warnings = []
         self.symbol_warnings = []
         self.insertion_warnings = []
-        self.validator = ValidationService()
+        self.validator = validator or ValidationService()
         self.bypass_validation = bypass_validation
         self.indentation_adjusted = False
         self.indent_delta = ""
         self.newline_padded = False
+        self.large_file_fallback = False
 
     def _find_occurrence_line_ranges(
         self, content: str, search: str, base_line_offset: int = 0
@@ -161,13 +168,11 @@ class PatchEngine:
             return norm_replace
 
         if auto_indent:
-            search_non_empty = [l for l in norm_search.split("\n") if l.strip()]
-            search_base_indent = min((l[: len(l) - len(l.lstrip())] for l in search_non_empty), key=len) if search_non_empty else ""
+            from .body_parser import get_base_indent
+            search_base_indent = get_base_indent(norm_search)
+            replace_base_indent = get_base_indent(norm_replace)
 
-            replace_non_empty = [l for l in norm_replace.split("\n") if l.strip()]
-            replace_base_indent = min((l[: len(l) - len(l.lstrip())] for l in replace_non_empty), key=len) if replace_non_empty else ""
-
-            if search_base_indent and not replace_base_indent:
+            if search_base_indent and search_base_indent != replace_base_indent:
                 norm_replace_adjusted, adjusted, delta = normalize_indent(norm_replace, search_base_indent)
                 if adjusted:
                     self.indentation_adjusted = True
@@ -214,6 +219,9 @@ class PatchEngine:
         """Apply a classic search-and-replace patch inside line/symbol scope."""
         norm_search = search_content.replace("\r\n", "\n").replace("\r", "")
         norm_replace = replace_content.replace("\r\n", "\n").replace("\r", "")
+
+        if not norm_search:
+            raise ValueError("Error: 'search_content' cannot be empty.")
 
         start_idx, end_idx = self._resolve_classic_boundaries(
             start_line, end_line, symbol_boundaries
@@ -296,8 +304,12 @@ class PatchEngine:
 
         is_eof = (insert_line == -1 or insert_line > total_lines)
         if is_eof:
-            target_idx = total_lines
-            ref_idx = total_lines - 1
+            if self.file_lines and self.file_lines[-1] == "":
+                target_idx = total_lines - 1
+                ref_idx = max(0, total_lines - 2)
+            else:
+                target_idx = total_lines
+                ref_idx = total_lines - 1
         else:
             line_idx = insert_line - 1
             target_idx = line_idx
@@ -325,7 +337,9 @@ class PatchEngine:
                             # If preceding header ends with ':', append 4 spaces / 1 tab
                             if p_line.rstrip().endswith(":"):
                                 p_indent = p_line[: len(p_line) - len(p_line.lstrip())]
-                                unit = "\t" if "\t" in p_line else "    "
+                                from .body_parser import infer_indent_unit
+                                default_unit = "    " if self.filename.endswith((".py", ".pyi", ".pyw")) else "  "
+                                unit = "\t" if "\t" in p_line else infer_indent_unit(self.file_lines, default=default_unit, filename=self.filename)
                                 indent = p_indent + unit
                             break
             if not indent and ref_line.strip():
@@ -547,10 +561,12 @@ class PatchEngine:
         end_col: int,          # 0-indexed char offset
         symbol_scope: str,     # "full" or "body"
         is_expression: bool = False,
-        symbol_start_line: int | None = None,
+        delimiter_type: str = "brace",
         validate: bool = True,
     ) -> tuple[str, int]:
         """Replace the resolved symbol or body in-place."""
+        if not self.file_lines:
+            raise ValueError("Error: Cannot perform symbol replacement on an empty file.")
         replace_content = replace_content.replace("\r\n", "\n").replace("\r", "")
         start_line_idx = start_line - 1
         end_line_idx = end_line - 1
@@ -560,7 +576,6 @@ class PatchEngine:
         end_line_idx = max(start_line_idx, min(end_line_idx, len(self.file_lines) - 1))
 
         from .body_parser import (
-            _infer_indent_unit,
             detect_indent,
             normalize_indent,
             pad_block_newlines,
@@ -579,29 +594,35 @@ class PatchEngine:
             body_lines = body_text.split("\n")
             sig_line = self.file_lines[start_line_idx]
 
+            is_indent_delim = (delimiter_type == "indent") or self.filename.endswith((".py", ".pyi", ".pyw"))
+
             # 1. Detect base indent
-            if self.filename.endswith(".py"):
-                if symbol_start_line and start_line_idx == symbol_start_line - 1:
-                    sig_indent = sig_line[: len(sig_line) - len(sig_line.lstrip())]
-                    indent_unit = _infer_indent_unit(self.file_lines)
-                    target_indent = sig_indent + indent_unit
+            if is_indent_delim:
+                prefix_to_col = self.file_lines[start_line_idx][:start_col]
+                if not prefix_to_col.strip():
+                    target_indent = prefix_to_col
                 else:
-                    first_body_line = self.file_lines[start_line_idx]
-                    target_indent = first_body_line[: len(first_body_line) - len(first_body_line.lstrip())]
+                    sig_indent = sig_line[: len(sig_line) - len(sig_line.lstrip())]
+                    from .body_parser import infer_indent_unit
+                    target_indent = sig_indent + infer_indent_unit(self.file_lines, filename=self.filename)
             else:
                 target_indent = detect_indent(body_lines, sig_line, self.file_lines)
 
-            # 2. Re-indent replace_content in isolation
-            replace_content, adjusted, delta = normalize_indent(replace_content, target_indent)
-            self.indentation_adjusted = adjusted
-            self.indent_delta = delta
+            # 2. Re-indent replace_content in isolation (skip for arrow expressions)
+            if not is_expression:
+                replace_content, adjusted, delta = normalize_indent(replace_content, target_indent)
+                self.indentation_adjusted = adjusted
+                self.indent_delta = delta
+            else:
+                self.indentation_adjusted = False
+                self.indent_delta = ""
 
-            # 3. Smart newline padding (skip for expression bodies and
+            # 3. Smart newline padding (skip for expression bodies, Python/indent-delimited, and
             #    single-line bodies where the replacement is also single-line)
             self.newline_padded = False
             is_single_line_body = start_line_idx == end_line_idx
             replacement_is_multiline = "\n" in replace_content
-            if not is_expression and (not is_single_line_body or replacement_is_multiline):
+            if not is_expression and not is_indent_delim and (not is_single_line_body or replacement_is_multiline):
                 sig_indent = sig_line[: len(sig_line) - len(sig_line.lstrip())]
                 replace_content, padded = pad_block_newlines(replace_content, sig_indent, False)
                 self.newline_padded = padded
@@ -612,6 +633,12 @@ class PatchEngine:
 
             prefix = start_line_text[:start_col]
             suffix = end_line_text[end_col:]
+
+            if is_indent_delim and prefix.strip() and "\n" in replace_content:
+                if not replace_content.startswith("\n"):
+                    replace_content = "\n" + replace_content
+            elif is_indent_delim and start_line_idx == end_line_idx and "\n" not in replace_content and prefix.strip():
+                replace_content = replace_content.lstrip()
 
             # Prevent double indentation if replacement starts with target_indent
             # and prefix is exactly target_indent.

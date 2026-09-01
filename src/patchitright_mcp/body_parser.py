@@ -94,11 +94,19 @@ class BodyRange:
     end_line: int
     end_col: int
     is_expression: bool  # True for arrow expression bodies (no braces)
+    delimiter_type: str = "brace"  # "brace", "indent", "tag", "expression"
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def is_treesitter_size_exceeded(file_content: str) -> bool:
+    """Return True if file exceeds lines or bytes limits for Tree-sitter parsing."""
+    line_count = file_content.count("\n") + 1
+    large_file, _ = _check_large_file(file_content, line_count)
+    return large_file
+
 
 def _check_large_file(source: str, line_count: int) -> tuple[bool, int]:
     """Return (is_large_file, byte_count) based on size thresholds."""
@@ -195,6 +203,12 @@ def get_body_range(
         )
 
     if ext in JSX_EXTENSIONS:
+        if large_file:
+            raise ValueError(
+                f"Cannot use AST body replacement for JSX/TSX file '{file_path}' because it exceeds size limits "
+                f"({MAX_LINES_FOR_TREESITTER} lines / {MAX_BYTES_FOR_TREESITTER // (1024*1024)}MB). "
+                "Use start_line/end_line manual scoping."
+            )
         raise ValueError(
             f"Cannot use bracket-matching fallback for JSX/TSX file '{file_path}'. "
             "Install tree-sitter-language-pack or use start_line/end_line manual scoping."
@@ -213,18 +227,27 @@ def get_body_range(
 # Indentation helpers
 # ---------------------------------------------------------------------------
 
+def get_base_indent(lines_or_text: str | list[str]) -> str:
+    """Extract the minimum leading whitespace indentation across non-empty lines."""
+    lines = lines_or_text if isinstance(lines_or_text, list) else lines_or_text.split("\n")
+    non_empty = [l for l in lines if l.strip()]
+    if not non_empty:
+        return ""
+    return min((l[: len(l) - len(l.lstrip())] for l in non_empty), key=len)
+
+
 def detect_indent(body_lines: list[str], signature_line: str, all_file_lines: list[str]) -> str:
     """Detect the base indentation of the body content.
 
     Returns the whitespace prefix that each body line should start with.
     """
-    non_empty = [line for line in body_lines if line.strip()]
-    if non_empty:
-        return min((line[: len(line) - len(line.lstrip())] for line in non_empty), key=len)
+    base = get_base_indent(body_lines)
+    if base or any(l.strip() for l in body_lines):
+        return base
 
     # Empty body fallback: signature indent + 1 level.
     sig_indent = signature_line[: len(signature_line) - len(signature_line.lstrip())]
-    indent_unit = _infer_indent_unit(all_file_lines)
+    indent_unit = infer_indent_unit(all_file_lines)
     return sig_indent + indent_unit
 
 
@@ -238,7 +261,7 @@ def normalize_indent(replace_content: str, target_indent: str) -> tuple[str, boo
     if not non_empty:
         return replace_content, False, ""
 
-    src_indent = min((line[: len(line) - len(line.lstrip())] for line in non_empty), key=len)
+    src_indent = get_base_indent(lines)
     if src_indent == target_indent:
         return replace_content, False, ""
 
@@ -274,7 +297,8 @@ def pad_block_newlines(
         replace_content = eol + replace_content
         padded = True
 
-    if not replace_content.endswith(("\n", "\r\n")):
+    content_stripped = replace_content.rstrip(" \t")
+    if not content_stripped.endswith(("\n", "\r\n")):
         replace_content = replace_content + eol
         padded = True
 
@@ -425,6 +449,7 @@ def _try_tree_sitter(
                 end_line=end_row + 1,
                 end_col=_bytes_to_char_col(lines[end_row], end_byte_col),
                 is_expression=False,
+                delimiter_type="tag",
             )
 
     if body_node.type == "arrow_expression_clause":
@@ -441,6 +466,7 @@ def _try_tree_sitter(
             end_line=block_end_row + 1,
             end_col=_bytes_to_char_col(lines[block_end_row], block_end_byte_col),
             is_expression=False,
+            delimiter_type="indent",
         )
 
     # Extract body node source to check if it's a brace block (starts with `{` and ends with `}`).
@@ -462,6 +488,7 @@ def _try_tree_sitter(
             end_line=end_row + 1,
             end_col=_bytes_to_char_col(lines[end_row], end_byte_col),
             is_expression=True,
+            delimiter_type="expression",
         )
 
     # Brace block — return inner content boundaries (after `{`, before `}`).
@@ -482,6 +509,7 @@ def _try_tree_sitter(
         end_line=block_end_row + 1,
         end_col=inner_end_col,
         is_expression=False,
+        delimiter_type="brace",
     )
 
 
@@ -536,6 +564,7 @@ def _python_ast_fallback(
             end_line=end_line,
             end_col=end_col,
             is_expression=False,
+            delimiter_type="indent",
         )
 
     return None
@@ -771,6 +800,7 @@ def _html_tag_match_fallback(
                                     end_line=tag_start_line,
                                     end_col=tag_start_col,
                                     is_expression=False,
+                                    delimiter_type="tag",
                                 )
                     elif not is_self_closing:
                         tag_stack.append(tag_name)
@@ -778,11 +808,12 @@ def _html_tag_match_fallback(
                             # Body starts directly after '>'
                             body_start = (line_idx + 1, col_idx + 1)
                     else:
-                        # It is self-closing or void, and since tag_stack was empty, this is our targeted outer tag.
-                        raise ValueError(
-                            "Cannot use scope 'body' on a symbol without a body "
-                            "(e.g., abstract method, interface signature, or type declaration)."
-                        )
+                        if not tag_stack:
+                            # It is self-closing or void, and since tag_stack was empty, this is our targeted outer tag.
+                            raise ValueError(
+                                "Cannot use scope 'body' on a symbol without a body "
+                                "(e.g., abstract method, interface signature, or type declaration)."
+                            )
                     col_idx += 1
                 else:
                     tag_content.append(char)
@@ -824,8 +855,11 @@ def _gather_indents(sample: list[str]) -> tuple[int, list[int]]:
     return tab_count, space_deltas
 
 
-def _infer_indent_unit(file_lines: list[str]) -> str:
+def infer_indent_unit(file_lines: list[str], default: str = "  ", filename: str | None = None) -> str:
     """Infer the indentation unit (tab or N spaces) by sampling the file."""
+    if filename and filename.endswith((".py", ".pyi", ".pyw")) and default == "  ":
+        default = "    "
+
     tab_count, space_deltas = _gather_indents(file_lines[:50])
 
     if tab_count > len(space_deltas):
@@ -840,4 +874,7 @@ def _infer_indent_unit(file_lines: list[str]) -> str:
             except Exception:
                 return " " * min(valid_deltas)
 
-    return "  "  # Default: 2 spaces for JS/TS.
+    return default
+
+
+_infer_indent_unit = infer_indent_unit

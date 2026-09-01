@@ -213,9 +213,13 @@ def test_execute_patch_file_validation(tmp_path):
 
 def test_main_cli_arguments_and_env(monkeypatch):
     """main parses CLI flags, honors environment variable timeouts, and runs startup recovery."""
+    def _close_coro(coro):
+        if hasattr(coro, "close"):
+            coro.close()
+
     with patch("patchitright_mcp.server.run_startup_recovery") as mock_recovery, \
          patch("mcp.server.stdio.stdio_server"), \
-         patch("asyncio.run"):
+         patch("asyncio.run", side_effect=_close_coro):
 
         # 1. CLI default-timeout flag
         monkeypatch.setattr("sys.argv", ["server.py", "--default-timeout", "25.5"])
