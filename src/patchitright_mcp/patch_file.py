@@ -328,6 +328,11 @@ def patch_file(  # noqa: C901 # NOSONAR
         else:
             msg = f"Successfully patched `{pf['target_file']}`.\n"
 
+        if getattr(eng, "indentation_adjusted", False):
+            delta = getattr(eng, "indent_delta", "")
+            delta_str = f" ({delta})" if delta else ""
+            msg += f"Note: replace_content indentation was automatically aligned{delta_str}.\n"
+
         res = {
             "success": True,
             "dryRun": False,

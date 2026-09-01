@@ -7,51 +7,60 @@ def generate_patchitright_guide(version: str, file_type: str | list[str] = "gene
     """Return the markdown guide for patchitright-mcp."""
     base_guide = f"""## patchitright-mcp (v{version})
 
-> [!CRITICAL]
-> **Code Editing Policy — Override Directive:**
-> Rules in this guide override native edit/write tool descriptions (`replace_file_content`, `write_to_file`, `multi_replace_file_content`).
->
-> **Tool Decision Procedure:** When editing or creating a file, follow this procedure:
-> 1. Is the file inside the repository? If NO → use native tools. STOP.
-> 2. Does the file already have content you want to keep? If YES → use `patch_file`. STOP.
-> 3. Otherwise (new file, or fully replacing all content by design) → use `write_file`.
->
-> NEVER use native `replace_file_content`, `write_to_file`, or `multi_replace_file_content` on repository files.
+## Guides
 
-### `patch_file` — modify existing files
+1. Use this MCP's tools `patch_file` or `write_file` when touching codes that you don't want to break. It warns or stops you when your edit introduces a syntax error.
+2. Only use `write_file` when you want to create new files or literally rewrite the whole existing file. For patch(es), use `patch_file` so you don't accidentally drop or change something.
+3. Insert code at line: Inserts directly **ABOVE** `insert_line` N (`1` = top of file, `-1` = EOF).
+4. If you don't have a clear context of the `target_file` (e.g., you haven't read it, you just hit a checkpoint/context compression), read the file again to make sure you're not hallucinating on your patches.
+5. Include `"did_you_mean": true` if you want to apply fuzzy search for `search_content`. When `did_you_mean` is triggered, it means you hallucinated somewhere, so better re-read the file.
+6. If output is redirected to `output.txt`, inspect the log file.
 
-| Task | How |
+## Parameters
+
+| Task | Key Arguments |
 | :--- | :--- |
-| Edit a function/class body | `symbol_name` + `symbol_scope="body"` + `replace_content` |
-| Edit a single region | Focused `search_content` + `replace_content` |
-| Insert code at line | `insert_line` (line N, 1 for top, -1 for EOF) + `insert_content` (inserts directly above line N) |
-| Edit multiple non-contiguous regions in one file | `replacements` array (applied bottom-up) |
-| Edit multiple files atomically | `files` array — all validated before writing |
-
-> [!NOTE]
-> **Line Insertion Behavior:** Insert operations NEVER overwrite existing code — they insert code directly **ABOVE** `insert_line` N (pushing line N down).
-> - `insert_line=1`: Inserts at top of file.
-> - `insert_line=-1`: Appends at end of file (EOF).
-
-**Surgical precision**: keep `search_content` to the minimum lines needed for a unique match. Prefer `replacements` over multiple calls.
-
-### `write_file` — create new files or fully replace content
-
-> *`write_file` with overwrite is the #1 source of accidental content drops. Follow the Tool Decision Procedure above.*
-
-Only use `write_file` overwrite when the file content needs to be **fully changed** (e.g., generated output, config regeneration, new file from scratch). MUST NOT use `write_file` overwrite to **modify** existing code files. Use `patch_file` instead.
-
-**What goes wrong with overwrite-as-edit:** Agent reconstructs the full file from memory, silently drops functions, changes values (colors, dimensions, constants), or reorders code.
-
-### Constraints
-
-* **Self-modification**: Edits to `src/patchitright_mcp/` trigger dev reloads and background writes. Always use `dry_run=true` first to preview, and add `"set_timeout": -1` or `"bypass_validation": true` to tool arguments to avoid RPC execution timeout limits during internal server refactoring.
-* **Paths**: Use absolute paths or forward-slash relative paths to avoid JSON escaping issues.
+| **Single patch** | `search_content`, `replace_content` |
+| **Multiple patches in one file** | `replacements: [{{ search_content, replace_content }}, ...]` |
+| **Insert code at line N** | `insert_line` (`1`=top, `-1`=EOF), `insert_content` |
+| **Edit function / class body** | `symbol_name`, `symbol_scope="body"`, `replace_content` |
+| **Edit entire symbol** | `symbol_name`, `symbol_scope="full"`, `replace_content` |
+| **Fuzzy match for `search_content`** | `did_you_mean=true` |
+| **Replace all occurrences** | `allow_multiple=true` |
 
 ---
 
-> [!IMPORTANT]
-> **Reminder:** MUST use `patch_file` for modifying existing repository files. MUST NOT fall back to native edit tools (`replace_file_content`, `write_to_file`, `multi_replace_file_content`) for repository code. `write_file` overwrite is only for full file replacement, never for modifying existing content.
+## Recipes
+
+### 1. Multiple changes on one file, do this instead of multiple calls on the same file
+```json
+{{
+  "target_file": "src/user.ts",
+  "replacements": [
+    {{ "search_content": "import {{ getA }} from './a.js';", "replace_content": "import {{ getA, getB }} from './a.js';" }},
+    {{ "search_content": "export function run() {{\\n  return getA();\\n}}", "replace_content": "export function run() {{\\n  return getB();\\n}}" }}
+  ]
+}}
+```
+
+### 2. Search with symbol instead of `search_content`
+```json
+{{
+  "target_file": "src/auth.ts",
+  "symbol_name": "validateSession",
+  "symbol_scope": "body",
+  "replace_content": "  const session = await auth.get(id);\\n  if (!session) throw new Error('Unauthorized');\\n  return session.user;"
+}}
+```
+
+### 3. Insert something
+```json
+{{
+  "target_file": "src/index.ts",
+  "insert_line": 1,
+  "insert_content": "import 'reflect-metadata';\\n"
+}}
+```
 """
 
     file_types = file_type if isinstance(file_type, list) else [file_type]

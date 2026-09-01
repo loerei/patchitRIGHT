@@ -1,15 +1,15 @@
-# Extension Popup Automation & Tab Bypass Guide
+# Extension Popup Automation & Tab Bypass
 
-> Auxiliary domain sub-document for [brave-browsing](SKILL.md). Read via `view_file` when automating Chrome Extension Popups (`chrome-extension://...`).
+## 1. Failure Condition
+Interacting with Chrome Extension popups (`chrome-extension://<EXTENSION_ID>/popup.html`) triggers:
+`⚠️ Please open <Target Page> first`
 
-## Failure Condition
-When interacting with Chrome Extension Popups (`chrome-extension://<EXTENSION_ID>/popup.html`) running in standalone tabs or background contexts, clicking action buttons often triggers:
-`⚠️ Please open <Target Page> (e.g. facebook.com/messages) first`
+Root cause: `popup.js` calls `chrome.tabs.query({ active: true, currentWindow: true })`, resolving to `popup.html` instead of the target page tab.
 
-This occurs because `popup.js` calls `chrome.tabs.query({ active: true, currentWindow: true })`, which resolves to `popup.html` itself rather than the target webpage tab.
+---
 
-## Universal Tab Query Override (Boilerplate)
-To bypass active-tab restrictions without modifying extension source code, inject this snippet via `evaluate_script` into the `popup.html` context BEFORE clicking action buttons:
+## 2. Tab Query Override Snippet
+Inject via `evaluate_script` into the `popup.html` context BEFORE clicking action buttons:
 
 ```javascript
 const originalQuery = chrome.tabs.query;
@@ -25,9 +25,11 @@ chrome.tabs.query = function(queryInfo, callback) {
 };
 ```
 
-## Agent Automation Workflow
-1. List active browser pages via `list_pages` to locate the target page URL (e.g., Messenger, Facebook).
-2. Open or switch to the extension popup URL: `chrome-extension://<EXTENSION_ID>/popup.html`.
-3. Execute the Tab Query Override snippet in the popup context using `evaluate_script`.
-4. Fill form inputs or click action buttons (`#btnToggle`, `#btnStart`, etc.).
-5. Read output container or inspect DOM for completion.
+---
+
+## 3. Workflow
+1. Run `list_pages` to find target page URL (e.g., Facebook, Messenger).
+2. Navigate or switch to extension popup: `chrome-extension://<EXTENSION_ID>/popup.html`.
+3. Run `evaluate_script` with the Tab Query Override snippet.
+4. Interact with popup DOM controls (e.g., `fill`, `click`).
+5. Verify completion via DOM inspection.

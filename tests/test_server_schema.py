@@ -118,3 +118,17 @@ async def test_patch_file_schema_line_insertion_fields():
         assert param in files_props
     assert "insert_position" not in files_props
 
+
+def test_enrich_tool_schema_legacy_copy():
+    from patchitright_mcp.tool_schemas import _enrich_tool_schema
+
+    class DummyTool:
+        def __init__(self):
+            self.name = "custom_tool"
+            self.inputSchema = {"type": "object", "properties": {}}
+
+    dummy = DummyTool()
+    enriched = _enrich_tool_schema(dummy, expose_bypass=True)
+    assert "set_timeout" in enriched.inputSchema["properties"]
+
+

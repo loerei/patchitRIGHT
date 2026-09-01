@@ -43,10 +43,7 @@ flowchart TD
 
     CritEval -->|"STATUS: PASS"| PassCounter{"PassCount = PassCount + 1<br/>PassCount >= SP?"}
     PassCounter -->|"Yes (Final PASS)"| Present["9. Present Verified Final Output"]
-    PassCounter -->|"No (Not Final PASS)"| NonBlockCheck{"Has Non-blocking Suggestions?"}
-    
-    NonBlockCheck -->|"Yes"| ApplyNonBlock["Apply Non-blocking Updates"] --> CheckPA
-    NonBlockCheck -->|"No"| CheckPA
+    PassCounter -->|"No (Not Final PASS)"| CheckPA{"!PA Active AND Not Final PASS?"}
 
     CritEval -->|"All Points Evaluated Invalid"| JustifyUser["Document Exclusions & Report to User"] --> UserGateFinal{"User Approves Rationale?"}
     UserGateFinal -->|"Approved"| Present
@@ -77,7 +74,7 @@ For **Mode B (Post-Implementation Validation)**:
 
 > [!IMPORTANT]
 > **Prompt Persistence & Approval Gate Protocol**:
-> 1. **Synthesize Task Domain Skills & Read Templates**: Call `view_file` on `MODE-A-DESIGN-AUDIT.md` (Mode A) or `MODE-B-CODE-VALIDATION.md` (Mode B) to retrieve prompt templates. Always identify and include task-specific domain skills (e.g., `/write-a-skill`, `/write-for-ai`, `/writing-great-skills` when auditing skills; `/tdd` for tests; `/design-taste-frontend` for UI) under `Required Reading` in the reviewer prompt.
+> 1. **Synthesize Task Domain Skills & Read Templates**: Call `view_file` on `MODE-A-DESIGN-AUDIT.md` (Mode A) or `MODE-B-CODE-VALIDATION.md` (Mode B) to retrieve lean prompt templates. Always include [REVIEWER-DESIGN-AUDIT.md](REVIEWER-DESIGN-AUDIT.md) (Mode A) or [REVIEWER-CODE-VALIDATION.md](REVIEWER-CODE-VALIDATION.md) + [REVIEWER-ANTI-LAZINESS.md](REVIEWER-ANTI-LAZINESS.md) (Mode B) alongside task domain skills under `Required Reading` in the synthesized reviewer prompt. NEVER pass `SKILL.md`, `MODE-A-DESIGN-AUDIT.md`, or `MODE-B-CODE-VALIDATION.md` to Subagents.
 > 2. **Save Prompt to File**: Save every reviewer prompt as a markdown file inside `<appDataDir>\brain\<conversation-id>\scratch\reviewer_prompt_v1.md`.
 > 3. **Initial User Approval Gate (Disambiguated)**: Present `scratch/reviewer_prompt_v1.md` to the user and **AWAIT EXPLICIT KEYWORD "Conduct?"** (or *"Conduct review"*) before spawning Reviewer #1. *Do NOT ask using "Approve" or "Proceed" for prompt authorization to prevent lower-tier models from confusing prompt confirmation with direct Tier 3 plan/source approval.*
 > 4. **Immutable Active Prompt Reuse**: Freeze the approved prompt as Active Prompt ($P_{active}$) and reuse it 100% identically for subsequent reviewers (#2, #3... #N), changing only the Reviewer ID.
@@ -86,13 +83,20 @@ For **Mode B (Post-Implementation Validation)**:
 > 7. **Clean & Neutral Artifact Rule (Anti-Anchoring)**: When updating the draft document (Mode A) to satisfy feedback from Reviewer $N$, NEVER inject past reviewer references, version tags based on reviewers (e.g. *"v4 per Reviewer #3"*), or meta-changelogs into the document body. Write all edits seamlessly as native, standard specifications so subsequent blind reviewers evaluate the draft without anchoring bias.
 
 > [!WARNING]
-> **Critical Evaluation Rule (Main Agent Gatekeeper)**: ALWAYS evaluate reviewer feedback critically against YAGNI, empirical codebase facts, and repository rules (`AGENTS.md`). Do NOT blindly apply over-engineered or hallucinated reviewer suggestions. Items listed under `Suggestions for Improvement (Optional / Non-blocking)` do NOT affect `STATUS: PASS` and are non-blocking considerations that must never trigger unnecessary revision iterations unless `!PA` is active or explicit user instructions require it.
+> **Critical Evaluation & Non-Blocking Churn Guard (Main Agent Gatekeeper)**: ALWAYS evaluate reviewer feedback critically against YAGNI, empirical codebase facts, and repository rules (`AGENTS.md`). Do NOT blindly apply over-engineered or hallucinated reviewer suggestions.
+> - **Non-Blocking Churn Guard**: Items listed under `Suggestions for Improvement (Optional / Non-blocking)` do NOT affect `STATUS: PASS`. The Main Agent **MUST NOT** edit the draft plan, modify codebase files, or reset `PassCount` based on non-blocking suggestions. Non-blocking suggestions must be noted as optional future backlog items and must never trigger revision iterations unless the user explicitly commands it.
 
 ---
 
-## Output Templates & Checklists
+## Subdoc References
 
-See [MODE-A-DESIGN-AUDIT.md](MODE-A-DESIGN-AUDIT.md) for Mode A (Pre-Implementation Plan Audit) and [MODE-B-CODE-VALIDATION.md](MODE-B-CODE-VALIDATION.md) for Mode B (Post-Implementation Coverage Validation).
+- **Main Agent Orchestration Guides**:
+  - Mode A (Design & Plan Audit): see [MODE-A-DESIGN-AUDIT.md](MODE-A-DESIGN-AUDIT.md).
+  - Mode B (Code Implementation Validation): see [MODE-B-CODE-VALIDATION.md](MODE-B-CODE-VALIDATION.md).
+- **Subagent Reviewer Rubrics**:
+  - Design & Plan Audit Discipline (Mode A): see [REVIEWER-DESIGN-AUDIT.md](REVIEWER-DESIGN-AUDIT.md).
+  - Code Coverage Validation Discipline (Mode B): see [REVIEWER-CODE-VALIDATION.md](REVIEWER-CODE-VALIDATION.md).
+  - Anti-Laziness & Output Completeness (Mode B only): see [REVIEWER-ANTI-LAZINESS.md](REVIEWER-ANTI-LAZINESS.md).
 
 ---
 
@@ -114,7 +118,7 @@ The conduct-reviewing-loop supports specialized modifier tags and domain termino
 - **`!PA` (Pause After)**: Pauses the review loop after applying reviewer fixes.
   - **Syntax/Parameter**: `!PA`.
   - **Timing**: Mid-flight.
-  - **Agent Action**: Pauses execution after applying fixes per current reviewer feedback (or after non-blocking updates), presents edit summary, and awaits explicit user resume command before spawning reviewer $N+1$. Skipped on `Final PASS`.
+  - **Agent Action**: Pauses execution after applying fixes per current reviewer feedback (if valid fixes were applied), presents edit summary, and awaits explicit user resume command before spawning reviewer $N+1$. Skipped on `Final PASS`.
 - **`!FPA` (Force-Pause)**: Emergency mid-loop brake sent while a reviewer is actively running.
   - **Syntax/Parameter**: `!FPA`.
   - **Timing**: Mid-flight.
