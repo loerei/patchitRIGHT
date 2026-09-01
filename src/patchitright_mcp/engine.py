@@ -106,18 +106,57 @@ class PatchEngine:
     def _expand_alignment_end(self, target_slice: str, src_end: int, match_char: str) -> int:
         return expand_alignment_end(target_slice, src_end, match_char)
 
-    def _apply_replacement_logic(self, target_slice: str, norm_search: str, norm_replace: str) -> str:
+    def _apply_replacement_logic(
+        self,
+        target_slice: str,
+        norm_search: str,
+        norm_replace: str,
+        auto_indent: bool = True,
+    ) -> str:
+        from .body_parser import normalize_indent
+
         if self.is_did_you_mean_applied:
             alignment = fuzz.partial_ratio_alignment(target_slice, norm_search)
             if alignment:
                 src_start = self._expand_alignment_start(target_slice, alignment.src_start, norm_search[0])
                 src_end = self._expand_alignment_end(target_slice, alignment.src_end, norm_search[-1])
+                matched_slice = target_slice[src_start:src_end]
+
+                if auto_indent:
+                    disk_non_empty = [l for l in matched_slice.split("\n") if l.strip()]
+                    disk_base_indent = min((l[: len(l) - len(l.lstrip())] for l in disk_non_empty), key=len) if disk_non_empty else ""
+
+                    replace_non_empty = [l for l in norm_replace.split("\n") if l.strip()]
+                    replace_base_indent = min((l[: len(l) - len(l.lstrip())] for l in replace_non_empty), key=len) if replace_non_empty else ""
+
+                    if disk_base_indent != replace_base_indent:
+                        norm_replace_adjusted, adjusted, delta = normalize_indent(norm_replace, disk_base_indent)
+                        if adjusted:
+                            self.indentation_adjusted = True
+                            self.indent_delta = delta
+                            norm_replace = norm_replace_adjusted
+
                 return (
                     target_slice[:src_start]
                     + norm_replace
                     + target_slice[src_end:]
                 )
             return norm_replace
+
+        if auto_indent:
+            search_non_empty = [l for l in norm_search.split("\n") if l.strip()]
+            search_base_indent = min((l[: len(l) - len(l.lstrip())] for l in search_non_empty), key=len) if search_non_empty else ""
+
+            replace_non_empty = [l for l in norm_replace.split("\n") if l.strip()]
+            replace_base_indent = min((l[: len(l) - len(l.lstrip())] for l in replace_non_empty), key=len) if replace_non_empty else ""
+
+            if search_base_indent and not replace_base_indent:
+                norm_replace_adjusted, adjusted, delta = normalize_indent(norm_replace, search_base_indent)
+                if adjusted:
+                    self.indentation_adjusted = True
+                    self.indent_delta = delta
+                    norm_replace = norm_replace_adjusted
+
         return target_slice.replace(norm_search, norm_replace)
 
     def _check_symbol_omissions(
@@ -153,6 +192,7 @@ class PatchEngine:
         did_you_mean: bool = False,
         validate: bool = True,
         check_symbols: bool = True,
+        auto_indent: bool = True,
     ) -> tuple[str, int]:
         """Apply a classic search-and-replace patch inside line/symbol scope."""
         norm_search = search_content.replace("\r\n", "\n").replace("\r", "")
@@ -187,7 +227,7 @@ class PatchEngine:
             self._check_symbol_omissions(start_idx, target_slice, norm_search, norm_replace)
 
         # Apply replacement
-        patched_slice = self._apply_replacement_logic(target_slice, norm_search, norm_replace)
+        patched_slice = self._apply_replacement_logic(target_slice, norm_search, norm_replace, auto_indent=auto_indent)
 
         before_part = "\n".join(self.file_lines[:start_idx]) + "\n" if start_idx > 0 else ""
         after_part = "\n" + "\n".join(self.file_lines[end_idx + 1 :]) if end_idx < len(self.file_lines) - 1 else ""

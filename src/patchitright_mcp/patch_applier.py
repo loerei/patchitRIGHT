@@ -65,6 +65,7 @@ def _process_single_file_in_memory(
     symbol_name = kwargs.get("symbol_name")
     allow_multiple = bool(kwargs.get("allow_multiple", False))
     line_filter = kwargs.get("line_filter")
+    auto_indent = bool(kwargs.get("auto_indent", True))
 
     if patch_content is not None:
         return _apply_patch_content(file_content, target_file, patch_content, bypass_validation=bypass_validation)
@@ -207,7 +208,8 @@ def _process_single_file_in_memory(
                         symbol_name=sym_name,
                         line_filter=r.get("line_filter"),
                         did_you_mean=is_suggest,
-                        validate=(idx == len(sorted_resolved_items) - 1)
+                        validate=(idx == len(sorted_resolved_items) - 1),
+                        auto_indent=bool(r.get("auto_indent", auto_indent)),
                     )
 
                 occurrences_sum += occurrences_cnt
@@ -349,6 +351,7 @@ def _process_single_file_in_memory(
                 line_filter=line_filter,
                 did_you_mean=did_you_mean,
                 validate=True,
+                auto_indent=auto_indent,
             )
         sym_warnings = getattr(engine, "symbol_warnings", [])
         linter_warnings = list(sym_warnings) + list(getattr(engine, "linter_warnings", []))
