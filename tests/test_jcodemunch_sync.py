@@ -1,33 +1,49 @@
-import os
+import subprocess
 import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-import pytest
+from unittest.mock import patch
 
-from patchitright_mcp.patch_file import trigger_jcodemunch_sync, write_file
+from patchitright_mcp.patch_file import trigger_jcodemunch_sync
 
 
-def test_trigger_jcodemunch_sync_disabled():
-    with patch("os.environ.get", return_value="false"):
-        with patch("jcodemunch_mcp.tools.index_file.index_file") as mock_index:
+def test_trigger_jcodemunch_sync_disabled(monkeypatch):
+    monkeypatch.setenv("PATCHITRIGHT_SYNC_JCODEMUNCH", "false")
+    with patch("shutil.which", return_value="/usr/bin/jcodemunch-mcp"):
+        with patch("subprocess.run") as mock_run:
             trigger_jcodemunch_sync(Path("dummy.py"))
-            time.sleep(0.1)  # Allow thread worker to run
-            mock_index.assert_not_called()
+            time.sleep(0.05)
+            mock_run.assert_not_called()
 
 
-def test_trigger_jcodemunch_sync_enabled():
-    with patch("os.environ.get", side_effect=lambda k, default=None: "true" if k == "PATCHITRIGHT_SYNC_JCODEMUNCH" else default):
-        with patch("jcodemunch_mcp.tools.index_file.index_file") as mock_index:
+def test_trigger_jcodemunch_sync_cli_missing(monkeypatch):
+    monkeypatch.setenv("PATCHITRIGHT_SYNC_JCODEMUNCH", "true")
+    with patch("shutil.which", return_value=None):
+        with patch("subprocess.run") as mock_run:
+            trigger_jcodemunch_sync(Path("dummy.py"))
+            time.sleep(0.05)
+            mock_run.assert_not_called()
+
+
+def test_trigger_jcodemunch_sync_enabled(monkeypatch):
+    monkeypatch.setenv("PATCHITRIGHT_SYNC_JCODEMUNCH", "true")
+    cli_path = "/usr/local/bin/jcodemunch-mcp"
+    with patch("shutil.which", return_value=cli_path):
+        with patch("subprocess.run") as mock_run:
             trigger_jcodemunch_sync(Path("dummy.py"), storage_path="some_db")
-            
-            # Wait for thread to finish
-            retries = 10
-            while mock_index.call_count == 0 and retries > 0:
+
+            retries = 20
+            while mock_run.call_count == 0 and retries > 0:
                 time.sleep(0.05)
                 retries -= 1
-                
-            mock_index.assert_called_once_with(
-                path=str(Path("dummy.py").resolve()),
-                use_ai_summaries=False,
-                storage_path="some_db"
-            )
+
+            mock_run.assert_called_once()
+            args, kwargs = mock_run.call_args
+            assert args[0] == [
+                cli_path,
+                "index-file",
+                str(Path("dummy.py").resolve()),
+                "--db",
+                "some_db",
+            ]
+            assert kwargs["stdout"] is subprocess.DEVNULL
+            assert kwargs["stderr"] is subprocess.DEVNULL
