@@ -182,4 +182,20 @@ async def test_schema_parity_and_extension_bounds():
         jsonschema.validate(instance={"files": [{"target_file": "a.py", "start_line": 0}]}, schema=patch_schema)
 
 
+@pytest.mark.asyncio
+async def test_schemas_exclude_storage_path():
+    """storage_path is no longer exposed in MCP tool schemas and symbol_name is index-free."""
+    from patchitright_mcp.server import list_tools
+
+    with patch.dict(os.environ, {"PATCHITRIGHT_SHOW_LEGACY": "true"}):
+        tools = {t.name: t for t in await list_tools()}
+
+    for name in ("patch_file", "write_file", "batch_patch_files"):
+        props = tools[name].inputSchema.get("properties", {})
+        assert "storage_path" not in props
+
+    patch_props = tools["patch_file"].inputSchema["properties"]
+    assert "jcodemunch" not in patch_props["symbol_name"]["description"].lower()
+
+
 

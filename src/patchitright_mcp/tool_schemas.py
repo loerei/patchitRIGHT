@@ -7,8 +7,6 @@ from typing import Any
 
 from mcp.types import Tool
 
-STORAGE_PATH_DESC = "Optional custom path to the jCodeMunch SQLite index database."
-
 _SOURCE_SLICE_PROPERTIES: dict[str, Any] = {
     "source_file": {
         "type": "string",
@@ -90,7 +88,7 @@ _PATCH_OP_PROPERTIES: dict[str, Any] = {
     },
     "symbol_name": {
         "type": "string",
-        "description": "AST symbol name (function/class) resolved via jCodeMunch index to scope or replace.",
+        "description": "AST symbol name (function/class) resolved on-demand to scope or replace.",
     },
     "symbol_scope": {
         "type": "string",
@@ -233,10 +231,6 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
             "description": "Return unified diff preview without writing to disk.",
             "default": False,
         },
-        "storage_path": {
-            "type": "string",
-            "description": STORAGE_PATH_DESC,
-        },
         "files": {
             "type": "array",
             "items": copy.deepcopy(_BATCH_FILE_ITEM_SCHEMA),
@@ -266,10 +260,6 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
             "type": "boolean",
             "description": "Validate and cache preview without writing to disk.",
             "default": False,
-        },
-        "storage_path": {
-            "type": "string",
-            "description": STORAGE_PATH_DESC,
         },
     }
 
@@ -385,10 +375,6 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
                             "type": "boolean",
                             "description": "If True, returns a unified diff preview of the changes without modifying the files. Defaults to False.",
                             "default": False,
-                        },
-                        "storage_path": {
-                            "type": "string",
-                            "description": STORAGE_PATH_DESC,
                         },
                     },
                     "required": ["patches"],

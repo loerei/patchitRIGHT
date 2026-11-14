@@ -136,7 +136,6 @@ def _build_shared_op_kwargs(arguments: dict) -> dict:
         "did_you_mean": bool(arguments.get("did_you_mean", False)),
         "auto_indent": bool(arguments.get("auto_indent", True)) if arguments.get("auto_indent") is not None else True,
         "dry_run": bool(arguments.get("dry_run", False)),
-        "storage_path": arguments.get("storage_path"),
         "bypass_validation": bool(arguments.get("bypass_validation", False)),
     }
     if "allow_multiple" in arguments and arguments["allow_multiple"] is not None:
@@ -193,13 +192,11 @@ def _execute_batch_patch_files(arguments: dict) -> list[TextContent]:
     if not patches:
         return [TextContent(type="text", text="Error: patches array is required for batch_patch_files.")]
     dry_run = bool(arguments.get("dry_run", False))
-    storage_path = arguments.get("storage_path")
     bypass_validation = bool(arguments.get("bypass_validation", False))
 
     res = batch_patch_files(
         patches=patches,
         dry_run=dry_run,
-        storage_path=storage_path,
         bypass_validation=bypass_validation,
     )
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
