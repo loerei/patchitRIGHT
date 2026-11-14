@@ -107,13 +107,16 @@ async def test_patch_file_schema_line_insertion_fields():
 
     assert "insert_position" not in props
 
-    # Item-level insertion properties in replacements and files arrays
-    replacements_props = props["replacements"]["items"]["properties"]
+    # Item-level insertion properties via $defs/PatchOp and files items
+    patch_op_props = patch_tool.inputSchema["$defs"]["PatchOp"]["properties"]
+    assert props["replacements"]["items"] == {"$ref": "#/$defs/PatchOp"}
     for param in ("insert_line", "insert_content", "auto_indent"):
-        assert param in replacements_props
-    assert "insert_position" not in replacements_props
+        assert param in patch_op_props
+    assert "insert_position" not in patch_op_props
 
-    files_props = props["files"]["items"]["properties"]
+    files_schema = props["files"]["items"]
+    assert {"$ref": "#/$defs/PatchOp"} in files_schema["allOf"]
+    files_props = {**patch_op_props, **files_schema.get("properties", {})}
     for param in ("insert_line", "insert_content", "auto_indent"):
         assert param in files_props
     assert "insert_position" not in files_props
@@ -138,10 +141,12 @@ async def test_schema_parity_and_extension_bounds():
     from patchitright_mcp.server import list_tools
 
     tools = {t.name: t for t in await list_tools()}
-    patch_props = tools["patch_file"].inputSchema["properties"]
-    write_props = tools["write_file"].inputSchema["properties"]
-    repl_props = patch_props["replacements"]["items"]["properties"]
-    files_props = patch_props["files"]["items"]["properties"]
+    patch_schema = tools["patch_file"].inputSchema
+    write_schema = tools["write_file"].inputSchema
+    patch_props = patch_schema["properties"]
+    write_props = write_schema["properties"]
+    repl_props = patch_schema["$defs"]["PatchOp"]["properties"]
+    files_props = {**repl_props, **patch_props["files"]["items"]["properties"]}
 
     for key in ("target_files", "target_glob", "skip_unmatched", "expected_occurrences", "start_anchor", "end_anchor"):
         assert key in patch_props
@@ -164,7 +169,17 @@ async def test_schema_parity_and_extension_bounds():
     assert patch_props["source_start_line"]["minimum"] == 1
     assert patch_props["source_end_line"]["minimum"] == 1
     assert write_props["source_start_line"]["minimum"] == 1
-    assert {"required": ["source_file"]} in tools["write_file"].inputSchema["anyOf"]
+    assert {"required": ["source_file"]} in write_schema["anyOf"]
+
+    import jsonschema
+    jsonschema.validate(
+        instance={"files": [{"target_file": "a.py", "replacements": [{"search_content": "a", "replace_content": "b"}]}]},
+        schema=patch_schema,
+    )
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance={"target_file": "a.py", "replacements": [True]}, schema=patch_schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance={"files": [{"target_file": "a.py", "start_line": 0}]}, schema=patch_schema)
 
 
 
