@@ -115,7 +115,11 @@ def _write_patched_file(target_path: Path, content: str) -> None:
         trigger_jcodemunch_sync(target_path)
 
 
-def _commit_transaction_with_delay(transaction: FileTransaction, modifications: dict[Path, str], delay: Optional[float] = None) -> None:
+def _commit_transaction_with_delay(
+    transaction: FileTransaction,
+    modifications: dict[Path, Optional[Union[str, bytes]]],
+    delay: Optional[float] = None,
+) -> None:
     """Commit transaction after a short delay on a background thread for self-modification."""
     actual_delay = delay if delay is not None else get_commit_delay()
 
@@ -125,8 +129,9 @@ def _commit_transaction_with_delay(transaction: FileTransaction, modifications: 
         try:
             transaction.commit(modifications)
             transaction.cleanup()
-            for target_path in modifications.keys():
-                trigger_jcodemunch_sync(target_path)
+            for target_path, content in modifications.items():
+                if content is not None and target_path.exists():
+                    trigger_jcodemunch_sync(target_path)
         except Exception:
             pass
 
@@ -136,7 +141,10 @@ def _commit_transaction_with_delay(transaction: FileTransaction, modifications: 
         pass
 
 
-def _commit_or_defer_transaction(transaction: FileTransaction, modifications: dict[Path, str]) -> Optional[dict]:
+def _commit_or_defer_transaction(
+    transaction: FileTransaction,
+    modifications: dict[Path, Optional[Union[str, bytes]]],
+) -> Optional[dict]:
     """Commit transaction atomically or schedule deferred commit for self-modifications."""
     is_self_mod = False
     try:
@@ -151,8 +159,9 @@ def _commit_or_defer_transaction(transaction: FileTransaction, modifications: di
         try:
             transaction.commit(modifications)
             transaction.cleanup()
-            for p in modifications.keys():
-                trigger_jcodemunch_sync(p)
+            for p, content in modifications.items():
+                if content is not None and p.exists():
+                    trigger_jcodemunch_sync(p)
         except Exception as e:
             return {"error": f"Failed to commit transaction: {e}"}
     return None

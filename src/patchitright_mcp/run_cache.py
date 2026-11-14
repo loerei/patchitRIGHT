@@ -14,7 +14,15 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
+
+
+def compute_content_hash(content: Union[str, bytes]) -> str:
+    """Compute SHA-256 hash, normalizing text line endings to LF."""
+    if isinstance(content, bytes):
+        return hashlib.sha256(content).hexdigest()
+    norm = content.replace("\r\n", "\n").replace("\r", "")
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -74,28 +82,37 @@ class RunCache:
         enriched: list[dict] = []
         for e in entries:
             target_path: Path = e["target_path"]
-            patched_content: str = e["patched_content"]
+            patched_content: Optional[Union[str, bytes]] = e.get("patched_content")
+            action = e.get("action") or ("delete" if patched_content is None else "write")
+            is_binary = bool(e.get("is_binary", isinstance(patched_content, bytes)))
 
-            # Find the original content for this file (match by path name as fallback)
-            original_text = original_contents.get(
-                str(target_path),
-                original_contents.get(target_path.name, ""),
-            )
-            # Normalize newlines to LF for robust hash comparison
-            norm_original = original_text.replace("\r\n", "\n").replace("\r", "")
-            original_hash = hashlib.sha256(norm_original.encode()).hexdigest()
+            # Find the original content for this file (match by full path, target_file, or name fallback)
+            tf_key = e.get("target_file")
+            if str(target_path) in original_contents:
+                original_data: Union[str, bytes] = original_contents[str(target_path)]
+            elif tf_key and tf_key in original_contents:
+                original_data = original_contents[tf_key]
+            else:
+                original_data = original_contents.get(target_path.name, "")
+
+            if isinstance(original_data, bytes):
+                is_binary = True
+            original_hash = compute_content_hash(original_data)
 
             enriched.append({
                 "target_path": target_path,
                 "patched_content": patched_content,
+                "action": action,
+                "is_binary": is_binary,
                 "original_hash": original_hash,
                 "exists": bool(e.get("exists", target_path.exists())),
-                "target_file": e.get("target_file"),
+                "target_file": tf_key,
                 "occurrences": e.get("occurrences", 0),
                 "relocated_range": e.get("relocated_range"),
                 "did_you_mean_info": e.get("did_you_mean_info"),
                 "symbol_warnings": e.get("symbol_warnings", []),
                 "warnings": e.get("warnings", []),
+                "suggestion": e.get("suggestion", ""),
             })
 
         with self._lock:
