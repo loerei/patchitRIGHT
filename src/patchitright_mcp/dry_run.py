@@ -1,13 +1,12 @@
 """Dry-run preview generation, SHA256 integrity verification, and RunCache state execution."""
 import hashlib
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from .diagnostics import _create_error_response
-from .run_cache import get_cache
-from .self_mod_safety import _commit_or_defer_transaction
+from .run_cache import compute_content_hash, get_cache
 from .transaction import FileTransaction
-from .workspace import Workspace
+from .tx_executor import execute_file_plan, resolve_common_workspace_root
 
 
 def _verify_dry_run_hashes(files: list[dict]) -> Optional[dict]:
@@ -17,6 +16,7 @@ def _verify_dry_run_hashes(files: list[dict]) -> Optional[dict]:
         target_path: Path = f["target_path"]
         original_hash: str = f["original_hash"]
         expected_exists: Optional[bool] = f.get("exists")
+        is_binary = bool(f.get("is_binary", False))
         if not target_path.exists():
             if expected_exists is False or (expected_exists is None and original_hash == empty_hash):
                 continue
@@ -24,12 +24,14 @@ def _verify_dry_run_hashes(files: list[dict]) -> Optional[dict]:
         if expected_exists is False:
             return {"error": f"File '{target_path.name}' was created after dry-run (was expected to not exist)."}
         try:
-            with open(target_path, "r", encoding="utf-8", newline="", errors="replace") as file_handle:
-                current_text = file_handle.read()
+            if is_binary:
+                current_data = target_path.read_bytes()
+            else:
+                with open(target_path, "r", encoding="utf-8", newline="", errors="replace") as file_handle:
+                    current_data = file_handle.read()
         except Exception as e:
             return {"error": f"Cannot read '{target_path}' for hash check: {e}"}
-        norm_current = current_text.replace("\r\n", "\n").replace("\r", "")
-        current_hash = hashlib.sha256(norm_current.encode()).hexdigest()
+        current_hash = compute_content_hash(current_data)
         if current_hash != original_hash:
             return {
                 "error": (
@@ -42,8 +44,6 @@ def _verify_dry_run_hashes(files: list[dict]) -> Optional[dict]:
 
 def apply_last_dry_run(run_id: str) -> dict:
     """Commit the patch cached under run_id from a previous dry-run call."""
-    from .patch_file import _resolve_workspace_root
-
     cache = get_cache()
     entry = cache.consume(run_id)
 
@@ -56,80 +56,42 @@ def apply_last_dry_run(run_id: str) -> dict:
     if error_response:
         return _create_error_response(error_response)
 
-    file_items = [{"target_file": str(f["target_path"])} for f in files]
     cwd = Path.cwd().resolve()
-    workspace = Workspace(cwd)
-    workspace_root = _resolve_workspace_root(file_items, workspace, cwd)
-    
+    target_paths = [f["target_path"] for f in files]
+    workspace_root = resolve_common_workspace_root(target_paths, cwd)
+
     transaction = FileTransaction(workspace_root)
-    modifications: dict[Path, str] = {}
+    modifications: dict[Path, Optional[str | bytes]] = {}
+    processed_files: list[dict] = []
+
     for f in files:
         target_path: Path = f["target_path"]
-        patched_content: str = f["patched_content"]
+        action = f.get("action", "write")
+        patched_content = f.get("patched_content")
         transaction.register_file(target_path)
-        modifications[target_path] = patched_content
+        modifications[target_path] = None if action == "delete" else patched_content
+        processed_files.append({
+            "target_file": f.get("target_file") or str(target_path),
+            "target_path": target_path,
+            "patched_content": patched_content,
+            "action": action,
+            "is_binary": bool(f.get("is_binary", False)),
+            "occurrences": f.get("occurrences", 1),
+            "relocated_range": f.get("relocated_range"),
+            "did_you_mean_info": f.get("did_you_mean_info"),
+            "warnings": f.get("warnings", []),
+            "suggestion": f.get("suggestion", ""),
+        })
 
-    transaction.write_backups()
-    ok, fail_path = transaction.check_optimistic_locking()
-    if not ok:
-        transaction.rollback()
-        transaction.cleanup()
-        return _create_error_response(f"Optimistic locking failed for '{fail_path.name if fail_path else 'file'}'. File was modified on disk.")
-
-    commit_err = _commit_or_defer_transaction(transaction, modifications)
-    if commit_err:
-        return _create_error_response(commit_err)
-
-    if len(files) == 1:
-        f = files[0]
-        tf = f.get("target_file") or str(f["target_path"])
-        occ = f.get("occurrences", 1)
-        rel_range = f.get("relocated_range")
-        dym_info = f.get("did_you_mean_info")
-        res = {
-            "success": True,
-            "dryRun": False,
-            "target_file": tf,
-            "message": f"Applied cached patch (run_id={run_id}) for `{tf}`.\n",
-            "diff_content": None,
-            "occurrences": occ,
-            "relocated_range": rel_range,
-            "did_you_mean_info": dym_info,
-            "modified_files": None,
-        }
-        if f.get("warnings"):
-            res["warnings"] = f["warnings"]
-            res["suggestion"] = f.get("suggestion", "")
-        return res
-    else:
-        tf_primary = files[0].get("target_file") or str(files[0]["target_path"]) if files else None
-        modified_files = []
-        tot_occ = 0
-        output = f"Applied cached patch (run_id={run_id}). Wrote **{len(files)}** file(s).\n"
-        for f in files:
-            tf = f.get("target_file") or str(f["target_path"])
-            occ = f.get("occurrences", 1)
-            output += f"- `{tf}` updated.\n"
-            modified_files.append({
-                "target_file": tf,
-                "occurrences": occ,
-                "diff_content": None,
-                "relocated_range": f.get("relocated_range"),
-                "did_you_mean_info": f.get("did_you_mean_info"),
-            })
-            tot_occ += occ
-        res = {
-            "success": True,
-            "dryRun": False,
-            "target_file": tf_primary,
-            "message": output,
-            "diff_content": None,
-            "occurrences": tot_occ,
-            "relocated_range": None,
-            "did_you_mean_info": None,
-            "modified_files": modified_files,
-        }
-        return res
+    return execute_file_plan(
+        processed_files=processed_files,
+        transaction=transaction,
+        original_contents={},
+        modifications=modifications,
+        dry_run=False,
+        multi_file_mode=(len(files) > 1),
+        run_id_applied=run_id,
+    )
 
 
 def batch_patch_files(

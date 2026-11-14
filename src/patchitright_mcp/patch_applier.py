@@ -1,7 +1,7 @@
 """In-memory chunk replacement engine and patch application helpers."""
 from pathlib import Path
 from typing import Any, Optional
-from .engine import PatchEngine
+from .engine import NoMatchValueError, PatchEngine
 from .line_matcher import (
     _resolve_ast_boundaries,
     check_replacement_collisions,
@@ -73,8 +73,14 @@ def _process_single_file_in_memory(
 
     did_you_mean = bool(kwargs.get("did_you_mean", False))
     symbol_name = kwargs.get("symbol_name")
-    allow_multiple = bool(kwargs.get("allow_multiple", False))
+    allow_multiple = kwargs.get("allow_multiple")
+    raw_expected = kwargs.get("expected_occurrences")
+    expected_occurrences = _safe_int(raw_expected) if raw_expected is not None else None
+    if raw_expected is not None and (isinstance(raw_expected, bool) or expected_occurrences is None):
+        return "", 0, [], "", {"error": "Error: 'expected_occurrences' must be an integer >= 1."}, None
     line_filter = kwargs.get("line_filter")
+    start_anchor = kwargs.get("start_anchor")
+    end_anchor = kwargs.get("end_anchor")
     auto_indent = bool(kwargs.get("auto_indent", True))
 
     if patch_content is not None:
@@ -117,13 +123,24 @@ def _process_single_file_in_memory(
                 body_range = None
                 resolved_start = r_start
                 resolved_end = r_end
+                is_guarded_range = False
 
                 if scope in ("full", "body"):
-                    if not sym_name or "replace_content" not in r:
+                    if not sym_name or "replace_content" not in r or r.get("replace_content") is None:
                         return "", 0, [], "", {"error": f"Error: replacements[{idx}] specifies symbol_scope '{scope}' but is missing symbol_name or replace_content."}, None
-                else:
-                    if "search_content" not in r or "replace_content" not in r:
-                        return "", 0, [], "", {"error": f"Error: replacements[{idx}] is missing search_content or replace_content."}, None
+                elif "search_content" not in r or r.get("search_content") is None:
+                    if (
+                        r_start is not None
+                        and r_end is not None
+                        and "replace_content" in r
+                        and r.get("replace_content") is not None
+                        and not sym_name
+                    ):
+                        is_guarded_range = True
+                    else:
+                        return "", 0, [], "", {"error": f"Error: replacements[{idx}] is missing search_content or replace_content (or guarded start_line/end_line range)."}, None
+                elif "replace_content" not in r or r.get("replace_content") is None:
+                    return "", 0, [], "", {"error": f"Error: replacements[{idx}] is missing replace_content."}, None
 
                 if sym_name:
                     sym_start, sym_end, sym_err, b_range = _resolve_ast_boundaries(
@@ -134,7 +151,7 @@ def _process_single_file_in_memory(
                     resolved_start = sym_start
                     resolved_end = sym_end
                     body_range = b_range
-                elif "search_content" in r and r["search_content"] in file_content and resolved_start is None:
+                elif not is_guarded_range and "search_content" in r and r["search_content"] in file_content and resolved_start is None:
                     s_text = r["search_content"]
                     s_char_idx = file_content.find(s_text)
                     match_start_l = file_content[:s_char_idx].count("\n") + 1
@@ -145,13 +162,14 @@ def _process_single_file_in_memory(
                 resolved_items.append({
                     "r": r,
                     "is_insertion": False,
+                    "is_guarded_range": is_guarded_range,
                     "scope": scope,
                     "symbol_name": sym_name,
                     "start_line": resolved_start or 1,
                     "end_line": resolved_end or len(file_content.split("\n")),
                     "body_range": body_range,
                     "orig_idx": idx,
-                    "unbounded": resolved_start is None,
+                    "unbounded": (resolved_start is None) and not is_guarded_range,
                 })
 
         collision_err = check_replacement_collisions(resolved_items)
@@ -215,6 +233,17 @@ def _process_single_file_in_memory(
                         delimiter_type=delim_type,
                         validate=(idx == len(sorted_resolved_items) - 1),
                     )
+                elif item.get("is_guarded_range"):
+                    temp_content, occurrences_cnt = r_engine.apply_line_range_patch(
+                        start_line=item["start_line"],
+                        end_line=item["end_line"],
+                        replace_content=r["replace_content"],
+                        line_filter=r.get("line_filter"),
+                        start_anchor=r.get("start_anchor"),
+                        end_anchor=r.get("end_anchor"),
+                        validate=(idx == len(sorted_resolved_items) - 1),
+                        auto_indent=bool(r.get("auto_indent", auto_indent)),
+                    )
                 else:
                     sym_boundaries = None
                     if sym_name:
@@ -232,6 +261,7 @@ def _process_single_file_in_memory(
                         did_you_mean=is_suggest,
                         validate=(idx == len(sorted_resolved_items) - 1),
                         auto_indent=bool(r.get("auto_indent", auto_indent)),
+                        expected_occurrences=r.get("expected_occurrences", expected_occurrences),
                     )
 
                 occurrences_sum += occurrences_cnt
@@ -290,6 +320,10 @@ def _process_single_file_in_memory(
                 "line": e.line,
                 "column": e.column
             }, None
+        except NoMatchValueError as e:
+            err_payload = _handle_patch_file_value_error(e, target_file)
+            err_payload["no_match"] = True
+            return "", 0, [], "", err_payload, None
         except ValueError as e:
             return "", 0, [], "", _handle_patch_file_value_error(e, target_file), None
 
@@ -334,9 +368,14 @@ def _process_single_file_in_memory(
     if symbol_scope in ("full", "body"):
         if not symbol_name or replace_content is None:
             return "", 0, [], "", {"error": "Error: Both symbol_name and replace_content must be provided when symbol_scope is 'full' or 'body'."}, None
+        is_single_guarded_range = False
     else:
-        if search_content is None or replace_content is None:
+        if search_content is None and replace_content is not None and start_line is not None and end_line is not None and not symbol_name:
+            is_single_guarded_range = True
+        elif search_content is None or replace_content is None:
             return "", 0, [], "", {"error": "Error: Either replacements, patch_content, OR both search_content and replace_content must be provided."}, None
+        else:
+            is_single_guarded_range = False
 
     from .body_parser import is_treesitter_size_exceeded
     large_file = is_treesitter_size_exceeded(file_content)
@@ -379,6 +418,17 @@ def _process_single_file_in_memory(
                 is_expression=is_expr,
                 delimiter_type=delim_type,
             )
+        elif is_single_guarded_range:
+            patched_file, occurrences = engine.apply_line_range_patch(
+                start_line=start_line,
+                end_line=end_line,
+                replace_content=replace_content,
+                line_filter=line_filter,
+                start_anchor=start_anchor,
+                end_anchor=end_anchor,
+                validate=True,
+                auto_indent=auto_indent,
+            )
         else:
             sym_boundaries = None
             if symbol_name:
@@ -396,6 +446,7 @@ def _process_single_file_in_memory(
                 did_you_mean=did_you_mean,
                 validate=True,
                 auto_indent=auto_indent,
+                expected_occurrences=expected_occurrences,
             )
         sym_warnings = getattr(engine, "symbol_warnings", [])
         linter_warnings = list(sym_warnings) + list(getattr(engine, "linter_warnings", []))
@@ -409,6 +460,10 @@ def _process_single_file_in_memory(
             "line": e.line,
             "column": e.column
         }, None
+    except NoMatchValueError as e:
+        err_payload = _handle_patch_file_value_error(e, target_file)
+        err_payload["no_match"] = True
+        return "", 0, [], "", err_payload, None
     except ValueError as e:
         return "", 0, [], "", _handle_patch_file_value_error(e, target_file), None
 

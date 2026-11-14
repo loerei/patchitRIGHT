@@ -36,19 +36,19 @@ Add the following to your MCP client configuration (e.g. `claude_desktop_config.
 
 | Tool | Purpose | Key Parameters |
 | :--- | :--- | :--- |
-| `patch_file` | Modify existing files via AST symbol mutation, text replacement, line insertion, or multi-file batches. | `target_file` (or `files`), `symbol_name`, `symbol_scope`, `search_content`/`replace_content`, `replacements`, `insert_line` |
-| `write_file` | Create a new file or fully replace file content with syntax validation. | `target_file`, `code_content`, `allow_overwrite` |
+| `patch_file` | Modify existing files via AST symbol mutation, text/guarded-range replacement, line insertion, broadcast (`target_files`/`target_glob`), or mixed atomic `files` batches. | `target_file` / `target_files` / `target_glob` / `files`, `symbol_name`, `search_content`/`replace_content`, `start_anchor`/`end_anchor`, `expected_occurrences`, `skip_unmatched`, `source_file` slice |
+| `write_file` | Create or overwrite files from inline text or `source_file` (whole-file copy/move, partial line/symbol slice extraction, binary copy, or copy-then-patch). | `target_file`, `code_content` or `source_file` (`source_start_line`/`source_end_line`, `source_symbol`, `cut_source`, `delete_source`), `allow_overwrite` |
 
 ---
 
-## AST-Scoped Replacements
+## AST-Scoped & Source-Sliced Operations
 
-Edit functions or classes directly without repeating existing code in `search_content`:
+Edit functions or classes directly without repeating existing code in `search_content`, or transfer code slices directly from another file:
 
-* **Body replacement**: Pass `symbol_name: "my_func"` and `symbol_scope: "body"` with the new body in `replace_content`.
-* **Full replacement**: Pass `symbol_scope: "full"` to replace signature, decorators, and body.
-* **Auto-indentation**: Target indentation is detected and applied to `replace_content` automatically.
-* **Multi-replacement**: Non-contiguous edits in `replacements` are resolved bottom-up to prevent line-drift.
+* **Body / Full replacement**: Pass `symbol_name: "my_func"` with `symbol_scope: "body"` or `"full"` and `replace_content` (or a `source_file` slice).
+* **Cross-file slice extraction (`write_file` & `patch_file`)**: Pass `source_file` with `source_start_line`/`source_end_line` (plus optional `source_start_anchor`/`source_end_anchor`) or `source_symbol` to create/overwrite a target or supply `replace_content`/`insert_content` without regenerating lines. Use `delete_source: true` to move whole files or `cut_source: true` to atomically cut the extracted lines from the source file.
+* **Broadcast & Mixed Batches**: Use `target_files` or `target_glob` (with optional `skip_unmatched: true`) to apply the same change across multiple files, or `files` with per-item `action: "patch" | "write" | "delete"` and shared top-level defaults.
+* **Auto-indentation & Guarded Ranges**: Target indentation is applied automatically. Guarded line-range replacement (`start_line` + `end_line` + `start_anchor`/`end_anchor`/`line_filter` without `search_content`) allows targeted replacement or clean deletion (`replace_content: ""`).
 
 ---
 
@@ -63,9 +63,9 @@ Insert code above a target line index:
 
 ## Validation & Safety Guardrails
 
-* **Pre-write Syntax Checking**: Validates syntax before writing (Python `ast`, JS/TS via Biome/`tsc`, JSON, TOML, YAML). Blocks write on syntax errors.
-* **Pre-existing Error Tolerance**: Skips syntax blocking if the file was already invalid before editing.
-* **Atomic Multi-file Writes**: Multi-file edits in `files` apply transactionally (all-or-nothing rollback on failure).
+* **Pre-write Syntax Checking**: Validates syntax before writing (Python `ast`, JS/TS via Biome/`tsc`, JSON, TOML, YAML) on both destinations and `cut_source` source files.
+* **Strict Occurrence Assertions**: Rejects 0 or ambiguous multi-matches by default; use `expected_occurrences: N` to enforce an exact match count (`allow_multiple` implied when omitted).
+* **Atomic Multi-file & Copy/Cut Transactions**: `files`, `target_files`, `target_glob`, `cut_source`, and `delete_source` execute transactionally with optimistic locking and full rollback on failure.
 
 ---
 

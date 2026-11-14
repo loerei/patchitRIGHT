@@ -85,14 +85,20 @@ class FileTransaction:
                     return False, target_path
         return True, None
 
-    def commit(self, modifications: dict[Path, str]) -> None:
-        """Writes the modified contents to the target files. Throws if a write fails."""
+    def commit(self, modifications: dict[Path, Optional[Union[str, bytes]]]) -> None:
+        """Writes or deletes the target files. Throws if an operation fails."""
         written = []
         try:
             for target_path, content in modifications.items():
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(target_path, "w", encoding="utf-8", newline="") as f:
-                    f.write(content)
+                if content is None:
+                    target_path.unlink(missing_ok=True)
+                elif isinstance(content, bytes):
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    target_path.write_bytes(content)
+                else:
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(target_path, "w", encoding="utf-8", newline="") as f:
+                        f.write(content)
                 written.append(target_path)
         except Exception as e:
             # Rollback written ones and propagate error

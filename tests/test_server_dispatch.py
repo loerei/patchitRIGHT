@@ -123,14 +123,14 @@ async def test_call_tool_unhandled_exception():
 
 
 def test_execute_write_file_validation(tmp_path):
-    """_execute_write_file validates required arguments."""
+    """_execute_write_file validates required arguments and source_file copy dispatch."""
     # 1. Missing target_file
     res1 = _execute_write_file({})
     assert "Error: target_file is required." in res1[0].text
 
-    # 2. Missing code_content
+    # 2. Missing code_content and source_file
     res2 = _execute_write_file({"target_file": str(tmp_path / "out.txt")})
-    assert "Error: code_content is required." in res2[0].text
+    assert "Error: Either code_content or source_file is required." in res2[0].text
 
     # 3. Successful write
     target = tmp_path / "out.txt"
@@ -143,6 +143,17 @@ def test_execute_write_file_validation(tmp_path):
     data = json.loads(res3[0].text)
     assert data["success"] is True
     assert target.read_text() == "Hello World\n"
+
+    # 4. Copy slice via source_file
+    copied = tmp_path / "copied.txt"
+    res4 = _execute_write_file({
+        "target_file": str(copied),
+        "source_file": str(target),
+        "source_start_line": 1,
+        "source_end_line": 1,
+    })
+    assert json.loads(res4[0].text)["success"] is True
+    assert copied.read_text() == "Hello World\n"
 
 
 def test_execute_apply_last_dry_run_validation():
@@ -170,25 +181,25 @@ def test_execute_batch_patch_files_validation():
 
 
 def test_execute_patch_file_validation(tmp_path):
-    """_execute_patch_file validates target_file, replacements, and symbol scope."""
-    # 1. Missing target_file and files
+    """_execute_patch_file validates target selectors, replacements, symbol scope, and expected_occurrences."""
+    # 1. Missing target selector
     res1 = _execute_patch_file({})
-    assert "Error: Either 'target_file' or 'files' is required." in res1[0].text
+    assert "Error: Either 'target_file', 'target_files', 'target_glob', or 'files' is required." in res1[0].text
 
-    # 2. Symbol scope full/body missing symbol_name or replace_content
+    # 2. Symbol scope full/body missing symbol_name or replace_content/source_file
     res2 = _execute_patch_file({
         "target_file": "foo.py",
         "symbol_scope": "full",
         "replace_content": "def bar(): pass"
     })
-    assert "Error: Both symbol_name and replace_content are required" in res2[0].text
+    assert "Error: Both symbol_name and replace_content (or source_file) are required" in res2[0].text
 
     # 3. Missing replacement directives
     res3 = _execute_patch_file({
         "target_file": "foo.py",
         "symbol_scope": "boundary"
     })
-    assert "Error: Either replacements, patch_content, insert_content, OR both search_content and replace_content are required." in res3[0].text
+    assert "Error: Either replacements, patch_content, insert_content, guarded start_line/end_line, OR search_content with replace_content/source_file are required." in res3[0].text
 
     # 4. Line filter parsing (integer and string)
     target = tmp_path / "sample.py"
@@ -209,6 +220,20 @@ def test_execute_patch_file_validation(tmp_path):
         "line_filter": "b = 20"
     })
     assert json.loads(res_line_str[0].text)["success"] is True
+
+    # 5. expected_occurrences > 1 works when allow_multiple is omitted
+    dup_target = tmp_path / "dup.py"
+    dup_target.write_text("x = OLD\ny = OLD\n")
+    res_expected = _execute_patch_file({
+        "target_file": str(dup_target),
+        "search_content": "OLD",
+        "replace_content": "NEW",
+        "expected_occurrences": 2,
+    })
+    data_expected = json.loads(res_expected[0].text)
+    assert data_expected["success"] is True
+    assert data_expected["occurrences"] == 2
+    assert dup_target.read_text() == "x = NEW\ny = NEW\n"
 
 
 def test_main_cli_arguments_and_env(monkeypatch):

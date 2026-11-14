@@ -534,3 +534,46 @@ class TestApplyLastDryRun:
         assert "warnings" in res
         assert any("F401" in w for w in res["warnings"])
 
+
+    def test_mixed_action_batch_atomic_commit_and_rollback(self, tmp_path, monkeypatch):
+        """files[] supports mixed action='write'|'patch'|'delete' atomically with rollback on failure."""
+        monkeypatch.chdir(tmp_path)
+        keep_file = tmp_path / "keep.py"
+        keep_file.write_text("x = 1\n")
+        obsolete_file = tmp_path / "obsolete.py"
+        obsolete_file.write_text("OLD = True\n")
+
+        # Fail late in batch (syntax error in keep.py patch) -> created/deleted files must stay untouched
+        fail_res = patch_file(
+            files=[
+                {"target_file": "obsolete.py", "action": "delete"},
+                {"target_file": "fresh.py", "action": "write", "code_content": "NEW = 1\n"},
+                {"target_file": "keep.py", "action": "patch", "search_content": "x = 1", "replace_content": "if :"},
+            ]
+        )
+        assert "error" in fail_res
+        assert obsolete_file.exists()
+        assert not (tmp_path / "fresh.py").exists()
+        assert keep_file.read_text() == "x = 1\n"
+
+        # Valid mixed batch via dry_run + apply_last_dry_run
+        from patchitright_mcp.patch_file import apply_last_dry_run
+
+        dry_res = patch_file(
+            files=[
+                {"target_file": "obsolete.py", "action": "delete"},
+                {"target_file": "fresh.py", "action": "write", "code_content": "NEW = 1\n"},
+                {"target_file": "keep.py", "action": "patch", "search_content": "x = 1", "replace_content": "x = 2"},
+            ],
+            dry_run=True,
+        )
+        assert dry_res["success"] is True
+        assert obsolete_file.exists()
+        assert not (tmp_path / "fresh.py").exists()
+
+        applied = apply_last_dry_run(dry_res["run_id"])
+        assert applied["success"] is True
+        assert not obsolete_file.exists()
+        assert (tmp_path / "fresh.py").read_text() == "NEW = 1\n"
+        assert keep_file.read_text() == "x = 2\n"
+

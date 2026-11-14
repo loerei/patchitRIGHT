@@ -22,9 +22,14 @@ def generate_patchitright_guide(version: str, file_type: str | list[str] = "gene
 | :--- | :--- |
 | **Single patch** | `search_content`, `replace_content` |
 | **Multiple patches in one file** | `replacements: [{{ search_content, replace_content }}, ...]` |
-| **Insert code at line N** | `insert_line` (`1`=top, `-1`=EOF), `insert_content` |
+| **Broadcast across files** | `target_files` / `target_glob`, shared edit fields, optional `skip_unmatched=true` |
+| **Mixed atomic batch** | `files: [{{ target_file, action="patch"|"write"|"delete", ... }}]` (inherits top-level defaults) |
+| **Assert exact match count** | `expected_occurrences: N` (`>= 1`) |
+| **Guarded line-range replace/delete** | `start_line`, `end_line`, `replace_content` (`""` removes lines) + `start_anchor`/`end_anchor`/`line_filter` |
+| **Insert code at line N** | `insert_line` (`1`=top, `-1`=EOF), `insert_content` (or `source_file` slice) |
 | **Edit function / class body** | `symbol_name`, `symbol_scope="body"`, `replace_content` |
-| **Edit entire symbol** | `symbol_name`, `symbol_scope="full"`, `replace_content` |
+| **Edit entire symbol** | `symbol_name`, `symbol_scope="full"`, `replace_content` (or `source_file` slice) |
+| **Copy / extract slice / move** | `write_file(target_file, source_file, source_start_line/source_end_line or source_symbol, cut_source/delete_source)` |
 | **Fuzzy match for `search_content`** | `did_you_mean=true` |
 | **Replace all occurrences** | `allow_multiple=true` |
 
@@ -53,12 +58,40 @@ def generate_patchitright_guide(version: str, file_type: str | list[str] = "gene
 }}
 ```
 
-### 3. Insert something
+### 3. Extract a line range or symbol into a new file (`write_file`) or replace into another file (`patch_file`)
+```json
+// Extract lines 74-420 of research.md into guard.ts without regenerating text:
+{{
+  "tool": "write_file",
+  "target_file": "src/guard.ts",
+  "source_file": "research.md",
+  "source_start_line": 74,
+  "source_end_line": 420,
+  "source_start_anchor": "export function checkGuard"
+}}
+```
+
+```json
+// Replace old symbol in update.ts with lines 740-960 from research.md:
+{{
+  "tool": "patch_file",
+  "target_file": "src/update.ts",
+  "symbol_name": "updateRecord",
+  "symbol_scope": "full",
+  "source_file": "research.md",
+  "source_start_line": 740,
+  "source_end_line": 960
+}}
+```
+
+### 4. Broadcast a change across many files with strict or opt-in skip
 ```json
 {{
-  "target_file": "src/index.ts",
-  "insert_line": 1,
-  "insert_content": "import 'reflect-metadata';\\n"
+  "target_glob": "src/**/*.ts",
+  "search_content": "legacyHelper(",
+  "replace_content": "modernHelper(",
+  "expected_occurrences": 1,
+  "skip_unmatched": true
 }}
 ```
 """
