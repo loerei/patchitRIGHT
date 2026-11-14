@@ -3,10 +3,187 @@
 from __future__ import annotations
 
 import copy
+from typing import Any
 
 from mcp.types import Tool
 
 STORAGE_PATH_DESC = "Optional custom path to the jCodeMunch SQLite index database."
+
+_SOURCE_SLICE_PROPERTIES: dict[str, Any] = {
+    "source_file": {
+        "type": "string",
+        "description": (
+            "Optional workspace source file path to read content or extract a slice from instead of regenerating text inline. "
+            "Forward slashes (/) recommended."
+        ),
+    },
+    "source_start_line": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Optional 1-indexed inclusive start line to extract from source_file (requires source_end_line; mutually exclusive with source_symbol).",
+    },
+    "source_end_line": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Optional 1-indexed inclusive end line to extract from source_file (must be >= source_start_line).",
+    },
+    "source_symbol": {
+        "type": "string",
+        "description": "Optional AST symbol name in source_file to extract completely (mutually exclusive with source_start_line/source_end_line).",
+    },
+    "source_start_anchor": {
+        "type": "string",
+        "description": "Optional substring guard asserted against the first extracted line of source_file.",
+    },
+    "source_end_anchor": {
+        "type": "string",
+        "description": "Optional substring guard asserted against the last extracted line of source_file.",
+    },
+    "delete_source": {
+        "type": "boolean",
+        "default": False,
+        "description": "If True with an unsliced whole-file source_file copy, atomically unlinks source_file (move semantics). Rejected on partial slices.",
+    },
+    "cut_source": {
+        "type": "boolean",
+        "default": False,
+        "description": "If True with a partial source_file slice, atomically removes extracted lines from source_file and validates it in the same transaction.",
+    },
+}
+
+_PATCH_OP_PROPERTIES: dict[str, Any] = {
+    "search_content": {
+        "type": "string",
+        "description": "The exact string block to search for. Must match uniquely within the scope unless allow_multiple or expected_occurrences > 1 is set.",
+    },
+    "replace_content": {
+        "type": "string",
+        "description": "The replacement string block. May be empty ('') for deletions or guarded start_line/end_line range removals.",
+    },
+    "start_line": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Optional 1-indexed inclusive starting line number of the scope to search or guarded line-range replacement.",
+    },
+    "end_line": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Optional 1-indexed inclusive ending line number of the scope to search or guarded line-range replacement (must be >= start_line).",
+    },
+    "start_anchor": {
+        "type": "string",
+        "description": "Optional substring guard asserted on start_line (required with start_line/end_line when search_content is omitted, unless end_anchor or line_filter is given).",
+    },
+    "end_anchor": {
+        "type": "string",
+        "description": "Optional substring guard asserted on end_line.",
+    },
+    "insert_line": {
+        "type": "integer",
+        "description": "Optional 1-indexed target line number to insert content above. Use 1 for top of file, or -1 to append at end-of-file.",
+    },
+    "insert_content": {
+        "type": "string",
+        "description": "Text content to insert directly above insert_line.",
+    },
+    "auto_indent": {
+        "type": "boolean",
+        "default": True,
+        "description": "If True, automatically matches leading indentation of the target line. Defaults to True.",
+    },
+    "symbol_name": {
+        "type": "string",
+        "description": "Optional AST symbol name (e.g. function or class name) to scope the search or replacement to. Resolves boundaries via jCodeMunch index.",
+    },
+    "symbol_scope": {
+        "type": "string",
+        "enum": ["boundary", "full", "body"],
+        "default": "boundary",
+        "description": (
+            "Controls how 'symbol_name' is used. "
+            "'boundary' (default): scopes search_content matching to symbol's line range. "
+            "'full': replaces the entire symbol (signature+body) with replace_content or sliced source_file, no search_content needed. "
+            "WARNING: 'full' includes decorators, 'export' keywords, and JSDoc — include these in replace_content. "
+            "'body': replaces only the function body, preserving the signature. For arrow expressions returning an object literal, wrap in parentheses: ({ key: value })."
+        ),
+    },
+    "allow_multiple": {
+        "type": "boolean",
+        "description": "If True, replaces all occurrences of search_content within the scope. When omitted and expected_occurrences > 1, multi-match is enabled automatically; explicitly passing False with expected_occurrences > 1 fails.",
+    },
+    "expected_occurrences": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Exact match count assertion (>= 1). Fails with expected vs actual counts and line numbers if the match count differs.",
+    },
+    "line_filter": {
+        "anyOf": [
+            {"type": "string"},
+            {"type": "integer"},
+        ],
+        "description": "Optional assertion. If an integer, asserts search_content starts at this 1-indexed line. If a string, asserts the resolved scope or line range contains this substring.",
+    },
+    **_SOURCE_SLICE_PROPERTIES,
+}
+
+_REPLACEMENT_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": copy.deepcopy(_PATCH_OP_PROPERTIES),
+}
+
+_FILE_LEVEL_EXTRAS: dict[str, Any] = {
+    "patch_content": {
+        "type": "string",
+        "description": "Optional strict unified diff patch content (Fuzz = 0). If provided, search_content and replace_content are not required.",
+    },
+    "folder_filter": {
+        "type": "string",
+        "description": "Optional subdirectory filter. The target file must reside inside this subdirectory.",
+    },
+    "file_filter": {
+        "type": "string",
+        "description": "Optional file name substring filter. The target file name must contain this substring.",
+    },
+    "did_you_mean": {
+        "type": "boolean",
+        "default": False,
+        "description": "If True, automatically applies the replacement to the closest matching block if similarity >= 80%. Defaults to False.",
+    },
+    "skip_unmatched": {
+        "type": "boolean",
+        "default": False,
+        "description": "If True in multi-file mode, skips files where search_content has 0 matches (reported in skipped_files). Still fails if 0 files match overall.",
+    },
+    "replacements": {
+        "type": "array",
+        "items": copy.deepcopy(_REPLACEMENT_ITEM_SCHEMA),
+        "description": "Optional list of non-contiguous replacements to apply bottom-up in a single file.",
+    },
+}
+
+_BATCH_FILE_ITEM_PROPERTIES: dict[str, Any] = {
+    "target_file": {
+        "type": "string",
+        "description": "Target file path (absolute or relative to workspace).",
+    },
+    "action": {
+        "type": "string",
+        "enum": ["patch", "write", "delete"],
+        "default": "patch",
+        "description": "Operation for this item: 'patch' (default, edit existing file), 'write' (create/overwrite from code_content or source_file), or 'delete' (unlink atomically).",
+    },
+    "code_content": {
+        "type": "string",
+        "description": "File content when action='write' without source_file.",
+    },
+    "allow_overwrite": {
+        "type": "boolean",
+        "default": False,
+        "description": "If True, allows overwriting an existing file when action='write'.",
+    },
+    **copy.deepcopy(_PATCH_OP_PROPERTIES),
+    **copy.deepcopy(_FILE_LEVEL_EXTRAS),
+}
 
 
 def _enrich_tool_schema(tool: Tool, expose_bypass: bool) -> Tool:
@@ -35,223 +212,124 @@ def _enrich_tool_schema(tool: Tool, expose_bypass: bool) -> Tool:
 
 def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> list[Tool]:
     """List all available tools with enriched schemas."""
+    patch_file_properties: dict[str, Any] = {
+        "target_file": {
+            "type": "string",
+            "description": "Absolute (any file) or relative (active workspace) single target file path. Forward slashes (/) recommended.",
+        },
+        "target_files": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "description": "Optional list of target file paths sharing top-level edit fields (broadcast mode). Mutually exclusive with target_file, target_glob, and files.",
+        },
+        "target_glob": {
+            "type": "string",
+            "description": "Optional workspace-relative glob pattern (e.g. 'src/**/*.ts') expanded deterministically across non-ignored files sharing top-level edit fields.",
+        },
+        **copy.deepcopy(_PATCH_OP_PROPERTIES),
+        **copy.deepcopy(_FILE_LEVEL_EXTRAS),
+        "dry_run": {
+            "type": "boolean",
+            "description": "If True, returns a unified diff preview of the changes without modifying disk. Defaults to False.",
+            "default": False,
+        },
+        "storage_path": {
+            "type": "string",
+            "description": STORAGE_PATH_DESC,
+        },
+        "files": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": _BATCH_FILE_ITEM_PROPERTIES,
+                "required": ["target_file"],
+            },
+            "description": "Optional array of per-file operations ('patch', 'write', or 'delete') executed in one atomic transaction. Omitted edit fields inherit top-level defaults.",
+        },
+    }
+
+    write_file_properties: dict[str, Any] = {
+        "target_file": {
+            "type": "string",
+            "description": "Absolute or relative path to the file to create or overwrite. Forward slashes (/) recommended.",
+        },
+        "code_content": {
+            "type": "string",
+            "description": "The complete content of the file (required unless source_file is provided).",
+        },
+        "allow_overwrite": {
+            "type": "boolean",
+            "description": "If True, allows overwriting an existing file. Defaults to False, which blocks the write if the file already exists.",
+            "default": False,
+        },
+        **copy.deepcopy(_PATCH_OP_PROPERTIES),
+        "patch_content": copy.deepcopy(_FILE_LEVEL_EXTRAS["patch_content"]),
+        "replacements": copy.deepcopy(_FILE_LEVEL_EXTRAS["replacements"]),
+        "did_you_mean": copy.deepcopy(_FILE_LEVEL_EXTRAS["did_you_mean"]),
+        "dry_run": {
+            "type": "boolean",
+            "description": "If True, runs syntax validation and linting and caches a preview without writing to disk. Defaults to False.",
+            "default": False,
+        },
+        "storage_path": {
+            "type": "string",
+            "description": STORAGE_PATH_DESC,
+        },
+    }
+
     tools = [
         Tool(
             name="patch_file",
             description=(
-                "Edit a file by replacing an exact text block (search_content/replace_content) "
-                "or applying a unified diff (patch_content). Optionally scope to a line range or AST symbol. "
-                "Keep search_content focused on the minimal unique surrounding context required for matching. "
-                "For editing multiple non-contiguous blocks in a single file, use the 'replacements' array in one call."
+                "Edit one file, broadcast edits across target_files/target_glob, or run mixed atomic patch/write/delete "
+                "batches via 'files'. Supports exact text blocks, AST symbol replacement, guarded line-range replacement, "
+                "strict unified diffs, expected_occurrences assertions, and cross-file source_file slice payloads."
             ),
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "target_file": {
-                        "type": "string",
-                        "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended to avoid JSON escaping and save tokens."
-                    },
-                    "search_content": {
-                        "type": "string",
-                        "description": "The exact string block to search for. Must match uniquely within the scope unless allow_multiple is True. Keep snippets focused on minimal unique context."
-                    },
-                    "replace_content": {
-                        "type": "string",
-                        "description": "The string block to replace the search content with."
-                    },
-                    "patch_content": {
-                        "type": "string",
-                        "description": "Optional unified diff patch content to apply strictly (Fuzz = 0). If provided, search_content and replace_content are not required."
-                    },
-                    "folder_filter": {
-                        "type": "string",
-                        "description": "Optional subdirectory filter. The target file must reside inside this subdirectory."
-                    },
-                    "file_filter": {
-                        "type": "string",
-                        "description": "Optional file name substring filter. The target file name must contain this substring."
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "Optional starting line number (1-indexed, inclusive) of the scope to search."
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "Optional ending line number (1-indexed, inclusive) of the scope to search."
-                    },
-                    "insert_line": {
-                        "type": "integer",
-                        "description": "Optional 1-indexed target line number to insert content above. Use 1 for top of file, or -1 to append at end-of-file."
-                    },
-                    "insert_content": {
-                        "type": "string",
-                        "description": "Text content to insert directly above insert_line."
-                    },
-                    "auto_indent": {
-                        "type": "boolean",
-                        "default": True,
-                        "description": "If True, automatically matches leading indentation of the target line. Defaults to True."
-                    },
-                    "symbol_name": {
-                        "type": "string",
-                        "description": "Optional AST symbol name (e.g. function or class name) to scope the search to. Resolves boundaries via jCodeMunch index."
-                    },
-                    "allow_multiple": {
-                        "type": "boolean",
-                        "description": "If True, replaces all occurrences of search_content within the scope. Defaults to False, which raises an error if multiple matches are found.",
-                        "default": False
-                    },
-                    "line_filter": {
-                        "anyOf": [
-                            {"type": "string"},
-                            {"type": "integer"}
-                        ],
-                        "description": "Optional assertion. If an integer, asserts the search content starts exactly at this 1-indexed line. If a string, asserts the resolved scope contains this substring."
-                    },
-                    "did_you_mean": {
-                        "type": "boolean",
-                        "description": "If True, automatically applies the replacement to the closest matching block of code if similarity >= 80%. Defaults to False.",
-                        "default": False
-                    },
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "If True, returns a unified diff preview of the changes without modifying the file. Defaults to False.",
-                        "default": False
-                    },
-                    "storage_path": {
-                        "type": "string",
-                        "description": STORAGE_PATH_DESC
-                    },
-                    "symbol_scope": {
-                        "type": "string",
-                        "enum": ["boundary", "full", "body"],
-                        "default": "boundary",
-                        "description": (
-                            "Controls how 'symbol_name' is used. "
-                            "'boundary' (default): scopes search_content matching to symbol's line range. "
-                            "'full': replaces the entire symbol (signature+body) with replace_content, no search_content needed. "
-                            "WARNING: 'full' includes decorators, 'export' keywords, and JSDoc — you MUST include these in replace_content. "
-                            "'body': replaces only the function body with replace_content, preserving the signature. "
-                            "For arrow expression bodies, provide the exact replacement expression — "
-                            "if returning an object literal, include the parentheses: ({ key: value })."
-                        )
-                    },
-                    "replacements": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "search_content": {"type": "string", "description": "The exact string block to search for."},
-                                "replace_content": {"type": "string", "description": "The string block to replace the search content with."},
-                                "start_line": {"type": "integer", "description": "Optional starting line number (1-indexed, inclusive) of the scope to search."},
-                                "end_line": {"type": "integer", "description": "Optional ending line number (1-indexed, inclusive) of the scope to search."},
-                                "symbol_name": {"type": "string", "description": "Optional AST symbol name to scope this replacement to."},
-                                "symbol_scope": {
-                                    "type": "string",
-                                    "enum": ["boundary", "full", "body"],
-                                    "default": "boundary",
-                                    "description": "Controls how symbol_name is used for this replacement."
-                                },
-                                "allow_multiple": {"type": "boolean", "description": "If True, replaces all occurrences of search_content within the scope. Defaults to False."},
-                                "line_filter": {
-                                    "anyOf": [
-                                        {"type": "string"},
-                                        {"type": "integer"}
-                                    ],
-                                    "description": "Optional assertion (line number or substring check)."
-                                },
-                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert content above (-1 for EOF)."},
-                                "insert_content": {"type": "string", "description": "Text content to insert."},
-                                "auto_indent": {"type": "boolean", "default": True, "description": "Auto-indent matching target line."}
-                            }
-                        },
-                        "description": "Optional list of replacements to apply in a single call to the same file. Applied bottom-up to avoid line-drift."
-                    },
-                    "files": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "target_file": {"type": "string", "description": "Target file path."},
-                                "search_content": {"type": "string", "description": "Exact text to search for."},
-                                "replace_content": {"type": "string", "description": "Replacement text."},
-                                "patch_content": {"type": "string", "description": "Unified diff patch content."},
-                                "replacements": {"type": "array", "description": "List of non-contiguous replacements."},
-                                "symbol_name": {"type": "string", "description": "AST symbol name for scoped replacement."},
-                                "symbol_scope": {"type": "string", "enum": ["boundary", "body", "full"], "description": "Scope mode for symbol replacement."},
-                                "start_line": {"type": "integer", "description": "Optional 1-based start line range."},
-                                "end_line": {"type": "integer", "description": "Optional 1-based end line range."},
-                                "allow_multiple": {"type": "boolean", "description": "If true, replace all occurrences in scope."},
-                                "did_you_mean": {"type": "boolean", "description": "If true, apply closest fuzzy match fallback."},
-                                "line_filter": {"type": "string", "description": "Optional line filter pattern."},
-                                "insert_line": {"type": "integer", "description": "Optional 1-indexed line number to insert content above (-1 for EOF)."},
-                                "insert_content": {"type": "string", "description": "Text content to insert."},
-                                "auto_indent": {"type": "boolean", "default": True, "description": "Auto-indent matching target line."}
-                            },
-                            "required": ["target_file"]
-                        },
-                        "description": "Optional array of file edit objects for multi-file batch patching in a single atomic transaction."
-                    }
-                },
+                "properties": patch_file_properties,
                 "anyOf": [
                     {"required": ["target_file"]},
-                    {"required": ["files"]}
-                ]
-            }
+                    {"required": ["target_files"]},
+                    {"required": ["target_glob"]},
+                    {"required": ["files"]},
+                ],
+            },
         ),
         Tool(
             name="apply_last_dry_run",
             description=(
-                "Apply the patch cached by a previous dry_run=true call. "
-                "Requires the run_id from that response. "
-                "Fails if the run_id is expired (300 s TTL) or if any target file was modified after the dry-run."
+                "Apply the patch, copy/move, or batch cached by a previous dry_run=true call (patch_file, write_file, or batch_patch_files). "
+                "Requires the run_id from that response. Fails if expired (300 s TTL) or if any involved file changed on disk."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "run_id": {
                         "type": "string",
-                        "description": "The run_id returned by a previous patch_file or batch_patch_files dry-run call."
+                        "description": "The run_id returned by a previous dry_run=true call.",
                     }
                 },
-                "required": ["run_id"]
-            }
+                "required": ["run_id"],
+            },
         ),
         Tool(
             name="write_file",
             description=(
-                "Create a new file or fully replace file content. Only use overwrite when content needs to be "
-                "fully changed by design (e.g. generated output, config regeneration, new file from scratch). "
-                "MUST NOT use overwrite to modify existing code files; use patch_file instead."
+                "Create or overwrite a file from 'code_content' or a workspace 'source_file' (whole-file copy/move with delete_source, "
+                "partial line/symbol slice with optional cut_source, binary pure copy, or copy-then-patch inline transforms). "
+                "MUST NOT overwrite existing code files just to make localized edits; use patch_file instead."
             ),
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "target_file": {
-                        "type": "string",
-                        "description": "Absolute or relative path to the file to write. Forward slashes (/) recommended."
-                    },
-                    "code_content": {
-                        "type": "string",
-                        "description": "The complete content of the file."
-                    },
-                    "allow_overwrite": {
-                        "type": "boolean",
-                        "description": "If True, allows overwriting an existing file. Defaults to False, which blocks the write if the file already exists.",
-                        "default": False
-                    },
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "If True, runs syntax validation and linting, and shows a preview of the write/diff without writing to disk. Defaults to False.",
-                        "default": False
-                    },
-                    "storage_path": {
-                        "type": "string",
-                        "description": STORAGE_PATH_DESC
-                    }
-                },
-                "required": ["target_file", "code_content"]
-            }
+                "properties": write_file_properties,
+                "required": ["target_file"],
+                "anyOf": [
+                    {"required": ["code_content"]},
+                    {"required": ["source_file"]},
+                ],
+            },
         ),
         Tool(
             name="patchitright_guide",
@@ -267,14 +345,14 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
                         "type": "array",
                         "items": {
                             "type": "string",
-                            "enum": ["general", "js_ts", "html_css", "python"]
+                            "enum": ["general", "js_ts", "html_css", "python"],
                         },
                         "description": "Optional list of file/language types to retrieve clean-code style rules.",
-                        "default": ["general"]
+                        "default": ["general"],
                     }
-                }
-            }
-        )
+                },
+            },
+        ),
     ]
 
     if show_legacy:
@@ -295,29 +373,29 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
                                 "properties": {
                                     "target_file": {
                                         "type": "string",
-                                        "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended to avoid JSON escaping and save tokens."
+                                        "description": "Absolute (any file) or relative (active workspace) path. Forward slashes (/) recommended.",
                                     },
                                     "patch_content": {
                                         "type": "string",
-                                        "description": "The exact Git-style Unified Diff hunk(s) to apply to this file."
-                                    }
+                                        "description": "The exact Git-style Unified Diff hunk(s) to apply to this file.",
+                                    },
                                 },
-                                "required": ["target_file", "patch_content"]
+                                "required": ["target_file", "patch_content"],
                             },
-                            "description": "List of target files and their corresponding Unified Diffs."
+                            "description": "List of target files and their corresponding Unified Diffs.",
                         },
                         "dry_run": {
                             "type": "boolean",
                             "description": "If True, returns a unified diff preview of the changes without modifying the files. Defaults to False.",
-                            "default": False
+                            "default": False,
                         },
                         "storage_path": {
                             "type": "string",
-                            "description": STORAGE_PATH_DESC
-                        }
+                            "description": STORAGE_PATH_DESC,
+                        },
                     },
-                    "required": ["patches"]
-                }
+                    "required": ["patches"],
+                },
             )
         )
 
