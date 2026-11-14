@@ -34,8 +34,7 @@ def generate_diff(
     """Generate a unified diff representation for text, binary, or deletion changes."""
     if isinstance(original, bytes) or isinstance(modified, bytes):
         if modified is None:
-            orig_len = len(original) if isinstance(original, bytes) else len(original.encode("utf-8"))
-            return f"Binary file deleted: {filename} ({orig_len} bytes)\n"
+            return f"Binary file deleted: {filename} ({len(original)} bytes)\n"
         new_len = len(modified) if isinstance(modified, bytes) else len(modified.encode("utf-8"))
         return f"Binary file modified/copied: {filename} ({new_len} bytes)\n"
 
