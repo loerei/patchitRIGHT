@@ -25,7 +25,7 @@ target_file: "C:/Users/user/.gemini/GEMINI.md"
 
 Use `start_line`/`end_line` or `symbol_name` to limit the search scope:
 
-- `symbol_name` — resolves function/class boundaries via jCodeMunch index (requires the file to be indexed)
+- `symbol_name` — resolves function/class boundaries on-demand via built-in AST parsing (no external index required)
 - `start_line` / `end_line` — explicit line range (1-indexed, inclusive). Can omit `search_content` only when guarded by `start_anchor`, `end_anchor`, or `line_filter` (`replace_content: ""` removes those lines cleanly).
 - Omit both — entire file is the scope
 - `source_file` — copy a whole file (`write_file`), extract a line range (`source_start_line`/`source_end_line` + optional `source_start_anchor`/`source_end_anchor`) or `source_symbol` into a new file (`write_file`) or as replacement/insertion text in `patch_file` / `replacements[]`. Add `delete_source: true` to move whole files, or `cut_source: true` to atomically cut the extracted slice out of `source_file`.

@@ -19,7 +19,7 @@ Add the following to your MCP client configuration (e.g. `claude_desktop_config.
       ],
       "env": {
         "PYTHONPATH": "/path/to/patchitRIGHT/src",
-        "PATCHITRIGHT_SYNC_JCODEMUNCH": "true",
+        // "PATCHITRIGHT_SYNC_JCODEMUNCH": "false", // Optional: invoke jcodemunch-mcp CLI index-file if on PATH
         "PATCHITRIGHT_IGNORE_WARNINGS": "format", // Recommended: ignore verbose formatter diffs (tabs vs spaces) by default
         // "PATCHITRIGHT_DEFAULT_TIMEOUT": "10.0", // Execution timeout limit in seconds (-1 to disable)
         // "PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION": "false", // Expose emergency bypass_validation in schemas
@@ -69,18 +69,6 @@ Edit functions and classes by symbol name or extract code directly from another 
 
 ---
 
-## Standalone vs. jCodeMunch Mode
-
-| Feature | jCodeMunch Mode | Standalone Mode |
-| :--- | :--- | :--- |
-| **Dependencies** | `jcodemunch-mcp` | None (pure Python) |
-| **AST Symbol Scoping (`symbol_name`, `source_symbol`)** | O(1) symbol lookup | Line range (`start_line`/`end_line`, `source_start_line`/`source_end_line`) |
-| **Search-and-Replace / Line Insertion** | Supported | Supported |
-| **Syntax Validation & Rollback** | Supported | Supported |
-| **Realtime Index Sync** | Auto-indexes on write | N/A |
-
----
-
 ## Environment Flags
 
 * **`PATCHITRIGHT_IGNORE_WARNINGS`** (`string`, e.g. `"format"`, `"format,lint"`, `"all"`): Filters diagnostics to prevent prompt token pollution:
@@ -90,7 +78,7 @@ Edit functions and classes by symbol name or extract code directly from another 
   * `symbol`: Suppresses symbol omission alerts.
   * `all`: Suppresses all warning diagnostics.
 * **`PATCHITRIGHT_DEFAULT_TIMEOUT`** (`float`, default: `10.0`): Server execution timeout limit in seconds (`set_timeout: -1` disables timeout).
-* **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true`/`false`, default: `false`): Triggers background re-indexing in `jCodeMunch` after file writes.
+* **`PATCHITRIGHT_SYNC_JCODEMUNCH`** (`true`/`false`, default: `false`): Optional CLI hook that runs `jcodemunch-mcp index-file` in the background after file writes when the `jcodemunch-mcp` executable is installed on `PATH` (silent no-op otherwise).
 * **`PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION`** (`true`/`false`, default: `false`): Exposes `bypass_validation` parameter in schemas.
 * **`PATCHITRIGHT_SHOW_LEGACY`** (`true`/`false`, default: `false`): Exposes legacy `batch_patch_files` tool.
 
