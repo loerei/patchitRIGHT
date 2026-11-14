@@ -1,7 +1,8 @@
 """Line matching, AST symbol resolution, and line offset calculations."""
-import re
 from pathlib import Path
-from typing import Optional, Union, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
+
+from .symbol_resolver import resolve_symbol
 
 if TYPE_CHECKING:
     from .body_parser import BodyRange
@@ -11,89 +12,38 @@ def _resolve_ast_boundaries(
     cwd: Path,
     target_path: Path,
     symbol_name: Optional[str],
-    storage_path: Optional[str],
-    start_line: Optional[int],
-    end_line: Optional[int],
+    storage_path: Optional[str] = None,
+    start_line: Optional[int] = None,
+    end_line: Optional[int] = None,
     symbol_scope: str = "boundary",
     file_content: Optional[str] = None,
 ) -> tuple[Optional[int], Optional[int], Optional[dict], Optional["BodyRange"]]:
-    """Resolve start and end lines for AST symbolName boundary."""
+    """Resolve start and end lines for an AST symbol directly from the target file."""
+    del cwd, storage_path  # Kept for signature compatibility; resolution is local and index-free.
     if not symbol_name:
         return start_line, end_line, None, None
 
     try:
-        from jcodemunch_mcp.tools.resolve_repo import resolve_repo as resolve_repo_fn
-        from jcodemunch_mcp.storage import IndexStore
-        repo_res = resolve_repo_fn(str(target_path), storage_path)
-        if not repo_res.get("found"):
-            return None, None, {"error": f"Workspace at '{cwd}' is not indexed. Call index_folder first to resolve symbols."}, None
-        
-        repo_id = repo_res.get("repo")
-        store = IndexStore(base_path=storage_path)
-        index = store.load_index(*repo_id.split("/", 1)) if repo_id and "/" in repo_id else None
-        if not repo_res.get("found") or not index:
-            if file_content is None and target_path.exists():
-                with open(target_path, "r", encoding="utf-8", errors="replace") as f:
-                    file_content = f.read()
-            if file_content:
-                lines = file_content.split("\n")
-                pattern = re.compile(rf"^\s*(?:async\s+)?(?:def|class)\s+{re.escape(symbol_name)}\b")
-                found_line = None
-                for idx, line in enumerate(lines, 1):
-                    if pattern.search(line):
-                        found_line = idx
-                        break
-                if found_line:
-                    indent = len(lines[found_line - 1]) - len(lines[found_line - 1].lstrip())
-                    end_l = len(lines)
-                    for idx in range(found_line, len(lines)):
-                        l = lines[idx]
-                        if l.strip() and not l.strip().startswith("#"):
-                            curr_indent = len(l) - len(l.lstrip())
-                            if curr_indent <= indent and idx + 1 > found_line:
-                                end_l = idx
-                                break
-                    body_range = None
-                    try:
-                        from .body_parser import get_body_range
-                        body_range = get_body_range(file_content, str(target_path), found_line, end_l)
-                    except Exception:
-                        pass
-                    if symbol_scope == "body":
-                        if body_range:
-                            return body_range.start_line, body_range.end_line, None, body_range
-                        return None, None, {"error": f"Error: Could not resolve body boundaries for symbol '{symbol_name}'."}, None
-                    return found_line, end_l, None, body_range
-            return None, None, {"error": f"Workspace at '{cwd}' is not indexed and symbol '{symbol_name}' could not be matched."}, None
-            
-        source_root = Path(repo_res.get("source_root") or index.source_root or cwd).resolve()
-        try:
-            rel_file_path = str(target_path.relative_to(source_root)).replace("\\", "/")
-        except ValueError:
-            rel_file_path = str(target_path.relative_to(cwd)).replace("\\", "/")
-            
-        matched_symbols = []
-        for sym in index.symbols:
-            if sym.get("name") == symbol_name and sym.get("file") == rel_file_path:
-                matched_symbols.append(sym)
-                
-        if not matched_symbols:
-            return None, None, {"error": f"Symbol '{symbol_name}' not found in file '{rel_file_path}'."}, None
-            
-        symbol = matched_symbols[0]
-        sym_start, sym_end = symbol["line"], symbol["end_line"]
+        text = file_content
+        if text is None:
+            if not target_path.exists():
+                return None, None, {"error": f"Error: Target file '{target_path}' does not exist for symbol resolution."}, None
+            text = target_path.read_text(encoding="utf-8", errors="replace")
+
+        sym = resolve_symbol(target_path, text, symbol_name, hint_start=start_line, hint_end=end_line)
+        sym_start, sym_end = sym.start_line, sym.end_line
 
         if symbol_scope == "body":
-            if file_content is None:
-                with open(target_path, "r", encoding="utf-8", errors="replace") as f:
-                    file_content = f.read()
             from .body_parser import get_body_range
-            body_range = get_body_range(file_content, str(target_path), sym_start, sym_end)
+
+            body_range = get_body_range(text, str(target_path), sym_start, sym_end)
             if body_range is None:
                 return None, None, {"error": f"Error: Could not resolve body boundaries for symbol '{symbol_name}'."}, None
             return body_range.start_line, body_range.end_line, None, body_range
 
         return sym_start, sym_end, None, None
+    except ValueError as e:
+        return None, None, {"error": str(e)}, None
     except Exception as e:
         return None, None, {"error": f"Error resolving symbolName '{symbol_name}': {e}"}, None
 

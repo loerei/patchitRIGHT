@@ -153,7 +153,7 @@ def get_body_range(
     file_path:
         File path (used to determine language from extension).
     symbol_start_line, symbol_end_line:
-        1-indexed inclusive line range of the symbol (from jcodemunch index).
+        1-indexed inclusive line range of the symbol (from the AST symbol resolver).
 
     Raises
     ------
@@ -369,10 +369,10 @@ def _try_tree_sitter(
     def _find_best_function(node) -> Optional[tuple]:
         """Walk tree to find the widest function-like node within the target range.
 
-        The index range comes from jcodemunch which may include leading
-        JSDoc / decorators, so the AST node will typically be *inside*
+        The target range comes from the symbol resolver, which may include
+        leading JSDoc / decorators, so the AST node will typically be *inside*
         the target range.  Among all matching nodes we pick the largest
-        (outermost) one because the index range describes the whole
+        (outermost) one because the symbol range describes the whole
         symbol, not an inner nested function.
         """
         best = None
@@ -539,7 +539,7 @@ def _python_ast_fallback(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             n_start = node.lineno
             n_end = getattr(node, "end_lineno", n_start)
-            # Find node within target range (1-indexed line bounds from indexer)
+            # Find node within target range (1-indexed line bounds from symbol resolver)
             if n_start >= symbol_start_line and n_end <= symbol_end_line:
                 if node.body:
                     first_stmt = node.body[0]

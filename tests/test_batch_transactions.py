@@ -10,7 +10,6 @@ from patchitright_mcp.patch_file import patch_file, batch_patch_files, run_start
 from patchitright_mcp.engine import PatchEngine
 from patchitright_mcp.dry_run import apply_last_dry_run
 from patchitright_mcp.run_cache import get_cache
-from jcodemunch_mcp.tools.index_folder import index_folder
 
 
 class TestBatchTransactions:
@@ -152,10 +151,6 @@ class TestBatchTransactions:
         monkeypatch.chdir(tmp_path)
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo() {\n  return 1;\n}\nfunction bar() {\n  return 2;\n}\n")
-        
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
@@ -164,7 +159,6 @@ class TestBatchTransactions:
                 {"symbol_name": "bar", "symbol_scope": "body", "replace_content": "  return 200;"},
             ],
             dry_run=False,
-            storage_path=store_path
         )
         assert res.get("success") is True
         expected = "function foo() {\n  return 100;\n}\nfunction bar() {\n  return 200;\n}\n"

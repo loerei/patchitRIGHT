@@ -291,9 +291,7 @@ def test_write_file_copy_then_patch_and_line_slice_cut_source(temp_workspace):
 
 
 def test_write_file_source_symbol_extraction(temp_workspace):
-    """write_file extracts an AST symbol completely using jCodeMunch storage_path."""
-    from jcodemunch_mcp.tools.index_folder import index_folder
-
+    """write_file extracts an AST symbol completely on demand without indexing."""
     src = temp_workspace / "source_syms.py"
     src.write_text(
         "def alpha():\n"
@@ -302,14 +300,11 @@ def test_write_file_source_symbol_extraction(temp_workspace):
         "    return v * 2\n",
         encoding="utf-8",
     )
-    store_path = str(temp_workspace / "store")
-    index_folder(str(temp_workspace), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
     res = write_file(
         target_file="beta_only.py",
         source_file="source_syms.py",
         source_symbol="beta",
-        storage_path=store_path,
         cut_source=True,
     )
     assert res["success"] is True

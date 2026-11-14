@@ -10,7 +10,6 @@ from patchitright_mcp.patch_file import patch_file, batch_patch_files, run_start
 from patchitright_mcp.engine import PatchEngine
 from patchitright_mcp.dry_run import apply_last_dry_run
 from patchitright_mcp.run_cache import get_cache
-from jcodemunch_mcp.tools.index_folder import index_folder
 
 
 class TestLineBasedInsertion:
