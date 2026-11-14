@@ -10,7 +10,7 @@ def generate_patchitright_guide(version: str, file_type: str | list[str] = "gene
 ## Guides
 
 1. Use this MCP's tools `patch_file` or `write_file` when touching codes that you don't want to break. It warns or stops you when your edit introduces a syntax error.
-2. Only use `write_file` when you want to create new files or literally rewrite the whole existing file. For patch(es), use `patch_file` so you don't accidentally drop or change something.
+2. Use `write_file` to create new files, copy/move/slice from `source_file`, or rewrite an existing file when intended. For localized edits, use `patch_file` so you don't accidentally drop or change something.
 3. Insert code at line: Inserts directly **ABOVE** `insert_line` N (`1` = top of file, `-1` = EOF).
 4. If you don't have a clear context of the `target_file` (e.g., you haven't read it, you just hit a checkpoint/context compression), read the file again to make sure you're not hallucinating on your patches.
 5. Include `"did_you_mean": true` if you want to apply fuzzy search for `search_content`. When `did_you_mean` is triggered, it means you hallucinated somewhere, so better re-read the file.
@@ -32,6 +32,7 @@ def generate_patchitright_guide(version: str, file_type: str | list[str] = "gene
 | **Copy / extract slice / move** | `write_file(target_file, source_file, source_start_line/source_end_line or source_symbol, cut_source/delete_source)` |
 | **Fuzzy match for `search_content`** | `did_you_mean=true` |
 | **Replace all occurrences** | `allow_multiple=true` |
+| **Preview & apply later** | `dry_run=true` -> `apply_last_dry_run(run_id)` |
 
 ---
 
