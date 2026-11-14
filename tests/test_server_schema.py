@@ -132,3 +132,39 @@ def test_enrich_tool_schema_legacy_copy():
     assert "set_timeout" in enriched.inputSchema["properties"]
 
 
+@pytest.mark.asyncio
+async def test_schema_parity_and_extension_bounds():
+    """Shared schemas expose new slice/broadcast/guard fields consistently with strict integer bounds."""
+    from patchitright_mcp.server import list_tools
+
+    tools = {t.name: t for t in await list_tools()}
+    patch_props = tools["patch_file"].inputSchema["properties"]
+    write_props = tools["write_file"].inputSchema["properties"]
+    repl_props = patch_props["replacements"]["items"]["properties"]
+    files_props = patch_props["files"]["items"]["properties"]
+
+    for key in ("target_files", "target_glob", "skip_unmatched", "expected_occurrences", "start_anchor", "end_anchor"):
+        assert key in patch_props
+
+    for shared_slice in ("source_file", "source_start_line", "source_end_line", "source_symbol", "source_start_anchor", "source_end_anchor", "delete_source", "cut_source"):
+        assert shared_slice in patch_props
+        assert shared_slice in repl_props
+        assert shared_slice in files_props
+        assert shared_slice in write_props
+
+    for shared_edit in ("expected_occurrences", "start_anchor", "end_anchor", "line_filter"):
+        assert shared_edit in patch_props
+        assert shared_edit in repl_props
+        assert shared_edit in files_props
+        assert shared_edit in write_props
+
+    assert files_props["action"]["enum"] == ["patch", "write", "delete"]
+    assert "anyOf" in files_props["line_filter"]
+    assert patch_props["expected_occurrences"]["minimum"] == 1
+    assert patch_props["source_start_line"]["minimum"] == 1
+    assert patch_props["source_end_line"]["minimum"] == 1
+    assert write_props["source_start_line"]["minimum"] == 1
+    assert {"required": ["source_file"]} in tools["write_file"].inputSchema["anyOf"]
+
+
+
