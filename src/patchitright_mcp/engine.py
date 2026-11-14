@@ -16,6 +16,10 @@ from .symbol_checker import detect_omitted_symbols
 from .validators import ValidationService
 
 
+class NoMatchValueError(ValueError):
+    """Raised when search_content matches 0 occurrences in target scope."""
+
+
 class PatchEngine:
     """Core in-memory engine to apply search-and-replace and unified diff patches."""
 
@@ -205,7 +209,7 @@ class PatchEngine:
         self,
         search_content: str,
         replace_content: str,
-        allow_multiple: bool = False,
+        allow_multiple: bool | None = None,
         start_line: int | None = None,
         end_line: int | None = None,
         symbol_boundaries: tuple[int | None, int | None] | None = None,
@@ -215,6 +219,7 @@ class PatchEngine:
         validate: bool = True,
         check_symbols: bool = True,
         auto_indent: bool = True,
+        expected_occurrences: int | None = None,
     ) -> tuple[str, int]:
         """Apply a classic search-and-replace patch inside line/symbol scope."""
         norm_search = search_content.replace("\r\n", "\n").replace("\r", "")
@@ -222,6 +227,15 @@ class PatchEngine:
 
         if not norm_search:
             raise ValueError("Error: 'search_content' cannot be empty.")
+
+        if expected_occurrences is not None:
+            if isinstance(expected_occurrences, bool) or not isinstance(expected_occurrences, int) or expected_occurrences < 1:
+                raise ValueError("Error: 'expected_occurrences' must be an integer >= 1.")
+            if allow_multiple is False and expected_occurrences > 1:
+                raise ValueError("Error: 'allow_multiple=false' conflicts with 'expected_occurrences > 1'.")
+            effective_allow_multiple = True if (allow_multiple is None and expected_occurrences > 1) else bool(allow_multiple)
+        else:
+            effective_allow_multiple = bool(allow_multiple)
 
         start_idx, end_idx = self._resolve_classic_boundaries(
             start_line, end_line, symbol_boundaries
@@ -233,15 +247,23 @@ class PatchEngine:
 
         if occurrences == 0:
             start_idx, end_idx, target_slice, occurrences = self._handle_zero_occurrences(
-                norm_search, norm_replace, start_idx, end_idx, symbol_name, allow_multiple, did_you_mean
+                norm_search, norm_replace, start_idx, end_idx, symbol_name, effective_allow_multiple, did_you_mean
             )
 
-        if not allow_multiple and occurrences > 1:
+        if not effective_allow_multiple and occurrences > 1:
             ranges = self._find_occurrence_line_ranges(target_slice, norm_search, base_line_offset=start_idx)
             ranges_str = ", ".join(f"lines {s}-{e}" for s, e in ranges)
             raise ValueError(
                 f"Error: Search content occurs {occurrences} times within the specified scope (lines {start_idx + 1} to {end_idx + 1}): {ranges_str}. "
                 "To replace all, set 'allow_multiple: true'."
+            )
+
+        if expected_occurrences is not None and occurrences != expected_occurrences:
+            ranges = self._find_occurrence_line_ranges(target_slice, norm_search, base_line_offset=start_idx)
+            ranges_str = ", ".join(f"lines {s}-{e}" for s, e in ranges)
+            raise ValueError(
+                f"Error: Expected {expected_occurrences} occurrence(s) within scope (lines {start_idx + 1} to {end_idx + 1}), "
+                f"but found {occurrences} ({ranges_str})."
             )
 
         # Line filter assertion
@@ -266,6 +288,89 @@ class PatchEngine:
             patched_file = patched_file.replace("\n", "\r\n")
 
         return patched_file, occurrences
+
+    def apply_line_range_patch(
+        self,
+        start_line: int,
+        end_line: int,
+        replace_content: str,
+        line_filter: str | int | None = None,
+        start_anchor: str | None = None,
+        end_anchor: str | None = None,
+        validate: bool = True,
+        auto_indent: bool = True,
+    ) -> tuple[str, int]:
+        """Replace (or delete) an explicit 1-indexed line range guarded by line anchors or line_filter."""
+        if start_line < 1 or end_line < start_line:
+            raise ValueError(f"Error: Invalid line range {start_line}-{end_line}. Must satisfy 1 <= start_line <= end_line.")
+        total_lines = len(self.file_lines)
+        if end_line > total_lines:
+            raise ValueError(f"Error: Line range {start_line}-{end_line} exceeds total file lines ({total_lines}).")
+
+        if start_anchor is None and end_anchor is None and line_filter is None:
+            raise ValueError(
+                "Error: Guarded line-range replacement requires at least one content guard "
+                "('start_anchor', 'end_anchor', or 'line_filter')."
+            )
+
+        start_line_text = self.file_lines[start_line - 1]
+        end_line_text = self.file_lines[end_line - 1]
+        target_lines = self.file_lines[start_line - 1 : end_line]
+        target_slice = "\n".join(target_lines)
+
+        if start_anchor is not None and start_anchor not in start_line_text:
+            raise ValueError(
+                f"Error: start_anchor mismatch at line {start_line}. Expected '{start_anchor}', found: {start_line_text!r}"
+            )
+        if end_anchor is not None and end_anchor not in end_line_text:
+            raise ValueError(
+                f"Error: end_anchor mismatch at line {end_line}. Expected '{end_anchor}', found: {end_line_text!r}"
+            )
+        if line_filter is not None:
+            is_numeric = False
+            try:
+                assert_line_num = int(line_filter)
+                is_numeric = True
+            except (ValueError, TypeError):
+                assert_line_num = -1
+            if is_numeric:
+                if assert_line_num != start_line:
+                    raise ValueError(
+                        f"Error: lineFilter assertion failed. Range starts at line {start_line}, but lineFilter asserted {assert_line_num}."
+                    )
+            elif str(line_filter) not in target_slice:
+                raise ValueError(
+                    f"Error: lineFilter assertion failed. Lines {start_line}-{end_line} do not contain substring '{line_filter}'."
+                )
+
+        norm_replace = replace_content.replace("\r\n", "\n").replace("\r", "")
+        if norm_replace == "":
+            new_lines = self.file_lines[: start_line - 1] + self.file_lines[end_line:]
+        else:
+            if auto_indent:
+                from .body_parser import get_base_indent, normalize_indent
+                target_base_indent = get_base_indent(target_slice)
+                replace_base_indent = get_base_indent(norm_replace)
+                if target_base_indent and target_base_indent != replace_base_indent:
+                    norm_replace_adjusted, adjusted, delta = normalize_indent(norm_replace, target_base_indent)
+                    if adjusted:
+                        self.indentation_adjusted = True
+                        self.indent_delta = delta
+                        norm_replace = norm_replace_adjusted
+
+            rep_trimmed = norm_replace[:-1] if norm_replace.endswith("\n") else norm_replace
+            rep_lines = rep_trimmed.split("\n")
+            new_lines = self.file_lines[: start_line - 1] + rep_lines + self.file_lines[end_line:]
+
+        patched_file = "\n".join(new_lines)
+        if validate and not self.bypass_validation:
+            self.validator.validate_file(self.filename, patched_file, self.file_content)
+            self.linter_warnings = self.validator.lint_file(self.filename, patched_file)
+
+        if self.is_crlf:
+            patched_file = patched_file.replace("\n", "\r\n")
+
+        return patched_file, 1
 
     def apply_line_insertion(
         self,
@@ -449,14 +554,16 @@ class PatchEngine:
                     original_contents={self.filename: self.file_content}
                 )
                 err_msg += f"\n\nTo apply this suggestion, run apply_last_dry_run with run_id '{run_id}'."
-                ve = ValueError(err_msg)
+                ve = NoMatchValueError(err_msg)
                 ve.run_id = run_id
                 raise ve
+            except NoMatchValueError:
+                raise
             except ValueError:
                 raise
             except Exception:
                 pass
-        raise ValueError(err_msg)
+        raise NoMatchValueError(err_msg)
 
     def _assert_line_filter(
         self, line_filter: str | int, target_slice: str, norm_search: str, start_idx: int
