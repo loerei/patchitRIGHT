@@ -301,75 +301,12 @@ wheels = [
 ]
 
 [[package]]
-name = "jcodemunch-mcp"
-version = "1.108.210"
-source = { directory = "../jcodemunch-mcp" }
-dependencies = [
-    { name = "httpx" },
-    { name = "mcp" },
-    { name = "pathspec" },
-    { name = "pyyaml" },
-    { name = "tree-sitter-language-pack" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", marker = "extra == 'all'", specifier = ">=0.40.0" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
-    { name = "anthropic", marker = "extra == 'bench'", specifier = ">=0.40.0" },
-    { name = "anyio", marker = "extra == 'all'", specifier = ">=4.0.0" },
-    { name = "anyio", marker = "extra == 'http'", specifier = ">=4.0.0" },
-    { name = "google-generativeai", marker = "extra == 'all'", specifier = ">=0.8.0" },
-    { name = "google-generativeai", marker = "extra == 'gemini'", specifier = ">=0.8.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
-    { name = "jinja2", marker = "extra == 'all'", specifier = ">=3.1" },
-    { name = "jinja2", marker = "extra == 'bench'", specifier = ">=3.1" },
-    { name = "keyring", marker = "extra == 'all'", specifier = ">=24.0" },
-    { name = "keyring", marker = "extra == 'keyring'", specifier = ">=24.0" },
-    { name = "mcp", specifier = ">=1.10.0,<2.0.0" },
-    { name = "numpy", marker = "extra == 'all'", specifier = ">=1.24.0" },
-    { name = "numpy", marker = "extra == 'groq-voice'", specifier = ">=1.24.0" },
-    { name = "onnxruntime", marker = "extra == 'all'", specifier = ">=1.16.0" },
-    { name = "onnxruntime", marker = "extra == 'local-embed'", specifier = ">=1.16.0" },
-    { name = "openai", marker = "extra == 'all'", specifier = ">=1.0.0" },
-    { name = "openai", marker = "extra == 'bench'", specifier = ">=1.0.0" },
-    { name = "openai", marker = "extra == 'groq'", specifier = ">=1.0.0" },
-    { name = "openai", marker = "extra == 'groq-explain'", specifier = ">=1.0.0" },
-    { name = "openai", marker = "extra == 'groq-voice'", specifier = ">=1.0.0" },
-    { name = "openai", marker = "extra == 'minimax'", specifier = ">=1.0.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0.0" },
-    { name = "openai", marker = "extra == 'zhipu'", specifier = ">=1.0.0" },
-    { name = "pathspec", specifier = ">=0.12.0" },
-    { name = "pillow", marker = "extra == 'all'", specifier = ">=10.0.0" },
-    { name = "pillow", marker = "extra == 'groq-explain'", specifier = ">=10.0.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "pyyaml", marker = "extra == 'all'", specifier = ">=6.0" },
-    { name = "pyyaml", marker = "extra == 'bench'", specifier = ">=6.0" },
-    { name = "pyyaml", marker = "extra == 'dbt'", specifier = ">=6.0" },
-    { name = "rich", marker = "extra == 'all'", specifier = ">=13.0" },
-    { name = "rich", marker = "extra == 'bench'", specifier = ">=13.0" },
-    { name = "sentence-transformers", marker = "extra == 'all'", specifier = ">=2.2.0" },
-    { name = "sentence-transformers", marker = "extra == 'semantic'", specifier = ">=2.2.0" },
-    { name = "sounddevice", marker = "extra == 'all'", specifier = ">=0.4.6" },
-    { name = "sounddevice", marker = "extra == 'groq-voice'", specifier = ">=0.4.6" },
-    { name = "starlette", marker = "extra == 'all'", specifier = ">=1.3.1" },
-    { name = "starlette", marker = "extra == 'http'", specifier = ">=1.3.1" },
-    { name = "tree-sitter-language-pack", specifier = ">=0.7.0,<1.0.0" },
-    { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.20.0" },
-    { name = "uvicorn", marker = "extra == 'http'", specifier = ">=0.20.0" },
-    { name = "watchfiles", marker = "extra == 'all'", specifier = ">=1.0.0" },
-    { name = "watchfiles", marker = "extra == 'watch'", specifier = ">=1.0.0" },
-]
-provides-extras = ["anthropic", "gemini", "openai", "minimax", "zhipu", "dbt", "http", "watch", "semantic", "local-embed", "groq", "groq-voice", "groq-explain", "keyring", "bench", "all"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "hypothesis", specifier = ">=6.0.0" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-asyncio", specifier = ">=1.3.0" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "ruff", specifier = ">=0.6.0" },
-    { name = "tiktoken", specifier = ">=0.7.0" },
+name = "json5"
+version = "0.17.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/16/1f/58a4d7ee466f81bc3c7337036380fc6d49de3afb7855d74f8121b1e89b32/json5-0.17.3.tar.gz", hash = "sha256:8d0278ad34ebaa9c3af76d9519274811830224a2d1cd5af156dbd067f461b8a4", size = 54234, upload-time = "2026-10-09T21:19:28.335Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ae/39/e689b616c4279a821d5842a8a85c1874540f8d58e35028df93f2182120c2/json5-0.17.3-py3-none-any.whl", hash = "sha256:2c8b22a893c35cd6a3c5ccbf1dd1c7d02c25dc1b5897fea658f9bf08c2e05f9a", size = 34809, upload-time = "2026-10-09T21:19:27.357Z" },
 ]
 
 [[package]]
@@ -438,7 +375,7 @@ name = "patchitright-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "jcodemunch-mcp" },
+    { name = "json5" },
     { name = "mcp" },
     { name = "pyyaml" },
     { name = "rapidfuzz" },
@@ -456,7 +393,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jcodemunch-mcp", directory = "../jcodemunch-mcp" },
+    { name = "json5", specifier = ">=0.9.0" },
     { name = "mcp", specifier = ">=1.10.0,<2.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rapidfuzz", specifier = ">=3.0.0" },
@@ -470,15 +407,6 @@ dev = [
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-xdist", specifier = ">=3.6.0" },
-]
-
-[[package]]
-name = "pathspec"
-version = "1.1.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5a/82/42f767fc1c1143d6fd36efb827202a2d997a375e160a71eb2888a925aac1/pathspec-1.1.1.tar.gz", hash = "sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a", size = 135180, upload-time = "2026-04-27T01:46:08.907Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/d9/7fb5aa316bc299258e68c73ba3bddbc499654a07f151cba08f6153988714/pathspec-1.1.1-py3-none-any.whl", hash = "sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189", size = 57328, upload-time = "2026-04-27T01:46:07.06Z" },
 ]
 
 [[package]]
