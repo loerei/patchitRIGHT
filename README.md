@@ -1,11 +1,5 @@
 # patchitRIGHT
 
-**patchitRIGHT** is a transactional file-editing MCP server for coding agents. It edits files by function/class name, line numbers, or text block, copies or moves slices across files on disk without re-typing code, and checks syntax before saving with automatic rollback on failure.
-
----
-
-## How It Compares
-
 Since native `edit_file` tools are already pretty mature, editing files is one of the last things people talk about. This repo, sure, sounds weird.
 
 But there is still an awkward gap that forces agents to either:
@@ -13,6 +7,10 @@ But there is still an awkward gap that forces agents to either:
 - run scripts and be reckless.
 
 The idea was simple: keep the wins from editing via scripts, without breaking files. This MCP is how we do it.
+
+---
+
+## How It Compares
 
 | Capability | Native Agent Tools (`edit_file`, `write_file`) | Ad-hoc Shell Scripts (`python -c`, `sed`, `node -e`) | `patchitRIGHT` |
 | :--- | :--- | :--- | :--- |
