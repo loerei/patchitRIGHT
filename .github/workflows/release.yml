@@ -21,14 +21,15 @@ jobs:
           enable-cache: true
 
       - name: Verify tag matches pyproject.toml version
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: python {0}
         run: |
           import os, tomllib
+          ref = os.environ["GITHUB_REF"]
+          assert ref.startswith("refs/tags/v"), f"Release requires a v* tag ref, got {ref}"
           with open("pyproject.toml", "rb") as f:
               pkg_ver = tomllib.load(f)["project"]["version"]
-          tag_ver = os.environ["GITHUB_REF_NAME"].lstrip("v")
-          assert pkg_ver == tag_ver, f"Tag {tag_ver} != pyproject.toml version {pkg_ver}"
+          tag_name = os.environ["GITHUB_REF_NAME"]
+          assert tag_name == f"v{pkg_ver}", f"Tag {tag_name} != v{pkg_ver}"
 
       - name: Install dependencies and run tests
         run: |
