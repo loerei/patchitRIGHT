@@ -3,9 +3,22 @@ name = "patchitright-mcp"
 version = "0.1.0"
 description = "AST-bounded safe search-and-replace and atomic multi-file edit MCP server"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "loerei", email = "sayusumat@gmail.com" },
+]
+keywords = ["mcp", "ast", "tree-sitter", "code-editing", "llm", "refactoring"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
 ]
 dependencies = [
     "mcp>=1.10.0,<2.0.0",
@@ -17,6 +30,10 @@ dependencies = [
     "tree-sitter-language-pack>=0.7.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/loerei/patchitRIGHT"
+Issues = "https://github.com/loerei/patchitRIGHT/issues"
+
 [project.scripts]
 patchitright-mcp = "patchitright_mcp.server:main"
 
@@ -26,6 +43,20 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/patchitright_mcp"]
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "src",
+    "tests",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+exclude = [
+    ".agents/**",
+    "**/__pycache__",
+    "**/*.pyc",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
