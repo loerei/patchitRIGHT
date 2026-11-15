@@ -30,6 +30,16 @@ from .tx_executor import (
 from .validators import SyntaxValidationError, ValidationService
 from .workspace import Workspace
 
+__all__ = [
+    "apply_last_dry_run",
+    "batch_patch_files",
+    "generate_diff",
+    "patch_file",
+    "run_startup_recovery",
+    "trigger_jcodemunch_sync",
+    "write_file",
+]
+
 _DEFAULT_GLOB_EXCLUDES = {".git", ".patchitRIGHT", "node_modules", ".venv", "__pycache__"}
 _SOURCE_SLICE_KEYS = (
     "source_file",
@@ -310,7 +320,7 @@ def _execute_write_item(
         return None, _create_error_response(filter_err, target_file=target_file)
 
     file_exists = target_path.exists()
-    allow_overwrite = bool(item.get("allow_overwrite", False))
+    allow_overwrite = bool(item.get("allow_overwrite", item.get("overwrite", False)))
     if file_exists and not allow_overwrite:
         return None, _create_error_response(
             f"File already exists at '{target_file}'. To overwrite it, set 'allow_overwrite' to true.",
@@ -325,6 +335,8 @@ def _execute_write_item(
             return None, _create_error_response(f"Failed to read existing file: {e}", target_file=target_file)
 
     code_content = item.get("code_content")
+    if code_content is None:
+        code_content = item.get("content")
     source_file = item.get("source_file")
     has_source_opts = any(
         item.get(k) is not None and item.get(k) is not False
@@ -552,6 +564,14 @@ def _build_file_items(
         for raw_item in files_param:
             if not isinstance(raw_item, dict):
                 return [], True, _create_error_response("Error: Each entry in 'files' must be an object.")
+            if "target_file" not in raw_item and "path" in raw_item:
+                raw_item["target_file"] = raw_item["path"]
+            elif "target_file" not in raw_item and "file_path" in raw_item:
+                raw_item["target_file"] = raw_item["file_path"]
+            if raw_item.get("code_content") is None and raw_item.get("content") is not None:
+                raw_item["code_content"] = raw_item.get("content")
+            if "allow_overwrite" not in raw_item and "overwrite" in raw_item:
+                raw_item["allow_overwrite"] = bool(raw_item["overwrite"])
             action = raw_item.get("action", "patch")
             if action not in _VALID_BATCH_ACTIONS:
                 return [], True, _create_error_response(
@@ -637,9 +657,9 @@ def patch_file(  # noqa: C901 # NOSONAR
 
     resolved_paths: list[Path] = []
     for item in file_items:
-        tf = item.get("target_file")
+        tf = item.get("target_file") or item.get("path") or item.get("file_path")
         if not tf:
-            return _create_error_response("Error: 'target_file' is required for each item in 'files' array.")
+            return _create_error_response("Error: 'target_file' (or 'path') is required for each item in 'files' array.")
         item["target_file"] = os.path.normpath(tf)
         try:
             resolved_paths.append(workspace.resolve_safe_path(item["target_file"]))
@@ -796,7 +816,7 @@ def patch_file(  # noqa: C901 # NOSONAR
 
 
 def write_file(
-    target_file: str,
+    target_file: Optional[str] = None,
     code_content: Optional[str] = None,
     allow_overwrite: bool = False,
     dry_run: bool = False,
@@ -808,9 +828,40 @@ def write_file(
     source_end_anchor: Optional[str] = None,
     delete_source: bool = False,
     cut_source: bool = False,
+    content: Optional[str] = None,
+    path: Optional[str] = None,
+    overwrite: Optional[bool] = None,
+    files: Optional[list[dict]] = None,
     **kwargs,
 ) -> dict:
-    """Create or overwrite a file from code_content or a source_file copy/slice with validation."""
+    """Create or overwrite a file from code_content or a source_file copy/slice with validation, or batch write multiple files via files[]."""
+    if files is not None:
+        normalized_files: list[dict[str, Any]] = []
+        for raw_f in files:
+            if not isinstance(raw_f, dict):
+                return _create_error_response("Error: Each entry in 'files' must be an object.")
+            item_copy = dict(raw_f)
+            item_copy.setdefault("action", "write")
+            if item_copy.get("target_file") is None:
+                item_copy["target_file"] = item_copy.get("path") or item_copy.get("file_path")
+            if item_copy.get("code_content") is None and item_copy.get("content") is not None:
+                item_copy["code_content"] = item_copy.get("content")
+            if "allow_overwrite" not in item_copy and "overwrite" in item_copy:
+                item_copy["allow_overwrite"] = bool(item_copy["overwrite"])
+            normalized_files.append(item_copy)
+        return patch_file(files=normalized_files, dry_run=dry_run, **kwargs)
+
+    if target_file is None:
+        target_file = path or kwargs.pop("file_path", None)
+    if not target_file:
+        return _create_error_response("Error: Either 'target_file' (or 'path') or 'files' must be provided.")
+
+    if code_content is None and content is not None:
+        code_content = content
+
+    if overwrite is not None:
+        allow_overwrite = allow_overwrite or bool(overwrite)
+
     storage_path = kwargs.get("storage_path")
     bypass_validation = bool(kwargs.get("bypass_validation", False))
     try:
