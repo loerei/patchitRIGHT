@@ -1,7 +1,6 @@
 """Unit tests for transaction rollback, crash recovery, and self-modification safety."""
 
 import os
-import sys
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -249,26 +248,51 @@ def test_self_mod_safety_helpers(monkeypatch):
     set_shutdown_event()
 
 
-def test_trigger_jcodemunch_sync_subprocesses(monkeypatch, tmp_path):
-    """trigger_jcodemunch_sync handles direct import, subprocess fallback, and error handling."""
+def test_trigger_jcodemunch_sync_subprocesses(monkeypatch, tmp_path, capsys):
+    """trigger_jcodemunch_sync spawns CLI subprocess only when enabled and binary is on PATH."""
     # 1. Disabled by default
     monkeypatch.delenv("PATCHITRIGHT_SYNC_JCODEMUNCH", raising=False)
     with patch("threading.Thread") as mock_thread:
         trigger_jcodemunch_sync(tmp_path / "a.py")
         mock_thread.assert_not_called()
 
-    # 2. Enabled with direct import
+    # 2. Enabled, CLI missing on PATH -> silent no-op
     monkeypatch.setenv("PATCHITRIGHT_SYNC_JCODEMUNCH", "true")
-    with patch("jcodemunch_mcp.tools.index_file.index_file"):
+    with patch("shutil.which", return_value=None), patch("threading.Thread") as mock_thread:
         trigger_jcodemunch_sync(tmp_path / "b.py", storage_path="db.sqlite")
-        time.sleep(0.05)
+        mock_thread.assert_not_called()
 
-    # 3. Fallback to subprocess when ImportError
-    with patch.dict(sys.modules, {"jcodemunch_mcp.tools.index_file": None}):
-        with patch("subprocess.run") as mock_subproc:
-            trigger_jcodemunch_sync(tmp_path / "c.py", storage_path="db.sqlite")
-            time.sleep(0.05)
-            assert mock_subproc.called
+    # 3. Enabled, CLI present -> runs CLI subprocess with --db
+    cli_path = "/usr/local/bin/jcodemunch-mcp"
+    with patch("shutil.which", return_value=cli_path), patch("subprocess.run") as mock_subproc:
+        target = tmp_path / "c.py"
+        trigger_jcodemunch_sync(target, storage_path="db.sqlite")
+        retries = 20
+        while mock_subproc.call_count == 0 and retries > 0:
+            time.sleep(0.02)
+            retries -= 1
+        mock_subproc.assert_called_once()
+        assert mock_subproc.call_args[0][0] == [
+            cli_path,
+            "index-file",
+            str(target.resolve()),
+            "--db",
+            "db.sqlite",
+        ]
+
+    # 4. CLI failure in worker does not raise and logs warning to stderr
+    import threading
+    worker_ran = threading.Event()
+
+    def _boom(*_args, **_kwargs):
+        worker_ran.set()
+        raise OSError("boom")
+
+    with patch("shutil.which", return_value=cli_path), patch("subprocess.run", side_effect=_boom):
+        trigger_jcodemunch_sync(tmp_path / "d.py")
+        assert worker_ran.wait(timeout=1.0)
+        time.sleep(0.02)
+    assert "Failed to trigger jcodemunch sync" in capsys.readouterr().err
 
 
 def test_delayed_writers_and_self_mod(tmp_path, monkeypatch):

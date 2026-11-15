@@ -1,6 +1,8 @@
 """Self-modification safety, delayed background writers, and jcodemunch background sync."""
 import logging
 import os
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -29,38 +31,37 @@ def set_shutdown_event() -> None:
 
 
 def trigger_jcodemunch_sync(file_paths: Union[Path, list[Path]], storage_path: Optional[str] = None) -> None:
-    """Trigger jcodemunch file index update using direct python import or subprocess fallback."""
+    """Trigger optional jCodeMunch CLI file re-indexing when enabled and CLI is installed."""
     enabled = os.environ.get("PATCHITRIGHT_SYNC_JCODEMUNCH", "").lower() in ("true", "1", "yes")
     if not enabled:
+        return
+
+    cli_exe = shutil.which("jcodemunch-mcp")
+    if not cli_exe:
         return
 
     if isinstance(file_paths, Path):
         file_paths = [file_paths]
 
     def worker():
+        startupinfo = None
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
         for path in file_paths:
             try:
                 abs_path = str(path.resolve())
-                try:
-                    from jcodemunch_mcp.tools.index_file import index_file as jm_index_file
-                    jm_index_file(path=abs_path, use_ai_summaries=False, storage_path=storage_path)
-                except ImportError:
-                    import subprocess
-                    cmd = ["jcodemunch-mcp", "index-file", abs_path]
-                    if storage_path:
-                        cmd.extend(["--db", storage_path])
+                cmd = [cli_exe, "index-file", abs_path]
+                if storage_path:
+                    cmd.extend(["--db", storage_path])
 
-                    startupinfo = None
-                    if sys.platform == "win32":
-                        startupinfo = subprocess.STARTUPINFO()
-                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-
-                    subprocess.run(
-                        cmd,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        startupinfo=startupinfo,
-                    )
+                subprocess.run(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    startupinfo=startupinfo,
+                )
             except Exception as e:
                 print(f"[PATCHITRIGHT] Warning: Failed to trigger jcodemunch sync for {path}: {e}", file=sys.stderr)
 

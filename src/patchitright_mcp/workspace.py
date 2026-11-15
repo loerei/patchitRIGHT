@@ -1,25 +1,17 @@
 import functools
-import logging
 import os
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
-
 
 @functools.lru_cache(maxsize=256)
 def _cached_resolve_allowed_base_dir(cwd_str: str, target_file_norm: str, storage_path: Optional[str] = None) -> str:
-    """Module-level LRU cached helper for resolving allowed base directory string."""
-    try:
-        from jcodemunch_mcp.tools.resolve_repo import resolve_repo as resolve_repo_fn
-        temp_resolved = os.path.abspath(os.path.join(cwd_str, target_file_norm))
-        repo_res = resolve_repo_fn(temp_resolved, storage_path)
-        if repo_res.get("found") and "source_root" in repo_res:
-            return os.path.abspath(repo_res["source_root"])
-    except (ImportError, ModuleNotFoundError):
-        logger.debug("jcodemunch_mcp not installed; falling back to cwd")
-    except Exception as err:
-        logger.warning("Unexpected error resolving repo via jCodeMunch for %s: %s", target_file_norm, err)
+    """Module-level LRU cached helper returning the workspace cwd string.
+
+    ``storage_path`` is retained strictly for Python caller compatibility and
+    is ignored now that symbol resolution runs on-demand without an index DB.
+    """
+    _ = (target_file_norm, storage_path)
     return cwd_str
 
 
@@ -37,10 +29,10 @@ class Workspace:
 
     @property
     def base_dir(self) -> Path:
-        return Path(self.storage_path).resolve() if self.storage_path else self.cwd
+        return self.cwd
 
     def resolve_allowed_base_dir(self, target_file: str) -> Path:
-        """Resolve the allowed base directory, using indexed repo source_root if available (LRU cached)."""
+        """Resolve the allowed base directory locally to ``self.cwd`` (LRU cached)."""
         cwd_str = str(self.cwd)
         tf_norm = os.path.normpath(target_file)
         resolved_str = _cached_resolve_allowed_base_dir(cwd_str, tf_norm, self.storage_path)

@@ -10,7 +10,6 @@ from patchitright_mcp.patch_file import patch_file, batch_patch_files, run_start
 from patchitright_mcp.engine import PatchEngine
 from patchitright_mcp.dry_run import apply_last_dry_run
 from patchitright_mcp.run_cache import get_cache
-from jcodemunch_mcp.tools.index_folder import index_folder
 
 
 class TestPatchCore:
@@ -222,7 +221,7 @@ class TestPatchCore:
 
 
     def test_ast_symbol_boundary(self, tmp_path, monkeypatch):
-        """patch_file must restrict search and replace to AST symbol_name boundaries by loading the index."""
+        """patch_file must restrict search and replace to AST symbol_name boundaries directly on demand."""
         monkeypatch.chdir(tmp_path)
         
         # Write a file containing a python function
@@ -235,10 +234,6 @@ class TestPatchCore:
             "other_val = 'dup'\n"
         )
         
-        # Index the directory
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
-        
         # Call patch_file with symbol_name boundary (restricts to target_func, lines 1-3)
         res = patch_file(
             target_file="app.py",
@@ -246,7 +241,6 @@ class TestPatchCore:
             replace_content="new",
             symbol_name="target_func",
             dry_run=False,
-            storage_path=store_path
         )
         
         assert "success" in res
@@ -263,29 +257,25 @@ class TestPatchCore:
         assert app_file.read_text() == expected_content
 
 
-    def test_external_workspace_indexed_repo(self, tmp_path, monkeypatch):
-        """patch_file must allow editing files inside an indexed repo even if CWD is outside."""
+    def test_external_workspace_absolute_path(self, tmp_path, monkeypatch):
+        """patch_file must allow editing files via absolute path even if CWD is outside."""
         # Set CWD to an external directory (simulating AppData programs directory)
         external_cwd = tmp_path / "appdata_cwd"
         external_cwd.mkdir()
         monkeypatch.chdir(external_cwd)
 
-        # Create a workspace directory and index it
+        # Create a workspace directory
         workspace_dir = tmp_path / "workspace"
         workspace_dir.mkdir()
         app_file = workspace_dir / "app.py"
         app_file.write_text("print('hello')\n")
 
-        store_path = str(tmp_path / "store")
-        index_folder(str(workspace_dir), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
-
-        # Call patch_file with absolute path of target file (which is under indexed workspace_dir)
+        # Call patch_file with absolute path of target file
         res = patch_file(
             target_file=str(app_file),
             search_content="hello",
             replace_content="world",
             dry_run=False,
-            storage_path=store_path
         )
 
         assert "success" in res
@@ -499,17 +489,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo() {\n  return 1;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="function foo() { return 2; }",
             symbol_name="foo",
             symbol_scope="full",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert app_file.read_text() == "function foo() { return 2; }\n"
@@ -520,17 +506,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo(a, b) {\n  const x = a + b;\n  return x;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="  return a * b;",
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         # Original signature and braces preserved, body replaced and padded
@@ -543,17 +525,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("const fn = (x) => {\n  return x + 1;\n};\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="  return x + 2;",
             symbol_name="fn",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         expected = "const fn = (x) => {\n  return x + 2;\n};\n"
@@ -565,17 +543,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("const fn = (x) => x + 1;\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="x + 2",
             symbol_name="fn",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         # Expression replaced verbatim, no braces auto-wrap, no block padding
@@ -587,17 +561,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("class C {\n  method() {\n    const a = 1;\n  }\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="    return 42;",
             symbol_name="method",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         expected = "class C {\n  method() {\n    return 42;\n  }\n}\n"
@@ -609,17 +579,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("class C {\n  get val() {\n    return this._val;\n  }\n  set val(v) {\n    this._val = v;\n  }\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="    return 100;",
             symbol_name="val",  # targets getter usually depending on index
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
 
@@ -629,17 +595,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("async function gen() {\n  await doSomething();\n}\n")
 
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="  await doSomethingElse();",
             symbol_name="gen",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert app_file.read_text() == "async function gen() {\n  await doSomethingElse();\n}\n"
@@ -650,17 +612,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo({ a, b }) {\n  return a;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="  return b;",
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert app_file.read_text() == "function foo({ a, b }) {\n  return b;\n}\n"
@@ -671,17 +629,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.ts"
         app_file.write_text("function foo<T extends { k: string }>(x: T): { r: string } {\n  return { r: x.k };\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.ts",
             replace_content="  return { r: 'new' };",
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert app_file.read_text() == "function foo<T extends { k: string }>(x: T): { r: string } {\n  return { r: 'new' };\n}\n"
@@ -692,17 +646,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.ts"
         app_file.write_text("function f(x: string): string;\nfunction f(x: any): any {\n  return x;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.ts",
             replace_content="  return 'overloaded';",
             symbol_name="f",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert app_file.read_text() == "function f(x: string): string;\nfunction f(x: any): any {\n  return 'overloaded';\n}\n"
@@ -713,9 +663,6 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo() {\n  return 1;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         # Classic replacement inside symbol boundary: scope="boundary" is default
         res = patch_file(
@@ -723,8 +670,7 @@ class TestSymbolScopeCore:
             search_content="return 1;",
             replace_content="return 2;",
             symbol_name="foo",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert app_file.read_text() == "function foo() {\n  return 2;\n}\n"
@@ -735,17 +681,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo() {\n  return 1;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="  return 2;",
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=True,
-            storage_path=store_path
+            dry_run=True
         )
         assert res.get("success") is True
         assert res.get("dryRun") is True
@@ -773,9 +715,6 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo() {\n  return 1;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         # Calling with search_content and no scope (defaults to boundary)
         res = patch_file(
@@ -783,8 +722,7 @@ class TestSymbolScopeCore:
             search_content="return 1;",
             replace_content="return 3;",
             symbol_name="foo",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert app_file.read_text() == "function foo() {\n  return 3;\n}\n"
@@ -795,17 +733,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("const add = (a, b) => { return a + b; };\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content=" return a * b; ",
             symbol_name="add",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         # signature and closing brace on the same line preserved via column offsets
@@ -817,17 +751,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function f(){return 1}")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="return 2",
             symbol_name="f",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert app_file.read_text() == "function f(){return 2}"
@@ -838,9 +768,6 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo() {\n  return 1;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         with patch("patchitright_mcp.body_parser._try_tree_sitter", side_effect=ImportError):
             res = patch_file(
@@ -848,8 +775,7 @@ class TestSymbolScopeCore:
                 replace_content="  return 999;",
                 symbol_name="foo",
                 symbol_scope="body",
-                dry_run=False,
-                storage_path=store_path
+                dry_run=False
             )
         assert res.get("success") is True
         assert app_file.read_text() == "function foo() {\n  return 999;\n}\n"
@@ -860,9 +786,6 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.tsx"
         app_file.write_text("function foo() {\n  return <div />;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         with patch("patchitright_mcp.body_parser._try_tree_sitter", side_effect=ImportError):
             res = patch_file(
@@ -870,8 +793,7 @@ class TestSymbolScopeCore:
                 replace_content="  return <span />;",
                 symbol_name="foo",
                 symbol_scope="body",
-                dry_run=False,
-                storage_path=store_path
+                dry_run=False
             )
         # Should raise clear error about fallback being unsupported on JSX/TSX
         assert "error" in res
@@ -885,9 +807,6 @@ class TestSymbolScopeCore:
         # Target base indent is min = 2 spaces.
         app_file.write_text("function foo() {\n  // comment\n    const a = 1;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         # replace content is 0-indented
         res = patch_file(
@@ -895,8 +814,7 @@ class TestSymbolScopeCore:
             replace_content="const b = 2;\nreturn b;",
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         # Normalized to 2 spaces base indent
@@ -909,17 +827,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo() {\n  return 1;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="return 2;",  # 0 indent
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert res.get("indentation_adjusted") is True
@@ -933,9 +847,6 @@ class TestSymbolScopeCore:
         lines = ["function foo() {"] + [f"  console.log({i});" for i in range(10)] + ["}"]
         app_file.write_text("\n".join(lines))
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         with patch("patchitright_mcp.body_parser.MAX_LINES_FOR_TREESITTER", 5):
             res = patch_file(
@@ -943,8 +854,7 @@ class TestSymbolScopeCore:
                 replace_content="  return 2;",
                 symbol_name="foo",
                 symbol_scope="body",
-                dry_run=False,
-                storage_path=store_path
+                dry_run=False
             )
         assert res.get("success") is True
         assert res.get("large_file_fallback") is True
@@ -955,17 +865,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo() {}")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="const a = 1;\nreturn a;",
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         # Empty body fallback indent: signature indent + 1 level (default 2 spaces)
@@ -979,17 +885,13 @@ class TestSymbolScopeCore:
         # Emojis/multibyte chars before the target function.
         app_file.write_text("const a = \"🐛é\";\nfunction foo() {\n  return 1;\n}\n", encoding="utf-8")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="  return 2;",
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert "🐛é" in app_file.read_text(encoding="utf-8")
@@ -1001,9 +903,6 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_text("function foo() {\n  return 1;\n}\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         # Replaced content has NO leading/trailing newline
         res = patch_file(
@@ -1011,8 +910,7 @@ class TestSymbolScopeCore:
             replace_content="  console.log('new');",
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         assert res.get("newline_padded") is True
@@ -1026,17 +924,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.js"
         app_file.write_bytes(b"function foo() {\r\n  return 1;\r\n}\r\n")
         
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.js",
             replace_content="  return 2;",
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         # Spliced correctly with CRLF preserved
@@ -1049,17 +943,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.py"
         app_file.write_text("def foo(a, b):\n    return a + b\n")
 
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.py",
             replace_content="    return a * b",
             symbol_name="foo",
             symbol_scope="body",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         expected = "def foo(a, b):\n    return a * b\n"
@@ -1071,17 +961,13 @@ class TestSymbolScopeCore:
         app_file = tmp_path / "app.py"
         app_file.write_text("def foo(a, b):\n    return a + b\n")
 
-        from jcodemunch_mcp.tools.index_folder import index_folder
-        store_path = str(tmp_path / "store")
-        index_folder(str(tmp_path), use_ai_summaries=False, storage_path=store_path, identity_mode="local")
 
         res = patch_file(
             target_file="app.py",
             replace_content="def foo(a, b):\n    return a * b",
             symbol_name="foo",
             symbol_scope="full",
-            dry_run=False,
-            storage_path=store_path
+            dry_run=False
         )
         assert res.get("success") is True
         expected = "def foo(a, b):\n    return a * b\n"

@@ -1,7 +1,6 @@
 """Unit tests for workspace path resolution, LRU caching, and AST line matcher collision checks."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -31,15 +30,14 @@ def test_workspace_lru_cache_and_clear():
     clear_workspace_cache()
 
 
-def test_workspace_jcodemunch_fallback_exceptions(monkeypatch):
-    """Workspace degrades gracefully when jCodeMunch throws unexpected exceptions."""
+def test_workspace_storage_path_ignored_locally(tmp_path):
+    """Workspace resolves allowed base directory locally and ignores legacy storage_path."""
     clear_workspace_cache()
     cwd = Path("d:/Projects/patchitRIGHT")
-    ws = Workspace(cwd)
+    ws = Workspace(cwd, storage_path=str(tmp_path / "unused_db"))
 
-    with patch("jcodemunch_mcp.tools.resolve_repo.resolve_repo", side_effect=Exception("Database lock error")):
-        resolved = ws.resolve_allowed_base_dir("file.py")
-        assert resolved == cwd.resolve()
+    assert ws.base_dir == cwd.resolve()
+    assert ws.resolve_allowed_base_dir("file.py") == cwd.resolve()
 
 
 def test_workspace_find_workspace_root_anchors(tmp_path):
@@ -74,8 +72,8 @@ def test_workspace_resolve_safe_path_security(tmp_path):
     assert abs_path == abs_target.resolve()
 
 
-def test_line_matcher_resolve_ast_fallback_regex(tmp_path):
-    """_resolve_ast_boundaries falls back to regex matching when index is missing."""
+def test_line_matcher_resolve_ast_boundaries_native(tmp_path):
+    """_resolve_ast_boundaries resolves symbols directly via AST and rejects unknown symbols."""
     f = tmp_path / "app.py"
     f.write_text(
         "def calculate_total(a, b):\n"
@@ -85,63 +83,81 @@ def test_line_matcher_resolve_ast_fallback_regex(tmp_path):
         "    pass\n"
     )
 
-    # 1. Fallback regex finding function boundary when index is None
-    with patch("jcodemunch_mcp.tools.resolve_repo.resolve_repo", return_value={"found": True, "repo": "local/test"}), \
-         patch("jcodemunch_mcp.storage.IndexStore.load_index", return_value=None):
-        s_line, e_line, err, body_range = _resolve_ast_boundaries(
-            cwd=tmp_path,
-            target_path=f,
-            symbol_name="calculate_total",
-            storage_path=None,
-            start_line=None,
-            end_line=None,
-            symbol_scope="boundary"
-        )
-        assert s_line == 1
-        assert e_line == 4
-        assert err is None
+    s_line, e_line, err, body_range = _resolve_ast_boundaries(
+        cwd=tmp_path,
+        target_path=f,
+        symbol_name="calculate_total",
+        storage_path=None,
+        start_line=None,
+        end_line=None,
+        symbol_scope="boundary",
+    )
+    assert s_line == 1
+    assert e_line == 3
+    assert err is None
+    assert body_range is None
 
-    # 2. Symbol not found in unindexed file returns error
-    with patch("jcodemunch_mcp.tools.resolve_repo.resolve_repo", return_value={"found": False}):
-        s_line, e_line, err, _body_range = _resolve_ast_boundaries(
-            cwd=tmp_path,
-            target_path=f,
-            symbol_name="non_existent_func",
-            storage_path=None,
-            start_line=None,
-            end_line=None,
-        )
-        assert s_line is None
-        assert "not indexed" in err["error"]
+    s_line, e_line, err, _body_range = _resolve_ast_boundaries(
+        cwd=tmp_path,
+        target_path=f,
+        symbol_name="non_existent_func",
+        storage_path=None,
+        start_line=None,
+        end_line=None,
+    )
+    assert s_line is None
+    assert "not found" in err["error"].lower()
 
 
-def test_line_matcher_indexed_symbol_scope_body(tmp_path):
-    """_resolve_ast_boundaries resolves symbol from index with symbol_scope=body."""
+def test_line_matcher_resolve_ast_scope_body_and_bodiless(tmp_path):
+    """_resolve_ast_boundaries resolves body spans, TS overloads, and bodiless errors natively."""
     f = tmp_path / "math.py"
     f.write_text("def add(x, y):\n    return x + y\n")
 
-    mock_index = MagicMock()
-    mock_index.source_root = str(tmp_path)
-    mock_index.symbols = [
-        {"name": "add", "file": "math.py", "line": 1, "end_line": 2}
-    ]
+    s_line, e_line, err, body_range = _resolve_ast_boundaries(
+        cwd=tmp_path,
+        target_path=f,
+        symbol_name="add",
+        storage_path=None,
+        start_line=None,
+        end_line=None,
+        symbol_scope="body",
+    )
+    assert s_line == 2
+    assert e_line == 2
+    assert body_range is not None
+    assert err is None
 
-    with patch("jcodemunch_mcp.tools.resolve_repo.resolve_repo", return_value={"found": True, "repo": "local/test", "source_root": str(tmp_path)}), \
-         patch("jcodemunch_mcp.storage.IndexStore.load_index", return_value=mock_index):
+    ts_file = tmp_path / "overloads.ts"
+    ts_file.write_text(
+        "function greet(x: string): string;\n"
+        "function greet(x: number): string;\n"
+        "function greet(x: string | number): string {\n"
+        "  return String(x);\n"
+        "}\n"
+    )
+    s_line, e_line, err, body_range = _resolve_ast_boundaries(
+        cwd=tmp_path,
+        target_path=ts_file,
+        symbol_name="greet",
+        symbol_scope="body",
+    )
+    assert s_line == 3
+    assert e_line == 5
+    assert body_range is not None
+    assert err is None
 
-        s_line, e_line, _err, body_range = _resolve_ast_boundaries(
-            cwd=tmp_path,
-            target_path=f,
-            symbol_name="add",
-            storage_path=None,
-            start_line=None,
-            end_line=None,
-            symbol_scope="body"
-        )
-        assert s_line == 2  # body line 2
-        assert e_line == 2
-        assert body_range is not None
-        assert _err is None
+    proto_file = tmp_path / "decl.ts"
+    proto_file.write_text("function ping(x: number): void;\n")
+    s_line, e_line, err, _body_range = _resolve_ast_boundaries(
+        cwd=tmp_path,
+        target_path=proto_file,
+        symbol_name="ping",
+        symbol_scope="body",
+    )
+    assert s_line is None
+    assert err is not None
+    assert "without a body" in err["error"]
 
 
 def test_line_matcher_collision_detection():

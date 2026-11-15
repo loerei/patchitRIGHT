@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -74,6 +75,21 @@ EXTENSION_TO_LANGUAGE = {
     ".scss": "scss",
     ".html": "html",
 }
+
+_CPP_HEADER_HINT_RE = re.compile(
+    r"(?:^|\s)(?:class|namespace|template)\b"
+    r"|\b(?:public|private|protected)\s*:"
+    r"|::"
+)
+
+
+def detect_language(file_path: str, source_text: Optional[str] = None) -> Optional[str]:
+    """Resolve tree-sitter/AST language name from extension, promoting C++ .h headers."""
+    ext = os.path.splitext(file_path)[1].lower()
+    language = EXTENSION_TO_LANGUAGE.get(ext)
+    if language == "c" and ext == ".h" and source_text and _CPP_HEADER_HINT_RE.search(source_text):
+        return "cpp"
+    return language
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,7 +169,7 @@ def get_body_range(
     file_path:
         File path (used to determine language from extension).
     symbol_start_line, symbol_end_line:
-        1-indexed inclusive line range of the symbol (from jcodemunch index).
+        1-indexed inclusive line range of the symbol (from the AST symbol resolver).
 
     Raises
     ------
@@ -161,7 +177,7 @@ def get_body_range(
         If the body cannot be determined (unsupported language, no body, etc.).
     """
     ext = os.path.splitext(file_path)[1].lower()
-    language = EXTENSION_TO_LANGUAGE.get(ext)
+    language = detect_language(file_path, source)
     if not language:
         raise ValueError(
             f"Unsupported file extension '{ext}' for body parsing. "
@@ -369,10 +385,10 @@ def _try_tree_sitter(
     def _find_best_function(node) -> Optional[tuple]:
         """Walk tree to find the widest function-like node within the target range.
 
-        The index range comes from jcodemunch which may include leading
-        JSDoc / decorators, so the AST node will typically be *inside*
+        The target range comes from the symbol resolver, which may include
+        leading JSDoc / decorators, so the AST node will typically be *inside*
         the target range.  Among all matching nodes we pick the largest
-        (outermost) one because the index range describes the whole
+        (outermost) one because the symbol range describes the whole
         symbol, not an inner nested function.
         """
         best = None
@@ -539,7 +555,7 @@ def _python_ast_fallback(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             n_start = node.lineno
             n_end = getattr(node, "end_lineno", n_start)
-            # Find node within target range (1-indexed line bounds from indexer)
+            # Find node within target range (1-indexed line bounds from symbol resolver)
             if n_start >= symbol_start_line and n_end <= symbol_end_line:
                 if node.body:
                     first_stmt = node.body[0]
