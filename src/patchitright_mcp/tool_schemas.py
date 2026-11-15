@@ -71,7 +71,7 @@ _PATCH_OP_PROPERTIES: dict[str, Any] = {
     },
     "start_anchor": {
         "type": "string",
-        "description": "Substring guard on start_line.",
+        "description": "Substring guard on start_line (required with start_line/end_line when search_content omitted, unless end_anchor or line_filter given).",
     },
     "end_anchor": {
         "type": "string",
@@ -98,7 +98,11 @@ _PATCH_OP_PROPERTIES: dict[str, Any] = {
         "type": "string",
         "enum": ["boundary", "full", "body"],
         "default": "boundary",
-        "description": "'boundary' scopes search_content; 'full' replaces symbol incl. decorators/export; 'body' replaces body only.",
+        "description": (
+            "'boundary' scopes search_content; "
+            "'full' replaces entire symbol incl. decorators/export/JSDoc (no search_content); "
+            "'body' replaces body only (wrap arrow object returns in parens)."
+        ),
     },
     "allow_multiple": {
         "type": "boolean",
