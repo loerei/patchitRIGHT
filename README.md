@@ -83,7 +83,7 @@ Then point `"command"` to `"patchitright-mcp"` (with `"args": []`).
         "PATCHITRIGHT_IGNORE_WARNINGS": "format" // Recommended: ignore verbose formatter diffs (tabs vs spaces) by default
         // "PATCHITRIGHT_DEFAULT_TIMEOUT": "10.0", // Execution timeout limit in seconds (-1 to disable)
         // "PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION": "false", // Expose emergency bypass_validation in schemas
-        // "PATCHITRIGHT_SHOW_LEGACY": "false" // Expose legacy batch_patch_files tool
+        // "PATCHITRIGHT_SHOW_LEGACY": "false" // Expose legacy dry_run, apply_last_dry_run, and batch_patch_files
       }
     }
   }
@@ -98,7 +98,6 @@ Then point `"command"` to `"patchitright-mcp"` (with `"args": []`).
 | :--- | :--- | :--- |
 | `patch_file` | Edit existing files by symbol name, text block, guarded line range, line insertion, multi-file broadcast, or mixed atomic batch. | `target_file` / `target_files` / `target_glob` / `files`, `symbol_name`, `search_content`/`replace_content`, `start_line`/`end_line`, `expected_occurrences`, `source_file` |
 | `write_file` | Create or overwrite files from inline text, atomic multi-file batches, or `source_file` (whole-file copy/move, partial slice extraction, or binary copy). | `target_file` (or `path`) / `files`, `code_content` (or `content`) or `source_file`, `source_start_line`/`source_end_line`, `source_symbol`, `cut_source`/`delete_source`, `allow_overwrite` (or `overwrite`) |
-| `apply_last_dry_run` | Apply changes cached by a prior `dry_run: true` call if involved files are unchanged on disk. | `run_id` |
 | `patchitright_guide` | Return current usage recipes and language style rules. | `file_type` |
 
 ---
@@ -139,7 +138,7 @@ Edit functions and classes by name or extract code directly from another workspa
   * `all`: Suppresses all warning diagnostics.
 * **`PATCHITRIGHT_DEFAULT_TIMEOUT`** (`float`, default: `10.0`): Server execution timeout limit in seconds (`set_timeout: -1` disables timeout).
 * **`PATCHITRIGHT_EXPOSE_BYPASS_VALIDATION`** (`true`/`false`, default: `false`): Exposes `bypass_validation` parameter in schemas.
-* **`PATCHITRIGHT_SHOW_LEGACY`** (`true`/`false`, default: `false`): Exposes legacy `batch_patch_files` tool.
+* **`PATCHITRIGHT_SHOW_LEGACY`** (`true`/`false`, default: `false`): Exposes legacy `dry_run`, `apply_last_dry_run`, and `batch_patch_files`.
 
 ---
 

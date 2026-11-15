@@ -32,7 +32,6 @@ def generate_patchitright_guide(version: str, file_type: str | list[str] = "gene
 | **Copy / extract slice / move** | `write_file(target_file, source_file, source_start_line/source_end_line or source_symbol, cut_source/delete_source)` |
 | **Fuzzy match for `search_content`** | `did_you_mean=true` |
 | **Replace all occurrences** | `allow_multiple=true` |
-| **Preview & apply later** | `dry_run=true` -> `apply_last_dry_run(run_id)` |
 
 ---
 

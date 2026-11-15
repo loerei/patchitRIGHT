@@ -32,20 +32,25 @@ async def test_list_tools_schema_with_bypass():
 async def test_list_tools_show_legacy_default_off():
     with patch.dict(os.environ, {"PATCHITRIGHT_SHOW_LEGACY": "false", "SHOW_LEGACY": "false"}):
         tools = await list_tools()
-        tool_names = [t.name for t in tools]
-        assert "batch_patch_files" not in tool_names
-        assert "patch_file" in tool_names
-        assert "apply_last_dry_run" in tool_names
-        assert "write_file" in tool_names
-        assert "patchitright_guide" in tool_names
+        tool_dict = {t.name: t for t in tools}
+        assert "batch_patch_files" not in tool_dict
+        assert "apply_last_dry_run" not in tool_dict
+        assert "patch_file" in tool_dict
+        assert "write_file" in tool_dict
+        assert "patchitright_guide" in tool_dict
+        assert "dry_run" not in tool_dict["patch_file"].inputSchema["properties"]
+        assert "dry_run" not in tool_dict["write_file"].inputSchema["properties"]
 
 
 @pytest.mark.asyncio
 async def test_list_tools_show_legacy_enabled():
     with patch.dict(os.environ, {"PATCHITRIGHT_SHOW_LEGACY": "true"}):
         tools = await list_tools()
-        tool_names = [t.name for t in tools]
-        assert "batch_patch_files" in tool_names
+        tool_dict = {t.name: t for t in tools}
+        assert "batch_patch_files" in tool_dict
+        assert "apply_last_dry_run" in tool_dict
+        assert "dry_run" in tool_dict["patch_file"].inputSchema["properties"]
+        assert "dry_run" in tool_dict["write_file"].inputSchema["properties"]
 
 
 

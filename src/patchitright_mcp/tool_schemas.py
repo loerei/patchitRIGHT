@@ -242,11 +242,6 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
         },
         **copy.deepcopy(_PATCH_OP_PROPERTIES),
         **copy.deepcopy(_FILE_LEVEL_EXTRAS),
-        "dry_run": {
-            "type": "boolean",
-            "description": "Return unified diff preview without writing to disk.",
-            "default": False,
-        },
         "files": {
             "type": "array",
             "items": copy.deepcopy(_BATCH_FILE_ITEM_SCHEMA),
@@ -293,12 +288,19 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
         "patch_content": copy.deepcopy(_FILE_LEVEL_EXTRAS["patch_content"]),
         "replacements": copy.deepcopy(_FILE_LEVEL_EXTRAS["replacements"]),
         "did_you_mean": copy.deepcopy(_FILE_LEVEL_EXTRAS["did_you_mean"]),
-        "dry_run": {
+    }
+
+    if show_legacy:
+        patch_file_properties["dry_run"] = {
+            "type": "boolean",
+            "description": "Return unified diff preview without writing to disk.",
+            "default": False,
+        }
+        write_file_properties["dry_run"] = {
             "type": "boolean",
             "description": "Validate and cache preview without writing to disk.",
             "default": False,
-        },
-    }
+        }
 
     tools = [
         Tool(
@@ -318,23 +320,6 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
                     {"required": ["target_glob"]},
                     {"required": ["files"]},
                 ],
-            },
-        ),
-        Tool(
-            name="apply_last_dry_run",
-            description=(
-                "Apply changes cached by a prior dry_run=true call (patch_file, write_file, or batch_patch_files). "
-                "Fails if expired (300 s TTL) or any involved file changed on disk."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "run_id": {
-                        "type": "string",
-                        "description": "run_id from the prior dry_run=true response.",
-                    }
-                },
-                "required": ["run_id"],
             },
         ),
         Tool(
@@ -381,6 +366,25 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
     ]
 
     if show_legacy:
+        tools.append(
+            Tool(
+                name="apply_last_dry_run",
+                description=(
+                    "Apply changes cached by a prior dry_run=true call (patch_file, write_file, or batch_patch_files). "
+                    "Fails if expired (300 s TTL) or any involved file changed on disk."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "run_id": {
+                            "type": "string",
+                            "description": "run_id from the prior dry_run=true response.",
+                        }
+                    },
+                    "required": ["run_id"],
+                },
+            )
+        )
         tools.append(
             Tool(
                 name="batch_patch_files",
