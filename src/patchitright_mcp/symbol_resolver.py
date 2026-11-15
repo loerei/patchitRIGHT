@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
 
-from .body_parser import EXTENSION_TO_LANGUAGE
+from .body_parser import detect_language
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ class SymbolMatch:
     has_body: bool = True
     is_overload: bool = False
     nesting_depth: int = 0
+    is_partial_declaration: bool = False
 
 
 def _normalize_qualified(name: str) -> str:
@@ -103,6 +104,11 @@ def _extract_python_ast_symbols(source_text: str) -> list[SymbolMatch]:
                     for handler in handlers:
                         if hasattr(handler, "body"):
                             _visit_block(handler.body, scope, depth)
+                cases = getattr(node, "cases", None)
+                if isinstance(cases, list):
+                    for case in cases:
+                        if hasattr(case, "body"):
+                            _visit_block(case.body, scope, depth)
 
     _visit_block(tree.body, [], 0)
     return symbols
@@ -142,7 +148,7 @@ def _node_text(node, source_bytes: bytes) -> str:
     return source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
-def _expand_leading_span(anchor_node, source_bytes: bytes) -> int:
+def _expand_leading_span(anchor_node, source_bytes: bytes, language: Optional[str] = None) -> int:
     """Return 0-indexed start row including contiguous decorators, attributes, and doc comments."""
     cur = anchor_node
     start_row = cur.start_point[0]
@@ -157,11 +163,16 @@ def _expand_leading_span(anchor_node, source_bytes: bytes) -> int:
         else:
             break
 
-    # Check if an attached doc comment sits immediately above the earliest decorator/declaration.
-    if prev is not None and "comment" in prev.type:
+    # Walk backward across contiguous doc comments sitting immediately above cur.
+    while prev is not None and "comment" in prev.type and prev.end_point[0] >= start_row - 1:
         comment_text = _node_text(prev, source_bytes).lstrip()
-        if comment_text.startswith(("/**", "///")) and prev.end_point[0] >= start_row - 1:
-            start_row = prev.start_point[0]
+        is_doc = comment_text.startswith(("/**", "///")) or (language == "go" and comment_text.startswith("//"))
+        if not is_doc:
+            break
+        start_row = prev.start_point[0]
+        if language != "go":
+            break
+        prev = prev.prev_named_sibling
 
     return start_row
 
@@ -277,6 +288,11 @@ def _extract_js_ts_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
                         nesting_depth=depth,
                     )
                 )
+                if ntype == "method_definition":
+                    body = node.child_by_field_name("body")
+                    if body is not None:
+                        for ch in body.named_children:
+                            _visit(ch, [*scope, name], depth + 1)
             return
 
         if ntype in ("public_field_definition", "field_definition", "property_definition"):
@@ -296,17 +312,22 @@ def _extract_js_ts_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
                         nesting_depth=depth,
                     )
                 )
+                val_body = val_node.child_by_field_name("body")
+                if val_body is not None:
+                    for ch in val_body.named_children:
+                        _visit(ch, [*scope, name], depth + 1)
             return
 
         if ntype in ("lexical_declaration", "variable_declaration"):
             declarators = [c for c in node.named_children if c.type == "variable_declarator"]
+            is_partial = len(declarators) > 1
             for decl in declarators:
                 name_node = decl.child_by_field_name("name")
                 val_node = _unwrap_js_value(decl.child_by_field_name("value"))
                 if name_node is not None and name_node.type == "identifier" and val_node is not None and val_node.type in _JS_TS_VALUE_FUNC_TYPES:
                     name = _node_text(name_node, source_bytes)
                     qual = ".".join([*scope, name]) if scope else name
-                    outer = (export_wrapper or node) if len(declarators) == 1 else decl
+                    outer = (export_wrapper or node) if not is_partial else decl
                     symbols.append(
                         SymbolMatch(
                             name=name,
@@ -316,13 +337,17 @@ def _extract_js_ts_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
                             kind="function" if val_node.type != "class" else "class",
                             has_body=True,
                             nesting_depth=depth,
+                            is_partial_declaration=is_partial,
                         )
                     )
+                    val_body = val_node.child_by_field_name("body")
+                    if val_body is not None:
+                        for ch in val_body.named_children:
+                            _visit(ch, [*scope, name], depth + 1)
             return
 
-        if ntype in ("program", "statement_block", "internal_module", "namespace_declaration"):
-            for ch in node.named_children:
-                _visit(ch, scope, depth)
+        for ch in node.named_children:
+            _visit(ch, scope, depth)
 
     _visit(root_node, [], 0)
     return symbols
@@ -369,7 +394,7 @@ def _extract_go_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
                         SymbolMatch(
                             name=name,
                             qualified_name=name,
-                            start_line=_expand_leading_span(ch, source_bytes) + 1,
+                            start_line=_expand_leading_span(ch, source_bytes, language="go") + 1,
                             end_line=ch.end_point[0] + 1,
                             kind="function",
                             has_body=ch.child_by_field_name("body") is not None,
@@ -390,7 +415,7 @@ def _extract_go_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
                         SymbolMatch(
                             name=name,
                             qualified_name=qual,
-                            start_line=_expand_leading_span(ch, source_bytes) + 1,
+                            start_line=_expand_leading_span(ch, source_bytes, language="go") + 1,
                             end_line=ch.end_point[0] + 1,
                             kind="method",
                             has_body=ch.child_by_field_name("body") is not None,
@@ -399,19 +424,21 @@ def _extract_go_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
                     )
             elif ntype == "type_declaration":
                 specs = [s for s in ch.named_children if s.type == "type_spec"]
+                is_partial = len(specs) > 1
                 for spec in specs:
                     name_node = spec.child_by_field_name("name")
                     if name_node is not None:
                         name = _node_text(name_node, source_bytes)
-                        outer = ch if len(specs) == 1 else spec
+                        outer = ch if not is_partial else spec
                         symbols.append(
                             SymbolMatch(
                                 name=name,
                                 qualified_name=name,
-                                start_line=_expand_leading_span(outer, source_bytes) + 1,
+                                start_line=_expand_leading_span(outer, source_bytes, language="go") + 1,
                                 end_line=outer.end_point[0] + 1,
                                 kind="type",
                                 has_body=True,
+                                is_partial_declaration=is_partial,
                             )
                         )
 
@@ -444,7 +471,7 @@ def _extract_rust_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
                             nesting_depth=depth,
                         )
                     )
-                    if body is not None and ntype in ("trait_item", "mod_item"):
+                    if body is not None and ntype in ("trait_item", "mod_item", "function_item"):
                         _visit(body, [*scope, name], depth + 1)
             elif ntype == "impl_item":
                 type_name = _strip_type_identifier(ch.child_by_field_name("type"), source_bytes)
@@ -515,6 +542,8 @@ def _extract_c_cpp_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
                                 nesting_depth=len(full_parts) - 1,
                             )
                         )
+                else:
+                    _visit(ch, scope, depth)
             elif ntype in ("class_specifier", "struct_specifier", "enum_specifier", "namespace_definition"):
                 name_node = ch.child_by_field_name("name")
                 body = ch.child_by_field_name("body")
@@ -533,6 +562,8 @@ def _extract_c_cpp_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
                         )
                     )
                     _visit(body, [*scope, name], depth + 1)
+                elif ntype == "namespace_definition" and body is not None:
+                    _visit(body, scope, depth)
 
     _visit(root_node, [], 0)
     return symbols
@@ -627,9 +658,9 @@ def _extract_css_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
                         block = next((c for c in ch.named_children if c.type == "block"), None)
                         if block is not None:
                             _visit(block, [*scope, sel], depth + 1)
-            elif ch.type in ("media_statement", "keyframes_statement", "mixin_statement"):
+            elif ch.type in ("media_statement", "keyframes_statement", "mixin_statement", "supports_statement", "at_rule") or ch.type.endswith("_statement"):
                 name_node = next((c for c in ch.named_children if c.type in ("identifier", "keyframes_name")), None)
-                if name_node is not None:
+                if name_node is not None and ch.type in ("media_statement", "keyframes_statement", "mixin_statement"):
                     name = _node_text(name_node, source_bytes)
                     symbols.append(
                         SymbolMatch(
@@ -716,9 +747,62 @@ def _extract_html_symbols(source_bytes: bytes, root_node) -> list[SymbolMatch]:
 
 
 _FALLBACK_DEF_RE = re.compile(
-    r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function\*?|class|func|fn|def)\s+([A-Za-z_][\w$]*)"
+    r"^\s*(?:export\s+(?:default\s+)?)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:function\*?|class|func|fn|def|struct|enum|trait|interface|impl)\s+([A-Za-z_][\w$]*)"
+    r"|^\s*func\s*\([^)]+\)\s+([A-Za-z_][\w$]*)"
     r"|^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_][\w$]*)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][\w$]*\s*=>)"
 )
+
+
+def _scan_fallback_brace_end(lines: list[str], start_idx: int) -> int:
+    """Scan forward from start_idx for balanced braces while ignoring strings and comments."""
+    brace_depth = 0
+    saw_open = False
+    in_block_comment = False
+    n = len(lines)
+
+    for j in range(start_idx, n):
+        line = lines[j]
+        i = 0
+        m = len(line)
+        in_str: Optional[str] = None
+        while i < m:
+            ch = line[i]
+            nxt = line[i + 1] if i + 1 < m else ""
+            if in_block_comment:
+                if ch == "*" and nxt == "/":
+                    in_block_comment = False
+                    i += 2
+                    continue
+                i += 1
+                continue
+            if in_str is not None:
+                if ch == "\\" and i + 1 < m:
+                    i += 2
+                    continue
+                if ch == in_str:
+                    in_str = None
+                i += 1
+                continue
+            if ch == "/" and nxt == "/":
+                break
+            if ch == "/" and nxt == "*":
+                in_block_comment = True
+                i += 2
+                continue
+            if ch in ('"', "'", "`"):
+                in_str = ch
+                i += 1
+                continue
+            if ch == "{":
+                brace_depth += 1
+                saw_open = True
+            elif ch == "}":
+                brace_depth -= 1
+            i += 1
+
+        if (saw_open and brace_depth <= 0) or (not saw_open and not in_block_comment and line.rstrip().endswith(";")):
+            return j + 1
+    return n
 
 
 def _extract_fallback_symbols(source_text: str, language: str) -> list[SymbolMatch]:
@@ -731,7 +815,7 @@ def _extract_fallback_symbols(source_text: str, language: str) -> list[SymbolMat
         m = _FALLBACK_DEF_RE.match(line)
         if not m:
             continue
-        name = m.group(1) or m.group(2)
+        name = m.group(1) or m.group(2) or m.group(3)
         if not name:
             continue
         start_line = idx + 1
@@ -748,20 +832,7 @@ def _extract_fallback_symbols(source_text: str, language: str) -> list[SymbolMat
                     end_line = j + 1
                 j += 1
         else:
-            brace_depth = 0
-            saw_open = False
-            j = idx
-            while j < n:
-                for ch in lines[j]:
-                    if ch == "{":
-                        brace_depth += 1
-                        saw_open = True
-                    elif ch == "}":
-                        brace_depth -= 1
-                end_line = j + 1
-                if (saw_open and brace_depth <= 0) or (not saw_open and lines[j].rstrip().endswith(";")):
-                    break
-                j += 1
+            end_line = _scan_fallback_brace_end(lines, idx)
 
         symbols.append(
             SymbolMatch(
@@ -795,20 +866,20 @@ _TS_LANGUAGE_EXTRACTORS = {
 
 def extract_symbols(file_path: Union[str, Path], source_text: str) -> list[SymbolMatch]:
     """Extract top-level and nested declaration spans from a single source file."""
+
     path_str = str(file_path)
-    ext = Path(path_str).suffix.lower()
-    language = EXTENSION_TO_LANGUAGE.get(ext)
+    norm_text = source_text.replace("\r\n", "\n").replace("\r", "")
+    language = detect_language(path_str, norm_text)
     if not language:
         return []
 
-    norm_text = source_text.replace("\r\n", "\n").replace("\r", "")
-    if language == "python":
+    source_bytes = norm_text.encode("utf-8")
+    if language == "python" and len(source_bytes) <= _MAX_BYTES:
         syms = _extract_python_ast_symbols(norm_text)
         if syms:
             return syms
 
     extractor = _TS_LANGUAGE_EXTRACTORS.get(language)
-    source_bytes = norm_text.encode("utf-8")
     if extractor is not None and len(source_bytes) <= _MAX_BYTES:
         parser = _get_ts_parser(language)
         if parser is not None:

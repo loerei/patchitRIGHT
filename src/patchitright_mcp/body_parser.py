@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -74,6 +75,21 @@ EXTENSION_TO_LANGUAGE = {
     ".scss": "scss",
     ".html": "html",
 }
+
+_CPP_HEADER_HINT_RE = re.compile(
+    r"(?:^|\s)(?:class|namespace|template)\b"
+    r"|\b(?:public|private|protected)\s*:"
+    r"|::"
+)
+
+
+def detect_language(file_path: str, source_text: Optional[str] = None) -> Optional[str]:
+    """Resolve tree-sitter/AST language name from extension, promoting C++ .h headers."""
+    ext = os.path.splitext(file_path)[1].lower()
+    language = EXTENSION_TO_LANGUAGE.get(ext)
+    if language == "c" and ext == ".h" and source_text and _CPP_HEADER_HINT_RE.search(source_text):
+        return "cpp"
+    return language
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +177,7 @@ def get_body_range(
         If the body cannot be determined (unsupported language, no body, etc.).
     """
     ext = os.path.splitext(file_path)[1].lower()
-    language = EXTENSION_TO_LANGUAGE.get(ext)
+    language = detect_language(file_path, source)
     if not language:
         raise ValueError(
             f"Unsupported file extension '{ext}' for body parsing. "

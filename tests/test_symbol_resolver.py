@@ -275,3 +275,130 @@ def test_getter_preferred_over_setter_when_unhinted():
     )
     pm = resolve_symbol("box.py", py_src, "v")
     assert (pm.start_line, pm.end_line) == (2, 4)
+
+
+def test_cpp_header_and_anonymous_namespace_and_inline_struct():
+    from patchitright_mcp.body_parser import get_body_range
+
+    header_src = (
+        "#pragma once\n"
+        "class Widget {\n"
+        "public:\n"
+        "    int size() { return 1; }\n"
+        "};\n"
+        "namespace {\n"
+        "void hidden() {}\n"
+        "}\n"
+        "struct InlineBox {\n"
+        "    void pack() {}\n"
+        "} box_inst;\n"
+    )
+    cls = resolve_symbol("widget.h", header_src, "Widget")
+    assert (cls.start_line, cls.end_line) == (2, 5)
+    meth = resolve_symbol("widget.h", header_src, "Widget.size")
+    assert (meth.start_line, meth.end_line) == (4, 4)
+    body_range = get_body_range(header_src, "widget.h", 4, 4)
+    assert body_range is not None
+    assert (body_range.start_line, body_range.end_line) == (4, 4)
+
+    hidden = resolve_symbol("widget.h", header_src, "hidden")
+    assert (hidden.start_line, hidden.end_line) == (7, 7)
+
+    pack = resolve_symbol("widget.h", header_src, "InlineBox.pack")
+    assert (pack.start_line, pack.end_line) == (10, 10)
+
+
+def test_partial_declaration_rejected_for_full_scope():
+    from pathlib import Path
+    from patchitright_mcp.line_matcher import _resolve_ast_boundaries
+
+    src = "const a = () => 1,\n      b = () => 2;\n"
+    sym = resolve_symbol("app.js", src, "a")
+    assert sym.is_partial_declaration is True
+
+    _, _, full_err, _ = _resolve_ast_boundaries(
+        Path("."), Path("app.js"), "a", symbol_scope="full", file_content=src
+    )
+    assert isinstance(full_err, dict)
+    assert "shares a declaration with other symbols" in full_err["error"]
+
+    b_start, b_end, b_err, _ = _resolve_ast_boundaries(
+        Path("."), Path("app.js"), "a", symbol_scope="boundary", file_content=src
+    )
+    assert b_err is None
+    assert (b_start, b_end) == (1, 1)
+
+    body_start, body_end, body_err, _ = _resolve_ast_boundaries(
+        Path("."), Path("app.js"), "a", symbol_scope="body", file_content=src
+    )
+    assert body_err is None
+    assert (body_start, body_end) == (1, 1)
+
+
+def test_go_multiline_doc_comments_and_nested_wrappers():
+    go_src = (
+        "// Run executes the job.\n"
+        "// It retries on transient failure.\n"
+        "func Run() {\n"
+        "    return\n"
+        "}\n"
+    )
+    go_sym = resolve_symbol("main.go", go_src, "Run")
+    assert (go_sym.start_line, go_sym.end_line) == (1, 5)
+
+    js_src = (
+        "class C {\n"
+        "  m() {\n"
+        "    function inner() {\n"
+        "      return 1;\n"
+        "    }\n"
+        "    return inner();\n"
+        "  }\n"
+        "}\n"
+        "if (true) {\n"
+        "  function conditionalFn() { return 2; }\n"
+        "}\n"
+    )
+    assert resolve_symbol("app.js", js_src, "C.m.inner").start_line == 3
+    assert resolve_symbol("app.js", js_src, "conditionalFn").start_line == 10
+
+    rust_src = "fn outer() {\n    fn inner() {}\n}\n"
+    assert resolve_symbol("lib.rs", rust_src, "outer.inner").start_line == 2
+
+    py_src = (
+        "def dispatch(x):\n"
+        "    match x:\n"
+        "        case 1:\n"
+        "            def handler():\n"
+        "                return 1\n"
+    )
+    assert resolve_symbol("disp.py", py_src, "dispatch.handler").start_line == 4
+
+    css_src = "@supports (display: grid) {\n  .card {\n    color: red;\n  }\n}\n"
+    card = resolve_symbol("app.css", css_src, ".card")
+    assert (card.start_line, card.end_line) == (2, 4)
+
+
+def test_fallback_ignores_braces_in_strings_and_comments(monkeypatch):
+    from patchitright_mcp import symbol_resolver
+
+    monkeypatch.setattr(symbol_resolver, "_get_ts_parser", lambda _lang: None)
+
+    js_src = (
+        "function demo() {\n"
+        '  const s = "}";\n'
+        "  // }\n"
+        "  /* } */\n"
+        "  return s;\n"
+        "}\n"
+    )
+    demo = resolve_symbol("app.js", js_src, "demo")
+    assert (demo.start_line, demo.end_line) == (1, 6)
+
+    rust_src = "pub struct Point {\n    x: i32,\n}\n"
+    pt = resolve_symbol("point.rs", rust_src, "Point")
+    assert (pt.start_line, pt.end_line) == (1, 3)
+
+    go_src = "func (s *Srv) Handle() {\n    return\n}\n"
+    hdl = resolve_symbol("srv.go", go_src, "Handle")
+    assert (hdl.start_line, hdl.end_line) == (1, 3)

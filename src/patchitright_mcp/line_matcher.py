@@ -31,6 +31,18 @@ def _resolve_ast_boundaries(
             text = target_path.read_text(encoding="utf-8", errors="replace")
 
         sym = resolve_symbol(target_path, text, symbol_name, hint_start=start_line, hint_end=end_line)
+        if symbol_scope == "full" and sym.is_partial_declaration:
+            return (
+                None,
+                None,
+                {
+                    "error": (
+                        f"Error: Cannot apply symbol_scope='full' to '{symbol_name}' because it shares a "
+                        "declaration with other symbols. Use symbol_scope='boundary' or 'body' instead."
+                    )
+                },
+                None,
+            )
         sym_start, sym_end = sym.start_line, sym.end_line
 
         if symbol_scope == "body":
