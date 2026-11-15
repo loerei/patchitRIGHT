@@ -34,7 +34,8 @@ class Workspace:
     def resolve_allowed_base_dir(self, target_file: str) -> Path:
         """Resolve the allowed base directory locally to ``self.cwd`` (LRU cached)."""
         cwd_str = str(self.cwd)
-        tf_norm = os.path.normpath(target_file)
+        tf_clean = target_file.replace("\\", "/") if os.sep != "\\" else target_file
+        tf_norm = os.path.normpath(tf_clean)
         resolved_str = _cached_resolve_allowed_base_dir(cwd_str, tf_norm, self.storage_path)
         return Path(resolved_str)
 
@@ -44,13 +45,14 @@ class Workspace:
         if ".." in target_file or "/../" in target_file or "\\..\\" in target_file:
             raise ValueError("fatal_context_mismatch")
 
-        base_dir = self.resolve_allowed_base_dir(target_file)
+        tf_clean = target_file.replace("\\", "/") if os.sep != "\\" else target_file
+        base_dir = self.resolve_allowed_base_dir(tf_clean)
         
         # Resolve all symlinks and directory traversal sequences first to get the canonical path
-        resolved_path = Path(os.path.realpath(os.path.join(base_dir, target_file)))
+        resolved_path = Path(os.path.realpath(os.path.join(base_dir, tf_clean)))
 
         # Guard relative paths from escaping the active workspace
-        if not os.path.isabs(target_file):
+        if not os.path.isabs(tf_clean):
             try:
                 # Windows path case-insensitivity relative-to checks can be touchy.
                 # Use normcase to compare normalized path structures.
