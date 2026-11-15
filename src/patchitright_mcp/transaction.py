@@ -145,8 +145,11 @@ class FileTransaction:
     @classmethod
     def run_startup_recovery(cls, workspace_root: Path) -> None:
         """Scan for dirty backups in .patchitRIGHT/backups and restore them safely."""
-        backup_root = workspace_root / cls.BACKUP_DIR / "backups"
-        if not backup_root.exists():
+        try:
+            backup_root = workspace_root / cls.BACKUP_DIR / "backups"
+            if not backup_root.exists():
+                return
+        except OSError:
             return
 
         try:

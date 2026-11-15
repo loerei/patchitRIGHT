@@ -170,5 +170,8 @@ def _commit_or_defer_transaction(
 
 def run_startup_recovery(workspace_root: Optional[Path] = None, workspace_path: Optional[Path] = None) -> None:
     """Run transaction recovery logic upon startup."""
-    ws = workspace_root or workspace_path or Path.cwd().resolve()
+    try:
+        ws = workspace_root or workspace_path or Path.cwd().resolve()
+    except OSError:
+        return
     FileTransaction.run_startup_recovery(ws)
