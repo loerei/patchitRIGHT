@@ -6,6 +6,8 @@
 
 ## How It Compares
 
+Basically, we wanted to keep the token and flexibility wins of editing via scripts without risking broken files. This MCP is how we do it.
+
 | Capability | Native Agent Tools (`edit_file`, `write_file`) | Ad-hoc Shell Scripts (`python -c`, `sed`, `node -e`) | `patchitRIGHT` |
 | :--- | :--- | :--- | :--- |
 | **How it edits** | Replaces an exact contiguous text block in one file, or writes a full file from scratch. | Runs custom one-off regexes, string splits, or line slices directly from the terminal. | Replaces by function/class name, line numbers, or text block across one or multiple files. |
