@@ -248,7 +248,7 @@ def test_self_mod_safety_helpers(monkeypatch):
     set_shutdown_event()
 
 
-def test_trigger_jcodemunch_sync_subprocesses(monkeypatch, tmp_path):
+def test_trigger_jcodemunch_sync_subprocesses(monkeypatch, tmp_path, capsys):
     """trigger_jcodemunch_sync spawns CLI subprocess only when enabled and binary is on PATH."""
     # 1. Disabled by default
     monkeypatch.delenv("PATCHITRIGHT_SYNC_JCODEMUNCH", raising=False)
@@ -280,10 +280,19 @@ def test_trigger_jcodemunch_sync_subprocesses(monkeypatch, tmp_path):
             "db.sqlite",
         ]
 
-    # 4. CLI failure in worker does not raise
-    with patch("shutil.which", return_value=cli_path), patch("subprocess.run", side_effect=OSError("boom")):
+    # 4. CLI failure in worker does not raise and logs warning to stderr
+    import threading
+    worker_ran = threading.Event()
+
+    def _boom(*_args, **_kwargs):
+        worker_ran.set()
+        raise OSError("boom")
+
+    with patch("shutil.which", return_value=cli_path), patch("subprocess.run", side_effect=_boom):
         trigger_jcodemunch_sync(tmp_path / "d.py")
-        time.sleep(0.05)
+        assert worker_ran.wait(timeout=1.0)
+        time.sleep(0.02)
+    assert "Failed to trigger jcodemunch sync" in capsys.readouterr().err
 
 
 def test_delayed_writers_and_self_mod(tmp_path, monkeypatch):
