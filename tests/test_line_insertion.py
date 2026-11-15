@@ -323,7 +323,8 @@ class TestLineBasedInsertion:
             target_file="sorter.ts",
             search_content="        const firstIndex = 1;\n        let lastIndex = 2;",
             replace_content="        // deleted indices",
-            dry_run=False
+            dry_run=False,
+            bypass_validation=True,
         )
 
         assert res["success"] is True

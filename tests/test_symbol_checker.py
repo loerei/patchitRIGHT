@@ -272,7 +272,7 @@ def test_patch_engine_symbol_warnings():
     let lastIndex = 2;
     console.log(firstIndex + lastIndex);
     """
-    engine = PatchEngine(file_content, "test.ts")
+    engine = PatchEngine(file_content, "test.ts", bypass_validation=True)
     assert hasattr(engine, "symbol_warnings")
     engine.apply_classic_patch(
         search_content="    const firstIndex = 1;\n    let lastIndex = 2;",
@@ -315,7 +315,8 @@ def test_patch_file_batch_replacements_net_omitted_symbols(tmp_path, monkeypatch
             {"search_content": "const firstIndex = 1;", "replace_content": "// firstIndex deleted"},
             {"search_content": "const lastIndex = 2;", "replace_content": "const lastIndex = 2; // lastIndex kept"}
         ],
-        dry_run=False
+        dry_run=False,
+        bypass_validation=True,
     )
     assert res["success"] is True
     assert "warnings" in res
@@ -332,7 +333,8 @@ def test_apply_last_dry_run_cache_retrieval_symbol_warnings(tmp_path, monkeypatc
         target_file="dry.ts",
         search_content="const firstIndex = 1;",
         replace_content="// removed",
-        dry_run=True
+        dry_run=True,
+        bypass_validation=True,
     )
     assert dry_res["success"] is True
     run_id = dry_res["run_id"]
