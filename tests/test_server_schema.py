@@ -156,17 +156,24 @@ async def test_schema_parity_and_extension_bounds():
     for key in ("target_files", "target_glob", "skip_unmatched", "expected_occurrences", "start_anchor", "end_anchor"):
         assert key in patch_props
 
-    for shared_slice in ("source_file", "source_start_line", "source_end_line", "source_symbol", "source_start_anchor", "source_end_anchor", "delete_source", "cut_source"):
-        assert shared_slice in patch_props
-        assert shared_slice in repl_props
-        assert shared_slice in files_props
-        assert shared_slice in write_props
+    for patch_slice in ("source_file", "source_start_line", "source_end_line", "source_symbol", "source_start_anchor", "source_end_anchor", "cut_source"):
+        assert patch_slice in patch_props
+        assert patch_slice in write_props
+        assert patch_slice not in repl_props
+
+    assert "delete_source" in write_props
+    assert "delete_source" not in patch_props
+    assert "delete_source" not in repl_props
 
     for shared_edit in ("expected_occurrences", "start_anchor", "end_anchor", "line_filter"):
         assert shared_edit in patch_props
         assert shared_edit in repl_props
         assert shared_edit in files_props
-        assert shared_edit in write_props
+        assert shared_edit not in write_props
+
+    for excluded_from_write in ("search_content", "replace_content", "replacements", "patch_content", "did_you_mean", "symbol_name", "insert_line"):
+        assert excluded_from_write not in write_props
+    assert "$defs" not in write_schema
 
     assert files_props["action"]["enum"] == ["patch", "write", "delete"]
     assert "anyOf" in files_props["line_filter"]

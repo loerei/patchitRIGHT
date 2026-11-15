@@ -7,15 +7,15 @@ from typing import Any
 
 from mcp.types import Tool
 
-_SOURCE_SLICE_PROPERTIES: dict[str, Any] = {
+_PATCH_SLICE_PROPERTIES: dict[str, Any] = {
     "source_file": {
         "type": "string",
-        "description": "Workspace source file path to read or slice instead of writing text inline.",
+        "description": "Workspace file path to read or slice instead of inline text.",
     },
     "source_start_line": {
         "type": "integer",
         "minimum": 1,
-        "description": "1-indexed inclusive start line from source_file (requires source_end_line; mutually exclusive with source_symbol).",
+        "description": "1-indexed start line from source_file (requires source_end_line).",
     },
     "source_end_line": {
         "type": "integer",
@@ -24,50 +24,54 @@ _SOURCE_SLICE_PROPERTIES: dict[str, Any] = {
     },
     "source_symbol": {
         "type": "string",
-        "description": "AST symbol name in source_file to extract completely (mutually exclusive with source_start_line/source_end_line).",
+        "description": "Symbol name in source_file to extract completely.",
     },
     "source_start_anchor": {
         "type": "string",
-        "description": "Substring guard asserted on first extracted line of source_file.",
+        "description": "Substring guard on first extracted line of source_file.",
     },
     "source_end_anchor": {
         "type": "string",
-        "description": "Substring guard asserted on last extracted line of source_file.",
-    },
-    "delete_source": {
-        "type": "boolean",
-        "default": False,
-        "description": "Unlink source_file atomically on unsliced copy (move). Fails on partial slices.",
+        "description": "Substring guard on last extracted line of source_file.",
     },
     "cut_source": {
         "type": "boolean",
         "default": False,
-        "description": "Atomically remove extracted lines from source_file and validate it (requires partial slice).",
+        "description": "Remove extracted slice from source_file atomically.",
+    },
+}
+
+_WRITE_SLICE_PROPERTIES: dict[str, Any] = {
+    **_PATCH_SLICE_PROPERTIES,
+    "delete_source": {
+        "type": "boolean",
+        "default": False,
+        "description": "Unlink source_file atomically on whole-file move.",
     },
 }
 
 _PATCH_OP_PROPERTIES: dict[str, Any] = {
     "search_content": {
         "type": "string",
-        "description": "Exact block to match uniquely within scope unless allow_multiple=true or expected_occurrences > 1.",
+        "description": "Exact block to match uniquely in scope unless allow_multiple=true or expected_occurrences > 1.",
     },
     "replace_content": {
         "type": "string",
-        "description": "Replacement text. Use '' to delete match or guarded start_line/end_line range.",
+        "description": "Replacement text ('' deletes match or guarded line range).",
     },
     "start_line": {
         "type": "integer",
         "minimum": 1,
-        "description": "1-indexed inclusive start line of search scope or guarded range replacement.",
+        "description": "1-indexed start line of search scope or guarded range.",
     },
     "end_line": {
         "type": "integer",
         "minimum": 1,
-        "description": "1-indexed inclusive end line of search scope or guarded range replacement (>= start_line).",
+        "description": "1-indexed inclusive end line (>= start_line).",
     },
     "start_anchor": {
         "type": "string",
-        "description": "Substring guard on start_line (required with start_line/end_line when search_content omitted, unless end_anchor or line_filter given).",
+        "description": "Substring guard on start_line.",
     },
     "end_anchor": {
         "type": "string",
@@ -75,48 +79,43 @@ _PATCH_OP_PROPERTIES: dict[str, Any] = {
     },
     "insert_line": {
         "type": "integer",
-        "description": "1-indexed line to insert above (1=top, -1=EOF).",
+        "description": "1-indexed line to insert above (1=top of file, -1=append at EOF).",
     },
     "insert_content": {
         "type": "string",
-        "description": "Text to insert above insert_line.",
+        "description": "Text to insert at insert_line.",
     },
     "auto_indent": {
         "type": "boolean",
         "default": True,
-        "description": "Match leading indentation of target line.",
+        "description": "Match indentation of target line.",
     },
     "symbol_name": {
         "type": "string",
-        "description": "AST symbol name (function/class) resolved on-demand to scope or replace.",
+        "description": "Symbol name (function/class) resolved on-demand to scope or replace.",
     },
     "symbol_scope": {
         "type": "string",
         "enum": ["boundary", "full", "body"],
         "default": "boundary",
-        "description": (
-            "How symbol_name applies: 'boundary' scopes search_content; "
-            "'full' replaces entire symbol incl. decorators/export/JSDoc (no search_content); "
-            "'body' replaces body only (wrap arrow object returns in parens)."
-        ),
+        "description": "'boundary' scopes search_content; 'full' replaces symbol incl. decorators/export; 'body' replaces body only.",
     },
     "allow_multiple": {
         "type": "boolean",
-        "description": "Replace all matches in scope. Auto-enabled when omitted and expected_occurrences > 1; False with expected_occurrences > 1 fails.",
+        "description": "Replace all matches in scope.",
     },
     "expected_occurrences": {
         "type": "integer",
         "minimum": 1,
-        "description": "Exact match count assertion; fails with expected vs actual counts and line numbers on mismatch.",
+        "description": "Exact match count assertion.",
     },
     "line_filter": {
         "anyOf": [
             {"type": "string"},
             {"type": "integer"},
         ],
-        "description": "Int asserts search_content starts at that 1-indexed line; string asserts scope/range contains substring.",
+        "description": "Int asserts match starts at that line; string asserts scope contains substring.",
     },
-    **_SOURCE_SLICE_PROPERTIES,
 }
 
 _PATCH_OP_DEF: dict[str, Any] = {
@@ -127,7 +126,7 @@ _PATCH_OP_DEF: dict[str, Any] = {
 _FILE_LEVEL_EXTRAS: dict[str, Any] = {
     "patch_content": {
         "type": "string",
-        "description": "Strict unified diff (Fuzz=0); replaces search_content/replace_content.",
+        "description": "Strict unified diff (Fuzz=0); mutually exclusive with search_content, replacements, and insert_line.",
     },
     "folder_filter": {
         "type": "string",
@@ -145,7 +144,7 @@ _FILE_LEVEL_EXTRAS: dict[str, Any] = {
     "skip_unmatched": {
         "type": "boolean",
         "default": False,
-        "description": "In multi-file mode, skip files with 0 matches (listed in skipped_files); still fails if 0 files match overall.",
+        "description": "In multi-file mode, skip files with 0 matches.",
     },
     "replacements": {
         "type": "array",
@@ -154,43 +153,74 @@ _FILE_LEVEL_EXTRAS: dict[str, Any] = {
     },
 }
 
-_BATCH_FILE_ITEM_SCHEMA: dict[str, Any] = {
+_WRITE_CORE_PROPERTIES: dict[str, Any] = {
+    "target_file": {
+        "type": "string",
+        "description": "Target file path to create or overwrite.",
+    },
+    "path": {
+        "type": "string",
+        "description": "Alias for target_file.",
+    },
+    "code_content": {
+        "type": "string",
+        "description": "Complete file content (required unless source_file or content is provided).",
+    },
+    "content": {
+        "type": "string",
+        "description": "Alias for code_content.",
+    },
+    "allow_overwrite": {
+        "type": "boolean",
+        "description": "Allow overwriting an existing file.",
+        "default": False,
+    },
+    "overwrite": {
+        "type": "boolean",
+        "description": "Alias for allow_overwrite.",
+        "default": False,
+    },
+    **copy.deepcopy(_WRITE_SLICE_PROPERTIES),
+}
+
+_WRITE_BATCH_ITEM_SCHEMA: dict[str, Any] = {
     "type": "object",
+    "description": "Accepts any top-level write_file property per file.",
+    "properties": {
+        "target_file": {"type": "string"},
+        "path": {"type": "string"},
+        "code_content": {"type": "string"},
+        "content": {"type": "string"},
+        "source_file": {"type": "string"},
+        "allow_overwrite": {"type": "boolean", "default": False},
+        "overwrite": {"type": "boolean", "default": False},
+    },
+    "anyOf": [
+        {"required": ["target_file"]},
+        {"required": ["path"]},
+    ],
+}
+
+_PATCH_BATCH_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": "Accepts any top-level patch_file or write_file property per file; omitted fields inherit top-level defaults.",
     "allOf": [{"$ref": "#/$defs/PatchOp"}],
     "properties": {
-        "target_file": {
-            "type": "string",
-            "description": "Target file path (absolute or workspace-relative).",
-        },
-        "path": {
-            "type": "string",
-            "description": "Alias for target_file. Target file path.",
-        },
+        "target_file": {"type": "string"},
+        "path": {"type": "string"},
         "action": {
             "type": "string",
             "enum": ["patch", "write", "delete"],
             "default": "patch",
-            "description": "'patch' (edit existing), 'write' (create/overwrite via code_content or source_file), or 'delete' (unlink atomically).",
         },
-        "code_content": {
-            "type": "string",
-            "description": "File content when action='write' without source_file.",
+        "code_content": {"type": "string"},
+        "content": {"type": "string"},
+        "allow_overwrite": {"type": "boolean", "default": False},
+        "overwrite": {"type": "boolean", "default": False},
+        "replacements": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/PatchOp"},
         },
-        "content": {
-            "type": "string",
-            "description": "Alias for code_content. File content when action='write'.",
-        },
-        "allow_overwrite": {
-            "type": "boolean",
-            "default": False,
-            "description": "Allow overwriting existing file when action='write'.",
-        },
-        "overwrite": {
-            "type": "boolean",
-            "default": False,
-            "description": "Alias for allow_overwrite.",
-        },
-        **copy.deepcopy(_FILE_LEVEL_EXTRAS),
     },
     "anyOf": [
         {"required": ["target_file"]},
@@ -210,7 +240,7 @@ def _enrich_tool_schema(tool: Tool, expose_bypass: bool) -> Tool:
         }
     props["set_timeout"] = {
         "type": "number",
-        "description": "Optional timeout in seconds to override the default limit. Use -1 to disable the timeout completely.",
+        "description": "Optional timeout in seconds (-1 disables timeout).",
     }
     new_schema = dict(tool.inputSchema)
     new_schema["properties"] = props
@@ -234,60 +264,29 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
             "type": "array",
             "items": {"type": "string"},
             "minItems": 1,
-            "description": "Target file paths sharing top-level edit fields (mutually exclusive with target_file, target_glob, files).",
+            "description": "Target file paths sharing top-level edit fields.",
         },
         "target_glob": {
             "type": "string",
-            "description": "Workspace-relative glob pattern (e.g. 'src/**/*.ts') expanded across non-ignored files sharing top-level edit fields.",
+            "description": "Workspace-relative glob pattern (e.g. 'src/**/*.ts') sharing top-level edit fields.",
         },
         **copy.deepcopy(_PATCH_OP_PROPERTIES),
+        **copy.deepcopy(_PATCH_SLICE_PROPERTIES),
         **copy.deepcopy(_FILE_LEVEL_EXTRAS),
         "files": {
             "type": "array",
-            "items": copy.deepcopy(_BATCH_FILE_ITEM_SCHEMA),
-            "description": "Per-file operations ('patch', 'write', or 'delete') executed in one atomic transaction; omitted fields inherit top-level defaults.",
+            "items": copy.deepcopy(_PATCH_BATCH_ITEM_SCHEMA),
+            "description": "Per-file operations ('patch', 'write', or 'delete') executed in one atomic transaction.",
         },
     }
 
     write_file_properties: dict[str, Any] = {
-        "target_file": {
-            "type": "string",
-            "description": "Target file path to create or overwrite.",
-        },
-        "path": {
-            "type": "string",
-            "description": "Alias for target_file. Target file path to create or overwrite.",
-        },
-        "code_content": {
-            "type": "string",
-            "description": "Complete file content (required unless source_file or content is provided).",
-        },
-        "content": {
-            "type": "string",
-            "description": "Alias for code_content. Complete file content.",
-        },
-        "allow_overwrite": {
-            "type": "boolean",
-            "description": "Allow overwriting an existing file.",
-            "default": False,
-        },
-        "overwrite": {
-            "type": "boolean",
-            "description": "Alias for allow_overwrite. Allow overwriting an existing file.",
-            "default": False,
-        },
+        **copy.deepcopy(_WRITE_CORE_PROPERTIES),
         "files": {
             "type": "array",
-            "items": copy.deepcopy(_BATCH_FILE_ITEM_SCHEMA),
-            "description": (
-                "Batch of file write operations executed in one atomic transaction; "
-                "each item defaults to action='write'."
-            ),
+            "items": copy.deepcopy(_WRITE_BATCH_ITEM_SCHEMA),
+            "description": "Batch of file write/copy/slice operations executed in one atomic transaction.",
         },
-        **copy.deepcopy(_PATCH_OP_PROPERTIES),
-        "patch_content": copy.deepcopy(_FILE_LEVEL_EXTRAS["patch_content"]),
-        "replacements": copy.deepcopy(_FILE_LEVEL_EXTRAS["replacements"]),
-        "did_you_mean": copy.deepcopy(_FILE_LEVEL_EXTRAS["did_you_mean"]),
     }
 
     if show_legacy:
@@ -307,7 +306,7 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
             name="patch_file",
             description=(
                 "Edit one file, broadcast across target_files/target_glob, or run mixed atomic patch/write/delete "
-                "batches via 'files'. Supports exact match, AST symbol, guarded line range, unified diff, "
+                "batches via 'files'. Supports exact match, symbol_name, guarded line range, unified diff, "
                 "expected_occurrences, and source_file slice payloads."
             ),
             inputSchema={
@@ -325,13 +324,12 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
         Tool(
             name="write_file",
             description=(
-                "Create or overwrite a file from 'code_content' or workspace 'source_file' (whole-file copy/move with delete_source, "
-                "line/symbol slice with cut_source, binary copy, or copy-then-patch), or create batches of files via 'files'. "
-                "MUST NOT overwrite existing code files for localized edits; use patch_file instead."
+                "Create or overwrite a file from 'code_content' ('content') or workspace 'source_file' (whole-file copy/move with delete_source, "
+                "line/symbol slice with cut_source, or binary copy), or create atomic batches of files via 'files'. "
+                "For localized edits to existing code files, use patch_file instead."
             ),
             inputSchema={
                 "type": "object",
-                "$defs": {"PatchOp": copy.deepcopy(_PATCH_OP_DEF)},
                 "properties": write_file_properties,
                 "anyOf": [
                     {"required": ["code_content"]},
@@ -370,7 +368,7 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
             Tool(
                 name="apply_last_dry_run",
                 description=(
-                    "Apply changes cached by a prior dry_run=true call (patch_file, write_file, or batch_patch_files). "
+                    "Apply changes cached by a prior dry_run=true call (patch_file or write_file). "
                     "Fails if expired (300 s TTL) or any involved file changed on disk."
                 ),
                 inputSchema={
