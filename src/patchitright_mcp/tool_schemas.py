@@ -162,6 +162,10 @@ _BATCH_FILE_ITEM_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "Target file path (absolute or workspace-relative).",
         },
+        "path": {
+            "type": "string",
+            "description": "Alias for target_file. Target file path.",
+        },
         "action": {
             "type": "string",
             "enum": ["patch", "write", "delete"],
@@ -172,14 +176,26 @@ _BATCH_FILE_ITEM_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "File content when action='write' without source_file.",
         },
+        "content": {
+            "type": "string",
+            "description": "Alias for code_content. File content when action='write'.",
+        },
         "allow_overwrite": {
             "type": "boolean",
             "default": False,
             "description": "Allow overwriting existing file when action='write'.",
         },
+        "overwrite": {
+            "type": "boolean",
+            "default": False,
+            "description": "Alias for allow_overwrite.",
+        },
         **copy.deepcopy(_FILE_LEVEL_EXTRAS),
     },
-    "required": ["target_file"],
+    "anyOf": [
+        {"required": ["target_file"]},
+        {"required": ["path"]},
+    ],
 }
 
 
@@ -243,14 +259,35 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
             "type": "string",
             "description": "Target file path to create or overwrite.",
         },
+        "path": {
+            "type": "string",
+            "description": "Alias for target_file. Target file path to create or overwrite.",
+        },
         "code_content": {
             "type": "string",
-            "description": "Complete file content (required unless source_file is provided).",
+            "description": "Complete file content (required unless source_file or content is provided).",
+        },
+        "content": {
+            "type": "string",
+            "description": "Alias for code_content. Complete file content.",
         },
         "allow_overwrite": {
             "type": "boolean",
             "description": "Allow overwriting an existing file.",
             "default": False,
+        },
+        "overwrite": {
+            "type": "boolean",
+            "description": "Alias for allow_overwrite. Allow overwriting an existing file.",
+            "default": False,
+        },
+        "files": {
+            "type": "array",
+            "items": copy.deepcopy(_BATCH_FILE_ITEM_SCHEMA),
+            "description": (
+                "Batch of file write operations executed in one atomic transaction; "
+                "each item defaults to action='write'."
+            ),
         },
         **copy.deepcopy(_PATCH_OP_PROPERTIES),
         "patch_content": copy.deepcopy(_FILE_LEVEL_EXTRAS["patch_content"]),
@@ -304,17 +341,18 @@ def get_tool_schemas(expose_bypass: bool = False, show_legacy: bool = False) -> 
             name="write_file",
             description=(
                 "Create or overwrite a file from 'code_content' or workspace 'source_file' (whole-file copy/move with delete_source, "
-                "line/symbol slice with cut_source, binary copy, or copy-then-patch). "
+                "line/symbol slice with cut_source, binary copy, or copy-then-patch), or create batches of files via 'files'. "
                 "MUST NOT overwrite existing code files for localized edits; use patch_file instead."
             ),
             inputSchema={
                 "type": "object",
                 "$defs": {"PatchOp": copy.deepcopy(_PATCH_OP_DEF)},
                 "properties": write_file_properties,
-                "required": ["target_file"],
                 "anyOf": [
                     {"required": ["code_content"]},
+                    {"required": ["content"]},
                     {"required": ["source_file"]},
+                    {"required": ["files"]},
                 ],
             },
         ),

@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import json
 import os
-from pathlib import Path
 
 from mcp.server import Server
 from mcp.types import TextContent, Tool
@@ -157,14 +156,17 @@ def _build_shared_op_kwargs(arguments: dict) -> dict:
 
 
 def _execute_write_file(arguments: dict) -> list[TextContent]:
-    target_file = arguments.get("target_file")
+    files = arguments.get("files")
+    target_file = arguments.get("target_file") or arguments.get("path") or arguments.get("file_path")
     code_content = arguments.get("code_content")
+    if code_content is None:
+        code_content = arguments.get("content")
     source_file = arguments.get("source_file")
-    allow_overwrite = bool(arguments.get("allow_overwrite", False))
+    allow_overwrite = bool(arguments.get("allow_overwrite", arguments.get("overwrite", False)))
 
-    if not target_file:
+    if not files and not target_file:
         return [TextContent(type="text", text="Error: target_file is required.")]
-    if code_content is None and not source_file:
+    if not files and code_content is None and not source_file:
         return [TextContent(type="text", text="Error: Either code_content or source_file is required.")]
 
     op_kwargs = _build_shared_op_kwargs(arguments)
@@ -174,6 +176,7 @@ def _execute_write_file(arguments: dict) -> list[TextContent]:
         code_content=code_content,
         allow_overwrite=allow_overwrite,
         source_file=source_file,
+        files=files,
         **op_kwargs,
     )
     return [TextContent(type="text", text=json.dumps(res, indent=2))]
