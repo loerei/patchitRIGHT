@@ -3,7 +3,13 @@ nukesite/
 .venv/
 __pycache__/
 .pytest_cache/
+.coverage
 *.log
 mcp_debug.log
 .scratch/
-
+scratch/
+.agents/
+AGENTS.md
+CLAUDE.md
+skills-lock.json
+warnings_*.md
