@@ -27,7 +27,7 @@ Tested on an identical feature implementation task (extracting save-file schemas
 | **Native Tools + Ad-hoc Scripts** | 70,013 | -26.9% | 113,249 | 0 | 100% pass |
 | **`patchitRIGHT`** | **74,801** | **-21.9%** | **115,837** | **0 / 27 calls** | **100% pass** |
 
-`patchitRIGHT` cuts output token generation by **21.9%** compared to native edit tools by avoiding full-file rewrites and oversized context blocks. It uses ~4.8k more tokens than unrestricted shell scripting, acting as a small fee to keep edits structured, syntax-checked, and protected from broken one-off patching scripts.
+`patchitRIGHT` cuts output token generation by **21.9%** compared to native edit tools by avoiding full-file rewrites and oversized context blocks. It usually uses a little more tokens than unrestricted shell scripting, a small fee to keep edits structured, syntax-checked, and protected from broken one-off patching scripts.
 
 ---
 
