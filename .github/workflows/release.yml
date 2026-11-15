@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Verify tag matches pyproject.toml version
+        shell: python {0}
+        run: |
+          import os, tomllib
+          ref = os.environ["GITHUB_REF"]
+          assert ref.startswith("refs/tags/v"), f"Release requires a v* tag ref, got {ref}"
+          with open("pyproject.toml", "rb") as f:
+              pkg_ver = tomllib.load(f)["project"]["version"]
+          tag_name = os.environ["GITHUB_REF_NAME"]
+          assert tag_name == f"v{pkg_ver}", f"Tag {tag_name} != v{pkg_ver}"
+
+      - name: Install dependencies and run tests
+        run: |
+          uv sync --frozen
+          uv run --no-sync pytest -q
+
+      - name: Build distribution packages
+        run: uv build
+
+      - name: Smoke-test built wheel
+        run: |
+          uvx --from dist/*.whl patchitright-mcp --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-pypi:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/patchitright-mcp
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1

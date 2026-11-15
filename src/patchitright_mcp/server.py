@@ -265,7 +265,7 @@ def main() -> None:
             pass
 
     # Trigger transactional auto-recovery of dirty .bak files on startup
-    run_startup_recovery(Path.cwd().resolve())
+    run_startup_recovery()
 
     import mcp.server.stdio
     async def _run():

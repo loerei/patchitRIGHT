@@ -6,19 +6,49 @@
 
 ## Quick Setup
 
-Add the following to your MCP client configuration (e.g. `claude_desktop_config.json`):
+### `uvx` (Recommended, zero install)
+
+**Claude Code:**
+
+```bash
+claude mcp add patchitright -- uvx patchitright-mcp
+```
+
+**MCP client JSON** (Claude Desktop, Cursor, Windsurf, VS Code):
 
 ```jsonc
 {
   "mcpServers": {
     "patchitright": {
-      "command": "python",
-      "args": [
-        "-m",
-        "patchitright_mcp.server"
-      ],
+      "command": "uvx",
+      "args": ["patchitright-mcp"],
       "env": {
-        "PYTHONPATH": "/path/to/patchitRIGHT/src",
+        "PATCHITRIGHT_IGNORE_WARNINGS": "format" // Recommended: ignore verbose formatter diffs (tabs vs spaces)
+      }
+    }
+  }
+}
+```
+
+### `pipx` or `pip`
+
+```bash
+pipx install patchitright-mcp
+# or
+pip install patchitright-mcp
+```
+
+Then point `"command"` to `"patchitright-mcp"` (with `"args": []`).
+
+### From source (local checkout)
+
+```jsonc
+{
+  "mcpServers": {
+    "patchitright": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/patchitRIGHT", "patchitright-mcp"],
+      "env": {
         // "PATCHITRIGHT_SYNC_JCODEMUNCH": "false", // Optional: invoke jcodemunch-mcp CLI index-file if on PATH
         "PATCHITRIGHT_IGNORE_WARNINGS": "format", // Recommended: ignore verbose formatter diffs (tabs vs spaces) by default
         // "PATCHITRIGHT_DEFAULT_TIMEOUT": "10.0", // Execution timeout limit in seconds (-1 to disable)
@@ -63,7 +93,7 @@ Edit functions and classes by symbol name or extract code directly from another 
 
 ## Validation & Safety Guardrails
 
-* **Pre-write Syntax Checking**: Validates syntax before writing (Python `ast`, JS/TS via Biome/`tsc`, JSON, TOML, YAML) on both destinations and `cut_source` source files.
+* **Pre-write Syntax Checking**: Validates syntax before writing (Python `ast` and bundled `ruff`, JSON, TOML, YAML; optional JS/TS checking when `biome` or `tsc` is on `PATH`) on both destinations and `cut_source` source files.
 * **Strict Occurrence Assertions**: Rejects 0 or ambiguous multi-matches by default; use `expected_occurrences: N` to enforce an exact match count (`allow_multiple` implied when omitted).
 * **Atomic Multi-file & Copy/Cut Transactions**: `files`, `target_files`, `target_glob`, `cut_source`, and `delete_source` execute transactionally with optimistic locking and full rollback on failure.
 
