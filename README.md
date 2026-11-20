@@ -1,4 +1,4 @@
-# patchitRIGHT
+# patchitRIGHT - Script-Like Code Editing MCP
 
 Since native `edit_file` tools are already pretty mature, editing files is one of the last things people talk about. This repo, sure, sounds weird.
 
