@@ -363,11 +363,57 @@ class JsTsValidator(BaseValidator):
             self._cleanup_temp_path(temp_path)
         log_step("JsTsValidator.validate: Biome check finished successfully")
 
+    def _find_first_tree_sitter_error(self, node) -> tuple[int, int] | None:
+        """Return 1-indexed (line, column) of the first ERROR or MISSING node."""
+        if node.type == "ERROR" or node.is_missing:
+            return node.start_point[0] + 1, node.start_point[1] + 1
+        for child in node.children:
+            if child.has_error:
+                found = self._find_first_tree_sitter_error(child)
+                if found is not None:
+                    return found
+        return None
+
+    def _validate_with_tree_sitter(self, content: str, filename: str, original_content: str = "") -> None:
+        """In-process syntax fallback using tree-sitter when Biome/tsc/Node are unavailable or unsupported."""
+        suffix = Path(filename).suffix.lower()
+        lang = "tsx" if suffix == ".tsx" else ("typescript" if suffix == ".ts" else "javascript")
+        try:
+            from tree_sitter_language_pack import get_parser  # type: ignore[import-untyped]
+            parser = get_parser(lang)
+        except Exception as e:
+            log_step(f"JsTsValidator.validate: tree-sitter unavailable ({e}), skipping")
+            return
+
+        if original_content:
+            orig_tree = parser.parse(original_content.encode("utf-8"))
+            if orig_tree.root_node.has_error:
+                log_step("JsTsValidator.validate: original failed tree-sitter check, skipping validation")
+                return
+
+        tree = parser.parse(content.encode("utf-8"))
+        if tree.root_node.has_error:
+            loc = self._find_first_tree_sitter_error(tree.root_node)
+            line, column = loc if loc is not None else (1, 1)
+            log_step(f"JsTsValidator.validate: raising tree-sitter SyntaxValidationError at {line}:{column}")
+            raise SyntaxValidationError(
+                message=f"Tree-sitter JS/TS Syntax Error ({lang}) near line {line}, column {column}",
+                filename=filename,
+                line=line,
+                column=column,
+            )
+
     def _validate_with_node(self, content: str, filename: str, original_content: str) -> None:
+        # Node does not support JSX/TSX; route directly to tree-sitter
+        if filename.endswith((".jsx", ".tsx")):
+            self._validate_with_tree_sitter(content, filename, original_content)
+            return
+
         # Fallback to node if node is available
         node_exe = shutil.which("node")
         log_step(f"JsTsValidator.validate: fallback node check path: {node_exe}")
         if not node_exe:
+            self._validate_with_tree_sitter(content, filename, original_content)
             return
 
         is_ts = filename.endswith((".ts", ".tsx"))
@@ -441,6 +487,7 @@ class JsTsValidator(BaseValidator):
             raise
         except OSError as e:
             log_step(f"JsTsValidator.validate: node execution failed: {e}")
+            self._validate_with_tree_sitter(content, filename, original_content)
         finally:
             self._cleanup_temp_path(temp_path)
 

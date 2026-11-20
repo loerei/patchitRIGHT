@@ -141,6 +141,22 @@ def test_js_ts_validator_tsc_catches_jsx_syntax_error_even_with_semantic_errors_
         assert exc_info.value.column == 10
 
 
+def test_js_ts_validator_tree_sitter_fallback_for_tsx():
+    val = JsTsValidator()
+    with patch("shutil.which", return_value=None):
+        # Valid .tsx passes
+        val.validate("export const Ok = () => <div />;", "Ok.tsx", "")
+
+        # Invalid .tsx (unclosed JSX / syntax error) raises SyntaxValidationError
+        with pytest.raises(SyntaxValidationError) as exc_info:
+            val.validate("export const Bad = () => <div>;", "Bad.tsx", "")
+        assert "Tree-sitter JS/TS Syntax Error" in str(exc_info.value)
+        assert exc_info.value.line == 1
+
+        # Pre-existing syntax error in original skips validation
+        val.validate("export const StillBad = () => <div>;", "Bad.tsx", "const broken = ;")
+
+
 def test_json_validator():
     val = JsonValidator()
     
