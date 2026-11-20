@@ -196,12 +196,17 @@ class JsTsValidator(BaseValidator):
                 return [str(local_tsc)]
         return None
 
+    _TSC_SYNTAX_ERROR_RE = re.compile(
+        r"^(?P<file>.*?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS(?P<code>1\d{3}|17\d{3}):\s*(?P<msg>.+)$",
+        re.MULTILINE,
+    )
+
     def _run_tsc_check(self, tsc_cmd: list[str], temp_path: Path, content: str) -> subprocess.CompletedProcess:
         """Run tsc check on a temp file."""
         with open(temp_path, "w", encoding="utf-8", newline="") as f:
             f.write(content)
         return subprocess.run(
-            tsc_cmd + ["--noEmit", "--skipLibCheck", str(temp_path)],
+            tsc_cmd + ["--noEmit", "--skipLibCheck", "--noResolve", "--jsx", "preserve", str(temp_path)],
             text=True,
             capture_output=True,
             check=False,
@@ -211,19 +216,18 @@ class JsTsValidator(BaseValidator):
             timeout=15
         )
 
-    def _parse_tsc_error(self, err_msg: str, temp_name: str, filename: str) -> SyntaxValidationError:
-        """Parse tsc error output and return SyntaxValidationError."""
+    def _parse_tsc_error(self, err_msg: str, temp_name: str, filename: str) -> SyntaxValidationError | None:
+        """Parse tsc error output and return SyntaxValidationError if a syntax error is present."""
         err_msg = err_msg.encode("ascii", errors="replace").decode("ascii")
-        line, column = None, None
-        match = re.search(rf"{re.escape(temp_name)}\((\d+),(\d+)\)", err_msg)
-        if match:
-            line = int(match.group(1))
-            column = int(match.group(2))
+        matches = list(self._TSC_SYNTAX_ERROR_RE.finditer(err_msg))
+        if not matches:
+            return None
+        match = next((m for m in matches if temp_name in m.group("file")), matches[0])
         return SyntaxValidationError(
-            message=f"TSC TS Syntax Error: {err_msg.strip()}",
+            message=f"TSC TS Syntax Error: {match.group(0).strip()}",
             filename=filename,
-            line=line,
-            column=column
+            line=int(match.group("line")),
+            column=int(match.group("col"))
         )
 
     def _cleanup_temp_path(self, temp_path: Path) -> None:
@@ -456,18 +460,22 @@ class JsTsValidator(BaseValidator):
             if orig_process.returncode != 0:
                 err_output = ((orig_process.stderr or "") + (orig_process.stdout or "")).lower()
                 missing_markers = ("not found", "error code", "could not determine executable", "cannot find", "this is not the tsc command", "npm install typescript")
-                if any(m in err_output for m in missing_markers):
+                if not re.search(r"error\s+ts\d+:", err_output) and any(m in err_output for m in missing_markers):
                     self._validate_with_node(content, filename, original_content)
                     return
-                log_step("JsTsValidator.validate: original failed tsc check, skipping validation")
-                return
+                orig_err_msg = orig_process.stdout or orig_process.stderr or ""
+                if self._parse_tsc_error(orig_err_msg, temp_path.name, filename) is not None:
+                    log_step("JsTsValidator.validate: original failed tsc syntax check, skipping validation")
+                    return
 
             # Check new content
             process = self._run_tsc_check(tsc_cmd, temp_path, content)
             if process.returncode != 0:
-                err_msg = process.stdout or process.stderr
-                log_step("JsTsValidator.validate: raising tsc SyntaxValidationError")
-                raise self._parse_tsc_error(err_msg, temp_path.name, filename)
+                err_msg = process.stdout or process.stderr or ""
+                syntax_err = self._parse_tsc_error(err_msg, temp_path.name, filename)
+                if syntax_err is not None:
+                    log_step("JsTsValidator.validate: raising tsc SyntaxValidationError")
+                    raise syntax_err
         except SyntaxValidationError:
             raise
         except (OSError, subprocess.SubprocessError) as e:

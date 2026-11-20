@@ -90,6 +90,56 @@ def test_js_ts_validator_tsc_fallback():
         assert exc_info.value.line == 1
         assert exc_info.value.column == 7
 
+        called_cmd = mock_run.call_args_list[1].args[0]
+        assert "--jsx" in called_cmd
+        assert "preserve" in called_cmd
+        assert "--noResolve" in called_cmd
+
+
+def test_js_ts_validator_tsc_ignores_semantic_errors_on_tsx():
+    val = JsTsValidator()
+    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
+        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/tsc" if cmd == "tsc" else None
+
+        # New .test.tsx file: empty original passes, new content has only TS2307/TS2304 semantic errors
+        orig_res = MagicMock(returncode=0, stdout="", stderr="")
+        new_res = MagicMock(
+            returncode=1,
+            stdout=(
+                "SearchBar.test.patchitright_temp.tsx(1,24): error TS2307: Cannot find module 'vitest'.\n"
+                "SearchBar.test.patchitright_temp.tsx(5,1): error TS2304: Cannot find name 'describe'.\n"
+            ),
+            stderr="",
+        )
+        mock_run.side_effect = [orig_res, new_res]
+
+        val.validate("import { describe } from 'vitest';\ndescribe('x', () => <div />);", "SearchBar.test.tsx", "")
+
+
+def test_js_ts_validator_tsc_catches_jsx_syntax_error_even_with_semantic_errors_in_orig():
+    val = JsTsValidator()
+    with patch("shutil.which") as mock_which, patch("subprocess.run") as mock_run:
+        mock_which.side_effect = lambda cmd, *args, **kwargs: "/usr/bin/tsc" if cmd == "tsc" else None
+
+        # Original has only semantic error (TS2304), new has a JSX syntax error (TS17002)
+        orig_res = MagicMock(
+            returncode=1,
+            stdout="App.patchitright_temp.tsx(1,10): error TS2304: Cannot find name 'React'.",
+            stderr="",
+        )
+        new_res = MagicMock(
+            returncode=1,
+            stdout="App.patchitright_temp.tsx(2,10): error TS17002: Expected corresponding JSX closing tag for 'div'.",
+            stderr="",
+        )
+        mock_run.side_effect = [orig_res, new_res]
+
+        with pytest.raises(SyntaxValidationError) as exc_info:
+            val.validate("export const A = () => <div></span>;", "App.tsx", "export const A = () => <div />;")
+        assert "TS17002" in str(exc_info.value)
+        assert exc_info.value.line == 2
+        assert exc_info.value.column == 10
+
 
 def test_json_validator():
     val = JsonValidator()
