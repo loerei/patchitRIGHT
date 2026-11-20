@@ -122,9 +122,22 @@ Edit functions and classes by name or extract code directly from another workspa
 
 ## Validation & Safety Guardrails
 
-* **Pre-write Syntax Checking**: Validates syntax before writing (Python `ast` and bundled `ruff`, JSON, TOML, YAML; optional JS/TS checking when `biome` or `tsc` is on `PATH`) on both destinations and `cut_source` source files.
+* **Pre-write Syntax Checking**: Validates syntax before writing (Python `ast` and bundled `ruff`, JS/TS/JSX/TSX via `biome` -> `tsc` -> `node` -> bundled `tree-sitter`, plus JSON/JSONC, TOML, and YAML) on both destinations and `cut_source` source files.
 * **Strict Occurrence Assertions**: Rejects 0 or ambiguous multi-matches by default; use `expected_occurrences: N` to enforce an exact match count (`allow_multiple` implied when omitted).
 * **Atomic Multi-file & Copy/Cut Transactions**: `files`, `target_files`, `target_glob`, `cut_source`, and `delete_source` execute transactionally with optimistic locking and full rollback on failure.
+
+---
+
+## Language Support
+
+| Language Family | Extensions | AST Symbols (`symbol_name`, `source_symbol`) | Pre-Write Syntax Check | Linter / Formatter Warnings |
+| :--- | :--- | :--- | :--- | :--- |
+| **Python** | `.py`, `.pyi`, `.pyw` | Yes (`ast` + `tree-sitter`) | Yes (`ast`, `.py`) | Yes (bundled `ruff`, `.py`) |
+| **JavaScript / TypeScript** | `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx` | Yes (`tree-sitter`) | Yes (`biome` -> `tsc` -> `node` -> bundled `tree-sitter`) | Yes (`biome` when available) |
+| **Systems & Compiled** | `.go`, `.rs`, `.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`, `.java`, `.cs` | Yes (`tree-sitter`) | No | No |
+| **Web Markup & Styles** | `.html`, `.css`, `.scss` | Yes (`tree-sitter`) | No | No |
+| **Config & Data** | `.json` (JSON/JSONC), `.toml`, `.yaml`, `.yml` | No | Yes (`json5`, `tomllib`, `PyYAML`) | `.json` (`biome` when available) |
+| **All Other Text Files** | Any (`.md`, `.sh`, `.sql`, etc.) | No | No (text/line-range/batch edits + atomic rollback still apply) | No |
 
 ---
 
